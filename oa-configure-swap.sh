@@ -185,17 +185,29 @@ main() {
     
     log_message "\n🔁 Checking existing swap configuration..." "$BLUE"
     
-    # Disable any existing swap
-    if grep -q "$SWAPFILE" /etc/fstab; then
-        log_message "🧹 Disabling existing swap..." "$BLUE"
-        sudo swapoff -a || true
-        sudo sed -i "\|$SWAPFILE|d" /etc/fstab
-    fi
+    # Disable swap completely
+    log_message "🧹 Disabling existing swap..." "$BLUE"
+    sudo swapoff -a 2>/dev/null || true
+    
+    # Wait a moment for swap to fully disable
+    sleep 1
     
     # Remove old swapfile if it exists
     if [ -f "$SWAPFILE" ]; then
         log_message "🗑️  Removing old swap file..." "$BLUE"
         sudo rm -f "$SWAPFILE"
+        if [ $? -ne 0 ]; then
+            log_message "❌ Error: Could not remove old swap file" "$RED"
+            log_message "   The file may be locked by the system" "$RED"
+            log_message "   Try rebooting and running the script again" "$RED"
+            exit 1
+        fi
+    fi
+    
+    # Remove swap entries from fstab
+    if grep -q "$SWAPFILE" /etc/fstab; then
+        log_message "📝 Removing old swap entry from fstab..." "$BLUE"
+        sudo sed -i "\|$SWAPFILE|d" /etc/fstab
     fi
     
     # Create new swap file
