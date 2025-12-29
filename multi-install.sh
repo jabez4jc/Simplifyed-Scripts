@@ -216,6 +216,7 @@ for ((i=1; i<=INSTANCES; i++)); do
 
     log_message "✅ Instance $i configuration collected" "$GREEN"
 done
+
 # System packages installation (one-time per run)
 log_message "\n=== INSTALLING SYSTEM PACKAGES ===" "$YELLOW"
 sudo apt-get update && sudo apt-get upgrade -y
@@ -436,6 +437,7 @@ server {
         return 301 https://\$host\$request_uri;
     }
 }
+
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
