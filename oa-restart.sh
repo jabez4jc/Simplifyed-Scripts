@@ -29,15 +29,15 @@ if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > $i )); then
 fi
 
 restart_instance() {
-    local DEPLOY_NAME="$1"
-    local SERVICE_NAME="openalgo-$DEPLOY_NAME"
+    local INSTANCE_NAME="$1"
+    local SERVICE_NAME="$INSTANCE_NAME"
 
     echo "🔁 Restarting $SERVICE_NAME..."
     sudo systemctl restart "$SERVICE_NAME"
     if [ $? -eq 0 ]; then
-        echo "✅ $DEPLOY_NAME restarted successfully."
+        echo "✅ $INSTANCE_NAME restarted successfully."
     else
-        echo "❌ Failed to restart $DEPLOY_NAME."
+        echo "❌ Failed to restart $INSTANCE_NAME."
     fi
 }
 
