@@ -185,29 +185,47 @@ main() {
     
     log_message "\n🔁 Checking existing swap configuration..." "$BLUE"
     
-    # Disable swap completely
-    log_message "🧹 Disabling existing swap..." "$BLUE"
-    sudo swapoff -a 2>/dev/null || true
+    # Remove swap entries from fstab first (before disabling)
+    if grep -q "$SWAPFILE" /etc/fstab; then
+        log_message "📝 Removing old swap entry from fstab..." "$BLUE"
+        sudo sed -i "\|$SWAPFILE|d" /etc/fstab
+    fi
+    
+    # Try to disable the specific swapfile
+    if swapon --show | grep -q "$SWAPFILE"; then
+        log_message "🧹 Disabling existing swap..." "$BLUE"
+        sudo swapoff "$SWAPFILE" 2>/dev/null || {
+            log_message "⚠️  Could not disable swap directly, attempting alternative method..." "$YELLOW"
+            # Try with sync first to ensure all data is written
+            sudo sync
+            sleep 2
+            sudo swapoff "$SWAPFILE" 2>/dev/null || true
+        }
+    fi
     
     # Wait a moment for swap to fully disable
-    sleep 1
+    sleep 2
     
     # Remove old swapfile if it exists
     if [ -f "$SWAPFILE" ]; then
         log_message "🗑️  Removing old swap file..." "$BLUE"
+        
+        # Check if still in use
+        if lsof "$SWAPFILE" 2>/dev/null | grep -q "swapfile\|swap"; then
+            log_message "⚠️  Swap file is still active in kernel" "$YELLOW"
+            log_message "   Attempting to remove anyway..." "$YELLOW"
+        fi
+        
         sudo rm -f "$SWAPFILE"
         if [ $? -ne 0 ]; then
             log_message "❌ Error: Could not remove old swap file" "$RED"
-            log_message "   The file may be locked by the system" "$RED"
-            log_message "   Try rebooting and running the script again" "$RED"
+            log_message "   The swap is still in use by the system" "$RED"
+            log_message "" "$RED"
+            log_message "Solution: Reboot the system and run this script again:" "$YELLOW"
+            log_message "   sudo reboot" "$YELLOW"
+            log_message "   sudo ./oa-configure-swap.sh 8" "$YELLOW"
             exit 1
         fi
-    fi
-    
-    # Remove swap entries from fstab
-    if grep -q "$SWAPFILE" /etc/fstab; then
-        log_message "📝 Removing old swap entry from fstab..." "$BLUE"
-        sudo sed -i "\|$SWAPFILE|d" /etc/fstab
     fi
     
     # Create new swap file
