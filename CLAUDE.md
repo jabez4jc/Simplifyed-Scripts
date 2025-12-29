@@ -56,6 +56,13 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Dry-run mode to preview updates
    - Rollback capability to pre-update backup
 
+8. **make-executable.sh** - Setup utility
+   - Finds all `.sh` files in repository automatically
+   - Makes them executable with single command
+   - Reports success/failure for each script
+   - Provides summary and lists all available scripts
+   - Simplifies initial setup process
+
 ## Key Implementation Patterns
 
 **Instance Isolation:**

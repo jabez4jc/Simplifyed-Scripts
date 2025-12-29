@@ -54,7 +54,8 @@ Flexible swap configuration utility allowing users to specify any swap size from
 - Interactive mode (prompts for size) or command-line argument
 - Input validation (1-512 GB range)
 - Disk space availability check with 10% buffer
-- Displays current swap configuration
+- Displays current swap configuration and filesystem usage
+- Shows recommended swap sizes (conservative and moderate)
 - Confirmation prompt before changes
 - Comprehensive logging with status messages
 
@@ -80,6 +81,30 @@ sudo ./oa-configure-swap.sh 16
 # Interactive - prompts user for size
 sudo ./oa-configure-swap.sh
 ```
+
+### `make-executable.sh`
+**Make all repository scripts executable**
+
+Utility script that finds and makes all shell scripts in the repository executable in one command. Useful during initial setup or when scripts are added.
+
+**Features:**
+- Automatically finds all `.sh` files in the repository
+- Skips already executable scripts
+- Reports success/failure for each script
+- Provides summary of changes
+- Lists all available executable scripts
+
+**Usage:**
+```bash
+chmod +x make-executable.sh
+sudo ./make-executable.sh
+```
+
+**Output includes:**
+- ✓ Successfully made executable
+- ✓ Already executable (skipped)
+- ✗ Failed to make executable (if any)
+- List of all available executable scripts
 
 ### `oa-restart.sh`
 **Restart OpenAlgo instances**
@@ -203,15 +228,24 @@ sudo ./oa-update.sh rollback BACKUP_DIR openalgo1  # Rollback from backup
    sudo apt upgrade -y
    ```
 
-2. **Configure swap (recommended):**
+2. **Make all scripts executable:**
    ```bash
-   chmod +x update_swap_4gb.sh
+   chmod +x make-executable.sh
+   sudo ./make-executable.sh
+   ```
+   This will find and make all `.sh` scripts executable in the repository.
+
+3. **Configure swap (recommended):**
+   ```bash
+   sudo ./oa-configure-swap.sh
+   ```
+   Or use the fixed 4GB version:
+   ```bash
    sudo ./update_swap_4gb.sh
    ```
 
-3. **Install OpenAlgo instances:**
+4. **Install OpenAlgo instances:**
    ```bash
-   chmod +x multi-install.sh
    sudo ./multi-install.sh
    ```
    - Select number of instances
