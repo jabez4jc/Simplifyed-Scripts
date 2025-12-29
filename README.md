@@ -35,14 +35,50 @@ sudo ./multi-install.sh
 - Comprehensive logging to `logs/install_multi_TIMESTAMP.log`
 
 ### `update_swap_4gb.sh`
-**Configure 4GB swap memory**
+**Configure 4GB swap memory (fixed size)**
 
-Sets up swap space to prevent out-of-memory issues, especially useful for broker authentication processes that can consume significant memory.
+Sets up a fixed 4GB swap space to prevent out-of-memory issues, especially useful for broker authentication processes that can consume significant memory.
 
 **Usage:**
 ```bash
 chmod +x update_swap_4gb.sh
 sudo ./update_swap_4gb.sh
+```
+
+### `oa-configure-swap.sh`
+**Configure custom swap memory size**
+
+Flexible swap configuration utility allowing users to specify any swap size from 1GB to 512GB. Includes disk space validation, current swap inspection, and safe reconfiguration.
+
+**Features:**
+- Interactive mode (prompts for size) or command-line argument
+- Input validation (1-512 GB range)
+- Disk space availability check with 10% buffer
+- Displays current swap configuration
+- Confirmation prompt before changes
+- Comprehensive logging with status messages
+
+**Usage:**
+```bash
+chmod +x oa-configure-swap.sh
+
+# Interactive mode
+sudo ./oa-configure-swap.sh
+
+# Command-line mode (no prompts)
+sudo ./oa-configure-swap.sh 8
+```
+
+**Examples:**
+```bash
+# Create 8GB swap
+sudo ./oa-configure-swap.sh 8
+
+# Create 16GB swap
+sudo ./oa-configure-swap.sh 16
+
+# Interactive - prompts user for size
+sudo ./oa-configure-swap.sh
 ```
 
 ### `oa-restart.sh`

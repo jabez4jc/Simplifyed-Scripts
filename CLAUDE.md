@@ -18,8 +18,14 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Creates systemd services and Nginx reverse proxy configs
    - Handles SSL certificate generation via Let's Encrypt
 
-2. **update_swap_4gb.sh** - System utility
-   - Creates or replaces swap space to prevent OOM during broker authentication
+2. **update_swap_4gb.sh** - Fixed swap utility
+   - Creates or replaces fixed 4GB swap space to prevent OOM during broker authentication
+
+2a. **oa-configure-swap.sh** - Flexible swap utility
+   - Interactive or command-line driven swap configuration (1-512 GB)
+   - Validates disk space before allocation
+   - Displays current swap configuration
+   - Includes confirmation prompts and safe reconfiguration
 
 3. **oa-restart.sh** - Instance management
    - Discovers running instances via systemd
