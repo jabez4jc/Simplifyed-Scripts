@@ -213,10 +213,54 @@ Configures methods to trigger OpenAlgo instance restarts from a remote location.
 sudo ./setup-remote-restart.sh
 ```
 
-**Interactive options:**
-1. SSH setup - Trigger restart via SSH command
-2. REST API setup - HTTP webhook endpoint
-3. Setup both options
+### `setup-api-service.sh`
+**Setup OpenAlgo REST API as systemd service**
+
+Configures the OpenAlgo REST API to run as a persistent systemd service that automatically starts on boot and restarts if it crashes.
+
+**Features:**
+- Creates systemd service file for API
+- Automatically starts on server boot
+- Auto-restarts if API crashes
+- Logs all output to systemd journal
+- Handles port cleanup before starting
+
+**Usage:**
+```bash
+sudo ./setup-api-service.sh
+```
+
+**After setup:**
+```bash
+# Check service status
+sudo systemctl status openalgo-restart-api
+
+# View live logs
+sudo journalctl -u openalgo-restart-api -f
+
+# Restart service
+sudo systemctl restart openalgo-restart-api
+
+# Stop service
+sudo systemctl stop openalgo-restart-api
+```
+
+### `verify-api-running.sh`
+**Verify API is running and accessible**
+
+Quick diagnostic to check if the API process is running, port is listening, and firewall allows access.
+
+**Usage:**
+```bash
+sudo ./verify-api-running.sh
+```
+
+**Checks:**
+- API process is running
+- Port 8888 is listening
+- Firewall (UFW) is configured correctly
+- API responds to health check requests
+- Displays server IP and API URL
 
 **Remote restart methods:**
 
