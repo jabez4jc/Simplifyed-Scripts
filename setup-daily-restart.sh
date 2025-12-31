@@ -140,6 +140,36 @@ fi
 # Setup cron job
 log_message "\n⏰ Setting up cron job..." "$BLUE"
 
+# Check if crontab is available, if not install it
+if ! command -v crontab &> /dev/null; then
+    log_message "   cron service not found, installing..." "$YELLOW"
+    
+    # Install cron based on system
+    if command -v apt-get &> /dev/null; then
+        log_message "   Installing cron using apt-get..." "$BLUE"
+        apt-get update > /dev/null 2>&1
+        apt-get install -y cron > /dev/null 2>&1
+    elif command -v yum &> /dev/null; then
+        log_message "   Installing cron using yum..." "$BLUE"
+        yum install -y cronie > /dev/null 2>&1
+    else
+        log_message "❌ Could not install cron - unsupported package manager" "$RED"
+        exit 1
+    fi
+    
+    # Start cron service
+    log_message "   Starting cron service..." "$BLUE"
+    if systemctl is-active --quiet cron; then
+        true
+    elif systemctl is-active --quiet crond; then
+        true
+    else
+        systemctl start cron 2>/dev/null || systemctl start crond 2>/dev/null || true
+    fi
+    
+    log_message "✅ Cron service installed and started" "$GREEN"
+fi
+
 # Remove existing cron job if present
 CRON_ID="# OpenAlgo Daily Restart (8 AM IST)"
 CRON_CMD="0 8 * * * $RESTART_SCRIPT"
