@@ -34,25 +34,28 @@ log_message "   Restart Time: 8:00 AM IST (Daily)" "$BLUE"
 log_message "   Timezone: Asia/Kolkata (IST)" "$BLUE"
 echo ""
 
+# Check if running as root
+if [ "$(id -u)" -ne 0 ]; then
+    log_message "❌ This script must be run with sudo" "$RED"
+    log_message "   Usage: sudo ./setup-daily-restart.sh" "$YELLOW"
+    exit 1
+fi
+
 read -p "Continue? (y/N): " confirm
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     log_message "❌ Setup cancelled by user" "$RED"
     exit 0
 fi
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    log_message "❌ This script must be run with sudo" "$RED"
-    exit 1
-fi
-
 # Get the script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Define paths
+RESTART_SCRIPT="/usr/local/bin/openalgo-daily-restart.sh"
+LOG_FILE="/var/log/openalgo-daily-restart.log"
+
 # Create a restart script for cron
 log_message "\n🔧 Creating automated restart script..." "$BLUE"
-
-RESTART_SCRIPT="/usr/local/bin/openalgo-daily-restart.sh"
 
 cat > "$RESTART_SCRIPT" << 'EOF'
 #!/bin/bash
@@ -110,6 +113,7 @@ log_message "✅ Created restart script at $RESTART_SCRIPT" "$GREEN"
 
 # Create log file
 log_message "📝 Creating log file..." "$BLUE"
+mkdir -p "$(dirname "$LOG_FILE")"
 touch "$LOG_FILE"
 chmod 666 "$LOG_FILE"
 log_message "✅ Created log file at $LOG_FILE" "$GREEN"
