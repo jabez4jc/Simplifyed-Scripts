@@ -265,15 +265,20 @@ ssh root@<server_ip> systemctl status openalgo*
 
 The REST API provides a complete web interface for managing instances:
 
-**Web UI (Recommended):**
+**Web UI Dashboard (Recommended):**
 ```
 http://<server_ip>:8888
 ```
-- Interactive dashboard to view all instances
+- Interactive dashboard with all instance information
+- **Instance Health Checks:**
+  - Service status (Active/Inactive)
+  - Flask port configuration
+  - Database presence verification
 - Click to restart/stop/start individual instances
 - Bulk restart all instances
 - Real-time status updates
 - Auto-refresh every 30 seconds
+- Summary showing total, running, and stopped instances
 
 **REST API Endpoints:**
 
@@ -308,17 +313,27 @@ curl http://<server_ip>:8888/api/status
 
 # Check API health (GET)
 curl http://<server_ip>:8888/health
+
+# Get detailed health of all instances (GET)
+curl http://<server_ip>:8888/api/health
 ```
 
 **API Endpoints Summary:**
+
+**Instance Management:**
 - `POST /api/restart-all` - Restart all instances
 - `POST /api/restart-instance` - Restart specific instance (requires JSON body with "instance" field)
 - `POST /api/stop-instance` - Stop specific instance
 - `POST /api/start-instance` - Start specific instance
+
+**Information & Health:**
 - `GET /api/instances` - List all instances
-- `GET /api/status` - Get status of all instances
-- `GET /health` - API health check
-- `GET /` - Web UI dashboard
+- `GET /api/status` - Get status of all instances (active/inactive)
+- `GET /api/health` - **Detailed health check of all instances** (status, port, database)
+- `GET /health` - API server health check
+
+**User Interface:**
+- `GET /` or `/index.html` - Interactive web dashboard with health checks
 
 **Example API Responses:**
 
@@ -361,6 +376,34 @@ List instances response:
   "openalgo2",
   "openalgo3"
 ]
+```
+
+Health check response:
+```json
+{
+  "total": 3,
+  "instances": {
+    "openalgo1": {
+      "name": "openalgo1",
+      "status": "active",
+      "port": "5001",
+      "database": true
+    },
+    "openalgo2": {
+      "name": "openalgo2",
+      "status": "active",
+      "port": "5002",
+      "database": true
+    },
+    "openalgo3": {
+      "name": "openalgo3",
+      "status": "inactive",
+      "port": "5003",
+      "database": true
+    }
+  },
+  "timestamp": "2025-01-15 08:30:45.123456"
+}
 ```
 
 **Security considerations:**
