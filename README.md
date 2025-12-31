@@ -195,6 +195,66 @@ sudo tail -f /var/log/openalgo-daily-restart.log
 sudo crontab -r
 ```
 
+### `setup-remote-restart.sh`
+**Setup remote restart trigger (SSH/API)**
+
+Configures methods to trigger OpenAlgo instance restarts from a remote location. Supports both SSH commands and HTTP API endpoints.
+
+**Features:**
+- SSH remote execution (direct command)
+- REST API webhook endpoint (HTTP)
+- Convenience script for easy management
+- View logs remotely
+- Check status remotely
+- Security best practices included
+
+**Usage:**
+```bash
+sudo ./setup-remote-restart.sh
+```
+
+**Interactive options:**
+1. SSH setup - Trigger restart via SSH command
+2. REST API setup - HTTP webhook endpoint
+3. Setup both options
+
+**Remote restart methods:**
+
+**Option 1: SSH (Direct execution)**
+```bash
+# Trigger restart from remote machine
+ssh root@<server_ip> sudo /usr/local/bin/openalgo-daily-restart.sh
+
+# View logs
+ssh root@<server_ip> tail -f /var/log/openalgo-daily-restart.log
+
+# Check status
+ssh root@<server_ip> systemctl status openalgo*
+```
+
+**Option 2: Convenience Script (Recommended)**
+```bash
+# On remote machine, use convenience script
+restart-openalgo-remote <server_ip> restart    # Trigger restart
+restart-openalgo-remote <server_ip> status     # Check status
+restart-openalgo-remote <server_ip> logs       # View logs
+restart-openalgo-remote <server_ip> list       # List instances
+```
+
+**Option 3: REST API (HTTP)**
+```bash
+# If API enabled during setup
+curl -X POST http://<server_ip>:8888/restart
+wget -O- http://<server_ip>:8888/restart
+python3 -c "import requests; requests.post('http://<server_ip>:8888/restart')"
+```
+
+**Security considerations:**
+- Use SSH keys instead of passwords
+- Restrict SSH access via firewall
+- Use VPN for remote access over internet
+- Monitor logs for unauthorized access attempts
+
 ### `oa-uninstaller.sh`
 **Remove OpenAlgo instances**
 
