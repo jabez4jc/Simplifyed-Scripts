@@ -282,12 +282,149 @@ ls -la /usr/local/bin/openalgo-restart-api.py
 grep "TCPServer" /usr/local/bin/openalgo-restart-api.py
 ```
 
+## Cloud Platform Firewall Rules
+
+**Critical Issue:** If your servers are on a cloud platform (GCP, AWS, Azure), you MUST configure firewall rules in the cloud console. OS-level firewall rules are NOT enough.
+
+### GCP (Google Cloud Platform) - REQUIRED
+
+Even if UFW is inactive, you MUST allow port 8888 in GCP firewall:
+
+**Via GCP Console:**
+1. Go to VPC Network > Firewall rules
+2. Create ingress rule:
+   - Name: `allow-openalgo-8888`
+   - Direction: Ingress
+   - Action: Allow
+   - Protocols: TCP port 8888
+   - Source IP ranges: `0.0.0.0/0` (or specific IPs)
+
+**Via gcloud CLI:**
+```bash
+gcloud compute firewall-rules create allow-openalgo-8888 \
+    --allow=tcp:8888 \
+    --source-ranges=0.0.0.0/0
+```
+
+**To target specific instances (recommended):**
+```bash
+# Create rule with target tags
+gcloud compute firewall-rules create allow-openalgo-8888 \
+    --allow=tcp:8888 \
+    --target-tags=openalgo
+
+# Tag your instances
+gcloud compute instances add-tags INSTANCE_NAME \
+    --tags=openalgo \
+    --zone=us-central1-a
+```
+
+### AWS (Amazon Web Services) - REQUIRED
+
+Configure Security Groups for each instance:
+
+1. Go to EC2 Dashboard
+2. Select Security Groups
+3. Find the security group attached to your instance
+4. Edit Inbound Rules
+5. Add rule:
+   - Type: Custom TCP Rule
+   - Protocol: TCP
+   - Port Range: 8888
+   - Source: 0.0.0.0/0 (or specific IPs)
+   - Description: OpenAlgo API
+
+### Azure (Microsoft Azure) - REQUIRED
+
+Configure Network Security Groups:
+
+1. Go to Virtual Machines
+2. Select your VM
+3. Go to Settings > Networking
+4. Add inbound port rule:
+   - Source: Any (or specific IPs)
+   - Source port ranges: *
+   - Destination: Any
+   - Destination port ranges: 8888
+   - Protocol: TCP
+   - Action: Allow
+   - Priority: (lower number = higher priority)
+
+## Diagnosis Scripts
+
+Run these scripts to identify the issue:
+
+### Test Local Connectivity
+```bash
+sudo ./test-api-remote.sh
+```
+Tests localhost, local IP, port binding, and firewall status.
+
+### Configure OS Firewall
+```bash
+sudo ./configure-api-firewall.sh
+```
+Handles UFW, iptables, firewalld, and detects cloud platform.
+
+### Compare Working vs Non-Working Servers
+```bash
+# Requires SSH access to servers
+sudo ./compare-server-setup.sh
+```
+Compares configuration between working and failing servers.
+
+## Common Issues by Cloud Platform
+
+### GCP: "Connection refused" despite API running
+
+**Cause:** GCP Firewall rule not created for port 8888
+
+**Solution:** Create firewall rule in GCP Console (see above)
+
+**Verify:**
+```bash
+# From GCP Console, list firewall rules
+gcloud compute firewall-rules list --filter="allow-openalgo*"
+
+# Check if rule allows your source IP
+gcloud compute firewall-rules describe allow-openalgo-8888
+```
+
+### AWS: "Connection timed out"
+
+**Cause:** Security Group doesn't allow inbound TCP 8888
+
+**Solution:** Add inbound rule to Security Group (see above)
+
+**Verify:**
+```bash
+# List security group rules
+aws ec2 describe-security-groups --group-ids sg-xxxxxxxx
+```
+
+### Azure: "Connection refused"
+
+**Cause:** NSG inbound rule doesn't allow port 8888
+
+**Solution:** Add inbound rule to Network Security Group (see above)
+
+**Verify:**
+```bash
+# List NSG rules
+az network nsg rule list \
+    --resource-group myResourceGroup \
+    --nsg-name myNSG
+```
+
 ## Support
 
 If issues persist:
 
-1. Run `diagnose-api.sh` and save output
-2. Check `/tmp/api.log` for error details
-3. Check `sudo journalctl -u openalgo-restart-api -n 50` for service logs
-4. Verify firewall allows port 8888: `sudo ufw allow 8888`
-5. Ensure no other service is using port 8888: `sudo ss -tlnp | grep 8888`
+1. Verify you're on a cloud platform that blocks traffic by default
+2. Create the appropriate cloud firewall rule (GCP/AWS/Azure)
+3. Run `sudo ./configure-api-firewall.sh` to set up OS-level firewall
+4. Run `sudo ./test-api-remote.sh` to verify local binding
+5. Wait 1-2 minutes for cloud firewall rule to propagate
+6. Test with: `curl -v http://SERVER_IP:8888/health`
+7. Check `/tmp/api.log` for application errors
+8. Check `sudo journalctl -u openalgo-restart-api -f` for service logs
