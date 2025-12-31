@@ -161,7 +161,14 @@ else
     log_message "\n   Attempting manual start..." "$YELLOW"
     
     # Kill any existing processes
-    sudo pkill -f "python3.*openalgo-restart-api" 2>/dev/null || true
+    sudo pkill -9 -f "python3.*openalgo-restart-api" 2>/dev/null || true
+    
+    # Kill by port if still listening
+    if ss -tlnp 2>/dev/null | grep -q ":8888 " || netstat -tlnp 2>/dev/null | grep -q ":8888 "; then
+        sudo fuser -k 8888/tcp 2>/dev/null || true
+    fi
+    
+    sleep 2
     
     # Start API in background
     sudo /usr/bin/python3 /usr/local/bin/openalgo-restart-api.py 8888 > /tmp/api.log 2>&1 &

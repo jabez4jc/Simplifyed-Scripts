@@ -15,7 +15,14 @@ echo -e "${BLUE}=== OpenAlgo API Manual Start Test ===${NC}\n"
 
 # Kill any existing processes
 echo "Stopping any existing API processes..."
-sudo pkill -f "python3.*openalgo-restart-api" || true
+sudo pkill -9 -f "python3.*openalgo-restart-api" 2>/dev/null || true
+
+# Also try killing by port if process still exists
+if ss -tlnp 2>/dev/null | grep -q ":8888 " || netstat -tlnp 2>/dev/null | grep -q ":8888 "; then
+    echo "Attempting to kill process on port 8888..."
+    sudo fuser -k 8888/tcp 2>/dev/null || true
+fi
+
 sleep 2
 
 # Check if script exists
