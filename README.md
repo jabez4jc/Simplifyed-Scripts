@@ -8,12 +8,38 @@ These scripts automate the installation, configuration, and maintenance of one o
 
 ## Scripts
 
+### `quick-setup.sh`
+**Single instance quick setup with 4GB swap**
+
+Automated setup for a single OpenAlgo instance in one command. Includes all necessary components:
+- System package updates
+- 4GB swap configuration
+- OpenAlgo installation and dependencies
+- SSL certificate (Let's Encrypt)
+- Nginx reverse proxy
+- Systemd service
+- Firewall configuration
+
+**Usage:**
+```bash
+chmod +x quick-setup.sh
+sudo ./quick-setup.sh
+```
+
+**Interactive prompts for:**
+- Domain/subdomain
+- Broker selection
+- API credentials
+- Market data credentials (if XTS broker)
+
+**Best for:** Single instance deployments, simple setups, testing
+
 ### `multi-install.sh`
 **Multi-instance installation and configuration**
 
 Automates the complete setup of multiple OpenAlgo instances with:
 - System package installation and firewall configuration
-- Interactive prompts for domain, broker, and API credentials
+- Interactive prompts for domain, broker, and API credentials per instance
 - Nginx SSL certificate generation via Let's Encrypt
 - Individual systemd services per instance
 - Database and session cookie isolation per instance
@@ -23,6 +49,8 @@ Automates the complete setup of multiple OpenAlgo instances with:
 chmod +x multi-install.sh
 sudo ./multi-install.sh
 ```
+
+**Best for:** Multiple instances, production deployments, advanced setups
 
 **Features:**
 - Supports up to 30 different brokers (fivepaisa, zerodha, angel, etc.)
@@ -107,14 +135,64 @@ sudo ./make-executable.sh
 - List of all available executable scripts
 
 ### `oa-restart.sh`
-**Restart OpenAlgo instances**
+**Restart OpenAlgo instances (manual)**
 
 Interactive menu to restart individual instances or all instances at once.
 
 **Usage:**
 ```bash
-chmod +x oa-restart.sh
 sudo ./oa-restart.sh
+```
+
+**Options:**
+- Select specific instance to restart
+- Select "Restart ALL instances"
+- Auto-reloads Nginx after restart
+
+### `setup-daily-restart.sh`
+**Setup automatic daily restart of all instances at 8 AM IST**
+
+Configures a cron job to automatically restart all OpenAlgo instances every day at 8:00 AM IST (India Standard Time). Creates restart script and log file for monitoring.
+
+**Features:**
+- Automated setup of cron job
+- Restarts all instances sequentially
+- Logs all restart activities
+- Verifies system timezone
+- Easy modification of restart time
+- Provides monitoring commands
+
+**Usage:**
+```bash
+sudo ./setup-daily-restart.sh
+```
+
+**What it does:**
+- Creates automated restart script at `/usr/local/bin/openalgo-daily-restart.sh`
+- Sets up cron job for 8:00 AM daily
+- Creates log file at `/var/log/openalgo-daily-restart.log`
+- Checks and optionally sets timezone to IST
+- Provides commands to manage/modify the cron job
+
+**To change restart time:**
+```bash
+sudo crontab -e
+# Change the first two numbers (hour minute)
+# Format: minute hour * * * /usr/local/bin/openalgo-daily-restart.sh
+# Examples:
+#   0 8   = 8:00 AM
+#   30 7  = 7:30 AM
+#   0 9   = 9:00 AM
+```
+
+**To view restart logs:**
+```bash
+sudo tail -f /var/log/openalgo-daily-restart.log
+```
+
+**To remove the cron job:**
+```bash
+sudo crontab -r
 ```
 
 ### `oa-uninstaller.sh`
@@ -220,12 +298,38 @@ sudo ./oa-update.sh rollback BACKUP_DIR openalgo1  # Rollback from backup
 - Domain names with DNS pointing to your server
 - Broker API credentials for each instance
 
-## Typical Installation Steps
+## Quick Start (Single Instance)
+
+For a simple single instance setup with 4GB swap, use the quick-setup script:
+
+```bash
+sudo apt update && sudo apt install -y git
+rm -rf Simplifyed-Scripts
+git clone https://github.com/jabez4jc/Simplifyed-Scripts
+cd Simplifyed-Scripts
+chmod +x quick-setup.sh
+sudo ./quick-setup.sh
+```
+
+This will:
+- Update system packages
+- Configure 4GB swap
+- Clone OpenAlgo repository
+- Install all dependencies
+- Set up SSL certificate (Let's Encrypt)
+- Create systemd service
+- Configure Nginx
+- Configure firewall
+
+## Standard Installation Steps (Multiple Instances)
 
 1. **System preparation:**
    ```bash
-   sudo apt update && sudo apt install -y nano
+   sudo apt update && sudo apt install -y git nano
    sudo apt upgrade -y
+   rm -rf Simplifyed-Scripts
+   git clone https://github.com/jabez4jc/Simplifyed-Scripts
+   cd Simplifyed-Scripts
    ```
 
 2. **Make all scripts executable:**
@@ -235,13 +339,13 @@ sudo ./oa-update.sh rollback BACKUP_DIR openalgo1  # Rollback from backup
    ```
    This will find and make all `.sh` scripts executable in the repository.
 
-3. **Configure swap (recommended):**
-   ```bash
-   sudo ./oa-configure-swap.sh
-   ```
-   Or use the fixed 4GB version:
+3. **Configure swap:**
    ```bash
    sudo ./update_swap_4gb.sh
+   ```
+   Or use custom size:
+   ```bash
+   sudo ./oa-configure-swap.sh
    ```
 
 4. **Install OpenAlgo instances:**

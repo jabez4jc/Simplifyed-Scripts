@@ -10,7 +10,14 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 **Core Components:**
 
-1. **multi-install.sh** - Main orchestration script
+1. **quick-setup.sh** - Single instance setup script
+   - Automated complete setup in one command
+   - Configures 4GB swap automatically
+   - Includes all system packages, dependencies, SSL, Nginx, systemd service
+   - Interactive prompts for domain, broker, and credentials
+   - Best for single instance deployments and quick testing
+
+2. **multi-install.sh** - Main orchestration script
    - Validates system prerequisites (Python 3, pip, uv)
    - Manages system-wide dependencies (nginx, certbot, firewall)
    - Creates isolated instance directories at `/var/python/openalgo-flask/openalgo<N>/`
@@ -18,37 +25,45 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Creates systemd services and Nginx reverse proxy configs
    - Handles SSL certificate generation via Let's Encrypt
 
-2. **update_swap_4gb.sh** - Fixed swap utility
+3. **update_swap_4gb.sh** - Fixed swap utility
    - Creates or replaces fixed 4GB swap space to prevent OOM during broker authentication
 
-2a. **oa-configure-swap.sh** - Flexible swap utility
+4. **oa-configure-swap.sh** - Flexible swap utility
    - Interactive or command-line driven swap configuration (1-512 GB)
    - Validates disk space before allocation
-   - Displays current swap configuration
+   - Displays current swap configuration and filesystem usage
    - Includes confirmation prompts and safe reconfiguration
 
-3. **oa-restart.sh** - Instance management
+5. **oa-restart.sh** - Instance management (manual)
    - Discovers running instances via systemd
    - Provides interactive menu for restarting single or all instances
+   - Auto-reloads Nginx after restart
 
-4. **oa-uninstaller.sh** - Cleanup utility
+5a. **setup-daily-restart.sh** - Automated restart scheduler
+   - Sets up cron job for daily automatic restart at 8 AM IST
+   - Creates restart script at `/usr/local/bin/openalgo-daily-restart.sh`
+   - Creates log file at `/var/log/openalgo-daily-restart.log`
+   - Verifies/sets system timezone to Asia/Kolkata
+   - Provides easy modification commands for restart time
+
+6. **oa-uninstaller.sh** - Cleanup utility
    - Removes instances with full cleanup (service, directories, SSL certs, nginx config)
    - Includes confirmation prompts to prevent accidental deletion
 
-5. **oa-health-check.sh** - Monitoring utility
+7. **oa-health-check.sh** - Monitoring utility
    - Multi-category health checks (service, ports, configuration, databases, filesystem, logs, connectivity)
    - System-wide health assessment (Nginx, firewall, swap, load)
    - Exit codes for automation (0=healthy, 1=warning, 2=critical)
    - Supports single instance, all instances, or system-only checks
 
-6. **oa-backup.sh** - Backup & restore utility
+8. **oa-backup.sh** - Backup & restore utility
    - Quick backups (env + databases + configs) with optional GPG encryption
    - Full backups (complete instance archive)
    - Selective restore with current data preservation
    - Automatic cleanup of old backups (configurable retention)
    - Supports single instance, all instances, or specific backup operations
 
-7. **oa-update.sh** - Smart update utility
+9. **oa-update.sh** - Smart update utility
    - Version-aware .env merging using `ENV_CONFIG_VERSION` field
    - Selective updates (only merge .env when version changes)
    - Pre-update automatic backup
@@ -56,7 +71,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Dry-run mode to preview updates
    - Rollback capability to pre-update backup
 
-8. **make-executable.sh** - Setup utility
+10. **make-executable.sh** - Setup utility
    - Finds all `.sh` files in repository automatically
    - Makes them executable with single command
    - Reports success/failure for each script
