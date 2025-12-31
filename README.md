@@ -241,12 +241,106 @@ restart-openalgo-remote <server_ip> logs       # View logs
 restart-openalgo-remote <server_ip> list       # List instances
 ```
 
-**Option 3: REST API (HTTP)**
+**Option 3: REST API (HTTP webhook) - Full Featured**
+
+The REST API provides a complete web interface for managing instances:
+
+**Web UI (Recommended):**
+```
+http://<server_ip>:8888
+```
+- Interactive dashboard to view all instances
+- Click to restart/stop/start individual instances
+- Bulk restart all instances
+- Real-time status updates
+- Auto-refresh every 30 seconds
+
+**REST API Endpoints:**
+
 ```bash
-# If API enabled during setup
-curl -X POST http://<server_ip>:8888/restart
-wget -O- http://<server_ip>:8888/restart
-python3 -c "import requests; requests.post('http://<server_ip>:8888/restart')"
+# === Restart Operations ===
+
+# Restart ALL instances (POST)
+curl -X POST http://<server_ip>:8888/api/restart-all
+
+# Restart specific instance (POST)
+curl -X POST http://<server_ip>:8888/api/restart-instance \
+  -H "Content-Type: application/json" \
+  -d '{"instance": "openalgo1"}'
+
+# Stop specific instance (POST)
+curl -X POST http://<server_ip>:8888/api/stop-instance \
+  -H "Content-Type: application/json" \
+  -d '{"instance": "openalgo1"}'
+
+# Start specific instance (POST)
+curl -X POST http://<server_ip>:8888/api/start-instance \
+  -H "Content-Type: application/json" \
+  -d '{"instance": "openalgo1"}'
+
+# === Information Endpoints ===
+
+# Get list of all instances (GET)
+curl http://<server_ip>:8888/api/instances
+
+# Get status of all instances (GET)
+curl http://<server_ip>:8888/api/status
+
+# Check API health (GET)
+curl http://<server_ip>:8888/health
+```
+
+**API Endpoints Summary:**
+- `POST /api/restart-all` - Restart all instances
+- `POST /api/restart-instance` - Restart specific instance (requires JSON body with "instance" field)
+- `POST /api/stop-instance` - Stop specific instance
+- `POST /api/start-instance` - Start specific instance
+- `GET /api/instances` - List all instances
+- `GET /api/status` - Get status of all instances
+- `GET /health` - API health check
+- `GET /` - Web UI dashboard
+
+**Example API Responses:**
+
+Restart all response:
+```json
+{
+  "status": "success",
+  "message": "Restart triggered for all OpenAlgo instances",
+  "timestamp": "2025-01-15 08:30:45.123456"
+}
+```
+
+Restart specific instance response:
+```json
+{
+  "status": "success",
+  "message": "Restart triggered for openalgo1",
+  "instance": "openalgo1",
+  "timestamp": "2025-01-15 08:30:45.123456"
+}
+```
+
+Status response:
+```json
+{
+  "total_instances": 3,
+  "instances": {
+    "openalgo1": "active",
+    "openalgo2": "active",
+    "openalgo3": "inactive"
+  },
+  "timestamp": "2025-01-15 08:30:45.123456"
+}
+```
+
+List instances response:
+```json
+[
+  "openalgo1",
+  "openalgo2",
+  "openalgo3"
+]
 ```
 
 **Security considerations:**

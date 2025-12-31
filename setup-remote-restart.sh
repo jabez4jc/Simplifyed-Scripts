@@ -101,7 +101,139 @@ case $option in
             API_PORT="$port_input"
         fi
         
-        # Create API service
+        # Copy enhanced REST API script
+        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+        SOURCE_API="$SCRIPT_DIR/openalgo-restart-api-enhanced.py"
+        API_SCRIPT="/usr/local/bin/openalgo-restart-api.py"
+        
+        if [ -f "$SOURCE_API" ]; then
+            log_message "   Copying enhanced API from repository..." "$BLUE"
+            sudo cp "$SOURCE_API" "$API_SCRIPT"
+            sudo chmod +x "$API_SCRIPT"
+        else
+            log_message "   Creating basic API script..." "$BLUE"
+            cat > "$API_SCRIPT" << 'PYEOF'
+#!/usr/bin/env python3
+import http.server
+import socketserver
+import subprocess
+import json
+import sys
+from threading import Thread
+
+class RestartHandler(http.server.SimpleHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == '/restart':
+            # Run restart script in background
+            Thread(target=self.trigger_restart).start()
+            
+            # Send response immediately
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps({
+                "status": "success",
+                "message": "Restart triggered for all OpenAlgo instances",
+                "timestamp": str(__import__('datetime').datetime.now())
+            }).encode()
+            self.wfile.write(response)
+        else:
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps({
+                "status": "error",
+                "message": "Endpoint not found. Use POST /restart"
+            }).encode()
+            self.wfile.write(response)
+    
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps({
+                "status": "healthy",
+                "service": "OpenAlgo Restart API",
+                "timestamp": str(__import__('datetime').datetime.now())
+            }).encode()
+            self.wfile.write(response)
+        elif self.path == '/status':
+            # Get instance status
+            status = self.get_instance_status()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps(status).encode()
+            self.wfile.write(response)
+        else:
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps({
+                "status": "error",
+                "message": "Endpoints: POST /restart, GET /health, GET /status"
+            }).encode()
+            self.wfile.write(response)
+    
+    def get_instance_status(self):
+        """Get status of all instances"""
+        try:
+            result = subprocess.run(
+                ['bash', '-c', 'ls -1 /var/python/openalgo-flask | grep openalgo'],
+                capture_output=True, text=True, timeout=5
+            )
+            instances = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            
+            status_info = {
+                "total_instances": len(instances),
+                "instances": {}
+            }
+            
+            for inst in instances:
+                if inst:
+                    status_result = subprocess.run(
+                        ['systemctl', 'is-active', inst],
+                        capture_output=True, text=True, timeout=2
+                    )
+                    status_info["instances"][inst] = status_result.stdout.strip()
+            
+            status_info["timestamp"] = str(__import__('datetime').datetime.now())
+            return status_info
+        except Exception as e:
+            return {"error": str(e), "timestamp": str(__import__('datetime').datetime.now())}
+    
+    def trigger_restart(self):
+        """Trigger restart in background"""
+        try:
+            subprocess.run(['/usr/local/bin/openalgo-daily-restart.sh'], 
+                          check=True, capture_output=True)
+        except Exception as e:
+            print(f"Error triggering restart: {e}", file=sys.stderr)
+    
+    def log_message(self, format, *args):
+        """Suppress default logging"""
+        pass
+
+def run_api(port):
+    handler = RestartHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        print(f"OpenAlgo Restart API listening on port {port}")
+        sys.stdout.flush()
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("API server stopped")
+
+if __name__ == '__main__':
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8888
+    run_api(port)
+PYEOF
+        fi
+        
+        sudo chmod +x "$API_SCRIPT"
+        
+        # Create systemd service for API
         API_SERVICE="/etc/systemd/system/openalgo-restart-api.service"
         
         cat > "$API_SERVICE" << EOF
@@ -113,9 +245,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/tmp
-ExecStart=/bin/bash -c 'while true; do { echo -ne "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"; echo "{\"status\":\"restarting\"}"; } | nc -l -p $API_PORT -q 1 && /usr/local/bin/openalgo-daily-restart.sh &; done'
+ExecStart=/usr/bin/python3 /usr/local/bin/openalgo-restart-api.py $API_PORT
 Restart=always
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
