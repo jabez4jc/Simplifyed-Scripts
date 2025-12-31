@@ -718,8 +718,10 @@ class RestartHandler(http.server.SimpleHTTPRequestHandler):
 def run_api(port):
     """Run the API server"""
     handler = RestartHandler
+    # Allow reuse of socket to avoid "Address already in use" errors
+    socketserver.TCPServer.allow_reuse_address = True
     try:
-        with socketserver.TCPServer(("", port), handler) as httpd:
+        with socketserver.TCPServer(("0.0.0.0", port), handler) as httpd:
             print(f"OpenAlgo REST API running on http://0.0.0.0:{port}")
             print(f"Web UI available at http://localhost:{port}")
             sys.stdout.flush()
