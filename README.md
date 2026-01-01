@@ -195,12 +195,31 @@ sudo tail -f /var/log/openalgo-daily-restart.log
 sudo crontab -r
 ```
 
+### `install-api.sh`
+**Install OpenAlgo REST API**
+
+Installs the REST API script to the system and verifies it's working.
+
+**Features:**
+- Copies API script to `/usr/local/bin/`
+- Verifies Python3 is installed
+- Tests API functionality
+- Provides next steps for setup
+
+**Usage:**
+```bash
+sudo ./install-api.sh
+```
+
+This needs to be run only once before using `setup-api.sh`.
+
 ### `setup-api.sh`
 **Unified API setup, verification, and management**
 
-Comprehensive interactive script that handles all API setup, configuration, verification, and management tasks in one place.
+Comprehensive interactive script that handles all API setup, configuration, verification, and management tasks in one place. Auto-installs API if needed.
 
 **Features:**
+- Auto-install API if not already installed
 - Setup API as systemd service (auto-start on boot)
 - Verify API is running and accessible
 - Configure remote restart methods (SSH & REST API)
@@ -218,16 +237,20 @@ sudo ./setup-api.sh
 1. Setup API as Systemd Service - Install and configure systemd service
 2. Verify API is Running - Check all components and auto-fix issues
 3. Setup Remote Restart - Configure SSH and REST API access
-4. Setup Everything - Run all setup options at once
+4. Setup Everything - Run all setup options at once (recommended)
 5. Manage Service - Status, restart, stop, start commands
 6. View API Logs - View recent logs or follow live
 7. Exit
 
-**Quick Setup:**
+**Quick Start (One Command):**
 ```bash
 sudo ./setup-api.sh
 # Select option 4 (Setup Everything)
-# Or run each option separately as needed
+# This will:
+#   1. Install API if needed
+#   2. Setup systemd service
+#   3. Verify everything works
+#   4. Configure SSH and REST API access
 ```
 
 **Service Management:**

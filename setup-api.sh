@@ -44,8 +44,36 @@ show_menu() {
 check_dependencies() {
     if [ ! -f "/usr/local/bin/openalgo-restart-api.py" ]; then
         log_message "❌ API script not found at /usr/local/bin/openalgo-restart-api.py" "$RED"
-        log_message "Please run setup-remote-restart.sh first to install the API" "$YELLOW"
-        exit 1
+        echo ""
+        log_message "The REST API needs to be installed first." "$YELLOW"
+        log_message "\nOptions:" "$BLUE"
+        echo "1) Install API now (requires openalgo-restart-api.py in current directory)"
+        echo "2) Exit and install manually"
+        echo ""
+        read -p "Select option [1-2]: " install_option
+        
+        if [ "$install_option" = "1" ]; then
+            if [ -f "openalgo-restart-api.py" ]; then
+                log_message "\n📝 Installing API script..." "$YELLOW"
+                cp openalgo-restart-api.py /usr/local/bin/openalgo-restart-api.py
+                chmod +x /usr/local/bin/openalgo-restart-api.py
+                
+                if [ -f "/usr/local/bin/openalgo-restart-api.py" ]; then
+                    log_message "✅ API script installed" "$GREEN"
+                else
+                    log_message "❌ Failed to install API script" "$RED"
+                    exit 1
+                fi
+            else
+                log_message "❌ openalgo-restart-api.py not found in current directory" "$RED"
+                log_message "Please run this script from the Simplifyed-Scripts directory" "$YELLOW"
+                exit 1
+            fi
+        else
+            log_message "Please install the API first using install-api.sh:" "$YELLOW"
+            log_message "  sudo ./install-api.sh" "$GREEN"
+            exit 1
+        fi
     fi
 }
 
