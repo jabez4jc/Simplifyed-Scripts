@@ -195,8 +195,44 @@ sudo tail -f /var/log/openalgo-daily-restart.log
 sudo crontab -r
 ```
 
+### `api-manager.sh`
+**Simple interactive API setup and management (Recommended)**
+
+Simple, robust menu-driven script with proper input handling for all API operations.
+
+**Features:**
+- Install API from current directory
+- Setup systemd service (auto-start on boot)
+- Configure firewall rules (UFW)
+- Manage service (start, stop, restart, status)
+- View API logs
+- Verify API is working
+- Simple, clean menu interface
+- Proper input handling (no sudo stdin issues)
+
+**Usage:**
+```bash
+sudo ./api-manager.sh
+```
+
+**Menu Options:**
+1. Install & Setup API - Copies script and configures systemd
+2. Verify API Status - Checks all components
+3. Manage Service - Control service (start/stop/restart)
+4. View Logs - Recent or live logs
+5. Exit
+
+**Quick Setup:**
+```bash
+sudo ./api-manager.sh
+# Select option 1 (Install & Setup API)
+# Select option 4 (Setup Everything)
+```
+
+This is the recommended script to use for first-time setup and management.
+
 ### `install-api.sh`
-**Install OpenAlgo REST API**
+**Install OpenAlgo REST API (Legacy)**
 
 Installs the REST API script to the system and verifies it's working.
 
@@ -211,7 +247,7 @@ Installs the REST API script to the system and verifies it's working.
 sudo ./install-api.sh
 ```
 
-This needs to be run only once before using `setup-api.sh`.
+This needs to be run only once before using other API scripts.
 
 ### `setup-api.sh`
 **Unified API setup, verification, and management**
