@@ -7,12 +7,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 log_message() {
-    local message="$1"
-    local color="$2"
-    echo -e "${color}${message}${NC}"
+    echo -e "${2}${1}${NC}"
 }
 
 show_banner() {
+    clear
     echo -e "${BLUE}"
     echo "  ██████╗ ██████╗ ███████╗███╗   ██╗ █████╗ ██╗      ██████╗  ██████╗ "
     echo " ██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔══██╗██║     ██╔════╝ ██╔═══██╗"
@@ -23,30 +22,12 @@ show_banner() {
     echo -e "${NC}"
 }
 
-show_menu() {
-    echo ""
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  OPENALGO API SETUP & MANAGEMENT${NC}"
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo "1) Setup API as Systemd Service (Auto-start on boot)"
-    echo "2) Verify API is Running and Accessible"
-    echo "3) Setup Remote Restart (SSH & REST API)"
-    echo "4) Setup Everything (All of the above)"
-    echo "5) Manage Service (Status, Restart, Stop)"
-    echo "6) View API Logs"
-    echo "7) Exit"
-    echo ""
-    read -p "Select option [1-7]: " option
-    echo ""
-}
-
 check_dependencies() {
     if [ ! -f "/usr/local/bin/openalgo-restart-api.py" ]; then
         log_message "❌ API script not found at /usr/local/bin/openalgo-restart-api.py" "$RED"
         echo ""
         log_message "The REST API needs to be installed first." "$YELLOW"
-        log_message "\nOptions:" "$BLUE"
+        log_message "Options:" "$BLUE"
         echo "1) Install API now (requires openalgo-restart-api.py in current directory)"
         echo "2) Exit and install manually"
         echo ""
@@ -54,7 +35,7 @@ check_dependencies() {
         
         if [ "$install_option" = "1" ]; then
             if [ -f "openalgo-restart-api.py" ]; then
-                log_message "\n📝 Installing API script..." "$YELLOW"
+                log_message "Installing API script..." "$YELLOW"
                 cp openalgo-restart-api.py /usr/local/bin/openalgo-restart-api.py
                 chmod +x /usr/local/bin/openalgo-restart-api.py
                 
@@ -78,13 +59,14 @@ check_dependencies() {
 }
 
 setup_systemd_service() {
+    show_banner
     log_message "╔════════════════════════════════════════╗" "$BLUE"
     log_message "║ SETTING UP SYSTEMD SERVICE            ║" "$BLUE"
     log_message "╚════════════════════════════════════════╝" "$BLUE"
     
-    log_message "\n📝 Creating systemd service file..." "$YELLOW"
+    log_message "📝 Creating systemd service file..." "$YELLOW"
     
-    sudo tee /etc/systemd/system/openalgo-restart-api.service > /dev/null <<'EOF'
+    sudo tee /etc/systemd/system/openalgo-restart-api.service > /dev/null <<'SVCEOF'
 [Unit]
 Description=OpenAlgo REST API for Instance Management
 After=network.target
@@ -101,16 +83,11 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SVCEOF
 
-    if [ $? -eq 0 ]; then
-        log_message "✅ Service file created" "$GREEN"
-    else
-        log_message "❌ Failed to create service file" "$RED"
-        return 1
-    fi
+    log_message "✅ Service file created" "$GREEN"
     
-    log_message "\n🔄 Reloading systemd daemon..." "$YELLOW"
+    log_message "🔄 Reloading systemd daemon..." "$YELLOW"
     sudo systemctl daemon-reload
     
     log_message "🛑 Stopping existing processes..." "$YELLOW"
@@ -132,36 +109,27 @@ EOF
         return 0
     else
         log_message "❌ API service failed to start" "$RED"
-        log_message "\nService logs:" "$YELLOW"
-        sudo journalctl -u openalgo-restart-api -n 20
+        log_message "Service logs:" "$YELLOW"
+        sudo journalctl -u openalgo-restart-api -n 20 --no-pager
         return 1
     fi
 }
 
 verify_api() {
+    show_banner
     log_message "╔════════════════════════════════════════╗" "$BLUE"
     log_message "║ VERIFYING API STATUS                  ║" "$BLUE"
     log_message "╚════════════════════════════════════════╝" "$BLUE"
     
-    # Check if API process is running
-    log_message "\n1️⃣  Checking API process..." "$YELLOW"
+    log_message "1️⃣  Checking API process..." "$YELLOW"
     if ps aux | grep -v grep | grep -q "python3.*openalgo-restart-api"; then
         log_message "✅ API process is running" "$GREEN"
     else
-        log_message "❌ API process is NOT running - Starting..." "$RED"
-        sudo python3 /usr/local/bin/openalgo-restart-api.py 8888 > /tmp/api.log 2>&1 &
-        sleep 3
-        
-        if ps aux | grep -v grep | grep -q "python3.*openalgo-restart-api"; then
-            log_message "✅ API process started" "$GREEN"
-        else
-            log_message "❌ Failed to start API" "$RED"
-            return 1
-        fi
+        log_message "❌ API process is NOT running" "$RED"
+        return 1
     fi
     
-    # Check port binding
-    log_message "\n2️⃣  Checking port 8888..." "$YELLOW"
+    log_message "2️⃣  Checking port 8888..." "$YELLOW"
     if sudo ss -tlnp 2>/dev/null | grep -q ":8888 "; then
         log_message "✅ Port 8888 is listening" "$GREEN"
     else
@@ -169,17 +137,16 @@ verify_api() {
         return 1
     fi
     
-    # Check firewall
-    log_message "\n3️⃣  Checking firewall..." "$YELLOW"
+    log_message "3️⃣  Checking firewall..." "$YELLOW"
     if command -v ufw &>/dev/null; then
         ufw_status=$(sudo ufw status 2>/dev/null | head -1)
         if echo "$ufw_status" | grep -q "active"; then
             if sudo ufw status | grep -q "8888"; then
                 log_message "✅ Port 8888 allowed in UFW" "$GREEN"
             else
-                log_message "❌ Port 8888 NOT allowed in UFW - Adding..." "$YELLOW"
-                sudo ufw allow 8888/tcp
-                sudo ufw allow 8888/udp
+                log_message "⚠️  Port 8888 NOT allowed in UFW - Adding..." "$YELLOW"
+                sudo ufw allow 8888/tcp > /dev/null 2>&1
+                sudo ufw allow 8888/udp > /dev/null 2>&1
                 log_message "✅ Port 8888 added to UFW" "$GREEN"
             fi
         else
@@ -187,8 +154,7 @@ verify_api() {
         fi
     fi
     
-    # Test API
-    log_message "\n4️⃣  Testing API connectivity..." "$YELLOW"
+    log_message "4️⃣  Testing API connectivity..." "$YELLOW"
     response=$(curl -s -m 5 http://localhost:8888/health 2>&1)
     
     if echo "$response" | grep -q "healthy"; then
@@ -198,17 +164,15 @@ verify_api() {
         return 1
     fi
     
-    # Server info
     SERVER_IP=$(hostname -I | awk '{print $1}')
-    log_message "\n5️⃣  Server Information" "$YELLOW"
+    log_message "5️⃣  Server Information" "$YELLOW"
     log_message "   Local IP: $SERVER_IP" "$BLUE"
     log_message "   API URL: http://$SERVER_IP:8888" "$BLUE"
     
-    # Summary
-    log_message "\n╔════════════════════════════════════════╗" "$GREEN"
+    log_message "╔════════════════════════════════════════╗" "$GREEN"
     log_message "║ ✅ API VERIFICATION COMPLETE          ║" "$GREEN"
     log_message "╚════════════════════════════════════════╝" "$GREEN"
-    log_message "\nAccess from remote:" "$YELLOW"
+    log_message "Access from remote:" "$YELLOW"
     log_message "  http://$SERVER_IP:8888" "$GREEN"
     log_message "  http://$SERVER_IP:8888/health" "$GREEN"
     log_message "  http://$SERVER_IP:8888/api/instances" "$GREEN"
@@ -217,67 +181,61 @@ verify_api() {
 }
 
 setup_remote_restart() {
+    show_banner
     log_message "╔════════════════════════════════════════╗" "$BLUE"
     log_message "║ SETUP REMOTE RESTART OPTIONS          ║" "$BLUE"
     log_message "╚════════════════════════════════════════╝" "$BLUE"
     
-    log_message "\n📋 OPTIONS FOR REMOTE RESTART:" "$BLUE"
+    log_message "OPTIONS FOR REMOTE RESTART:" "$BLUE"
     echo ""
     echo "1) SSH Command (Direct remote execution)"
     echo "2) REST API Endpoint (HTTP webhook)"
     echo "3) Setup both options"
     echo ""
-    
     read -p "Select option [1-3]: " remote_option
+    echo ""
     
     case $remote_option in
         1|3)
-            setup_ssh_restart
+            show_ssh_options
             ;;
     esac
     
     case $remote_option in
         2|3)
-            setup_api_endpoints
+            show_api_options
             ;;
     esac
 }
 
-setup_ssh_restart() {
-    log_message "\n${YELLOW}SSH REMOTE RESTART SETUP${NC}" "$BLUE"
-    
+show_ssh_options() {
     SERVER_IP=$(hostname -I | awk '{print $1}')
-    log_message "\n📋 You can now trigger restarts via SSH:" "$BLUE"
-    log_message "\nFrom remote machine:" "$YELLOW"
+    log_message "SSH REMOTE RESTART:" "$BLUE"
+    log_message "From remote machine:" "$YELLOW"
     log_message "  ssh root@$SERVER_IP sudo /usr/local/bin/openalgo-daily-restart.sh" "$GREEN"
     log_message "  ssh root@$SERVER_IP sudo systemctl restart openalgo*" "$GREEN"
-    log_message "\nView logs:" "$YELLOW"
+    log_message "View logs:" "$YELLOW"
     log_message "  ssh root@$SERVER_IP tail -f /var/log/openalgo-daily-restart.log" "$GREEN"
+    echo ""
 }
 
-setup_api_endpoints() {
-    log_message "\n${YELLOW}REST API ENDPOINTS${NC}" "$BLUE"
-    
+show_api_options() {
     SERVER_IP=$(hostname -I | awk '{print $1}')
-    log_message "\n📋 REST API is available at:" "$BLUE"
-    log_message "\nWeb UI (Recommended):" "$YELLOW"
+    log_message "REST API ENDPOINTS:" "$BLUE"
+    log_message "Web UI (Recommended):" "$YELLOW"
     log_message "  http://$SERVER_IP:8888" "$GREEN"
-    
-    log_message "\nREST Endpoints:" "$YELLOW"
+    log_message "REST Endpoints:" "$YELLOW"
     log_message "  GET  http://$SERVER_IP:8888/health - Health check" "$GREEN"
     log_message "  GET  http://$SERVER_IP:8888/api/instances - List instances" "$GREEN"
     log_message "  GET  http://$SERVER_IP:8888/api/status - Get status" "$GREEN"
+    log_message "  GET  http://$SERVER_IP:8888/api/health - Detailed health" "$GREEN"
     log_message "  POST http://$SERVER_IP:8888/api/restart-all - Restart all" "$GREEN"
-    log_message "  POST http://$SERVER_IP:8888/api/restart-instance - Restart one" "$GREEN"
-    
-    log_message "\n📝 Example curl commands:" "$YELLOW"
-    log_message "  curl http://$SERVER_IP:8888/health" "$GREEN"
-    log_message "  curl http://$SERVER_IP:8888/api/instances" "$GREEN"
-    log_message '  curl -X POST http://$SERVER_IP:8888/api/restart-all' "$GREEN"
+    echo ""
 }
 
 manage_service() {
-    log_message "\n╔════════════════════════════════════════╗" "$BLUE"
+    show_banner
+    log_message "╔════════════════════════════════════════╗" "$BLUE"
     log_message "║ SERVICE MANAGEMENT                    ║" "$BLUE"
     log_message "╚════════════════════════════════════════╝" "$BLUE"
     
@@ -287,34 +245,38 @@ manage_service() {
     echo "3) Stop service"
     echo "4) Start service"
     echo "5) View detailed logs"
+    echo "6) Back to menu"
     echo ""
-    read -p "Select option [1-5]: " mgmt_option
+    read -p "Select option [1-6]: " mgmt_option
     
     case $mgmt_option in
         1)
-            log_message "\n📊 Service Status:" "$YELLOW"
+            log_message "📊 Service Status:" "$YELLOW"
             sudo systemctl status openalgo-restart-api
             ;;
         2)
-            log_message "\n🔄 Restarting service..." "$YELLOW"
+            log_message "🔄 Restarting service..." "$YELLOW"
             sudo systemctl restart openalgo-restart-api
             sleep 2
             sudo systemctl status openalgo-restart-api --no-pager
             ;;
         3)
-            log_message "\n🛑 Stopping service..." "$YELLOW"
+            log_message "🛑 Stopping service..." "$YELLOW"
             sudo systemctl stop openalgo-restart-api
             log_message "✅ Service stopped" "$GREEN"
             ;;
         4)
-            log_message "\n🚀 Starting service..." "$YELLOW"
+            log_message "🚀 Starting service..." "$YELLOW"
             sudo systemctl start openalgo-restart-api
             sleep 2
             sudo systemctl status openalgo-restart-api --no-pager
             ;;
         5)
-            log_message "\n📋 API Logs (last 50 lines):" "$YELLOW"
-            sudo journalctl -u openalgo-restart-api -n 50
+            log_message "📋 API Logs (last 50 lines):" "$YELLOW"
+            sudo journalctl -u openalgo-restart-api -n 50 --no-pager
+            ;;
+        6)
+            return
             ;;
         *)
             log_message "Invalid option" "$RED"
@@ -323,7 +285,8 @@ manage_service() {
 }
 
 view_logs() {
-    log_message "\n╔════════════════════════════════════════╗" "$BLUE"
+    show_banner
+    log_message "╔════════════════════════════════════════╗" "$BLUE"
     log_message "║ API LOGS                              ║" "$BLUE"
     log_message "╚════════════════════════════════════════╝" "$BLUE"
     
@@ -364,7 +327,21 @@ main() {
     check_dependencies
     
     while true; do
-        show_menu
+        echo ""
+        echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}  OPENALGO API SETUP & MANAGEMENT${NC}"
+        echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo "1) Setup API as Systemd Service (Auto-start on boot)"
+        echo "2) Verify API is Running and Accessible"
+        echo "3) Setup Remote Restart (SSH & REST API)"
+        echo "4) Setup Everything (All of the above)"
+        echo "5) Manage Service (Status, Restart, Stop)"
+        echo "6) View API Logs"
+        echo "7) Exit"
+        echo ""
+        read -p "Select option [1-7]: " option
+        echo ""
         
         case $option in
             1)
@@ -380,9 +357,7 @@ main() {
                 read -p "Press Enter to continue..."
                 ;;
             4)
-                setup_systemd_service
-                verify_api
-                setup_remote_restart
+                setup_systemd_service && verify_api && setup_remote_restart
                 read -p "Press Enter to continue..."
                 ;;
             5)
@@ -394,7 +369,7 @@ main() {
                 read -p "Press Enter to continue..."
                 ;;
             7)
-                log_message "\nGoodbye! 👋" "$BLUE"
+                log_message "Goodbye! 👋" "$BLUE"
                 exit 0
                 ;;
             *)
@@ -402,9 +377,6 @@ main() {
                 read -p "Press Enter to continue..."
                 ;;
         esac
-        
-        clear
-        show_banner
     done
 }
 
