@@ -1,16 +1,17 @@
 #!/bin/bash
 
-# Simple wrapper to run setup with proper stdin handling
-exec sudo -E bash -c '
-RED="\033[0;31m"
-GREEN="\033[0;32m"
-BLUE="\033[0;34m"
-YELLOW="\033[1;33m"
-NC="\033[0m"
+# API Manager - Simple interactive API setup and management
+# Run with: sudo ./api-manager.sh
 
-# Ensure we are root
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Check if running as root
 if [ "$EUID" -ne 0 ]; then 
-    echo "This script must be run with sudo"
+    echo "This script must be run with sudo: sudo ./api-manager.sh"
     exit 1
 fi
 
@@ -71,7 +72,7 @@ menu_setup() {
         1) install_api; read -p "Press Enter to continue..."; menu_main ;;
         2) setup_service; read -p "Press Enter to continue..."; menu_main ;;
         3) setup_firewall; read -p "Press Enter to continue..."; menu_main ;;
-        4) install_api && setup_service && setup_firewall; read -p "Press Enter to continue..."; menu_main ;;
+        4) install_api && echo "" && setup_service && echo "" && setup_firewall; read -p "Press Enter to continue..."; menu_main ;;
         5) menu_main ;;
         *) echo "Invalid option"; sleep 2; menu_setup ;;
     esac
@@ -94,9 +95,9 @@ menu_manage() {
     
     case $choice in
         1) systemctl status openalgo-restart-api; read -p "Press Enter to continue..."; menu_main ;;
-        2) systemctl start openalgo-restart-api; echo "✅ Started"; sleep 1; menu_main ;;
-        3) systemctl stop openalgo-restart-api; echo "✅ Stopped"; sleep 1; menu_main ;;
-        4) systemctl restart openalgo-restart-api; echo "✅ Restarted"; sleep 1; menu_main ;;
+        2) systemctl start openalgo-restart-api; echo -e "${GREEN}✅ Started${NC}"; sleep 1; menu_main ;;
+        3) systemctl stop openalgo-restart-api; echo -e "${GREEN}✅ Stopped${NC}"; sleep 1; menu_main ;;
+        4) systemctl restart openalgo-restart-api; echo -e "${GREEN}✅ Restarted${NC}"; sleep 1; menu_main ;;
         5) menu_main ;;
         *) echo "Invalid option"; sleep 2; menu_manage ;;
     esac
@@ -129,16 +130,23 @@ menu_logs() {
 install_api() {
     echo -e "${YELLOW}Installing API...${NC}"
     
-    if [ ! -f "openalgo-restart-api.py" ]; then
-        # Try to find it in the scripts directory
-        if [ -f "$(dirname "$0")/openalgo-restart-api.py" ]; then
-            cp "$(dirname "$0")/openalgo-restart-api.py" /usr/local/bin/openalgo-restart-api.py
-        else
-            echo -e "${RED}❌ openalgo-restart-api.py not found${NC}"
-            return 1
-        fi
+    API_FILE=""
+    
+    # Try to find the API script
+    if [ -f "openalgo-restart-api.py" ]; then
+        API_FILE="openalgo-restart-api.py"
+    elif [ -f "$(dirname "$0")/openalgo-restart-api.py" ]; then
+        API_FILE="$(dirname "$0")/openalgo-restart-api.py"
     else
-        cp openalgo-restart-api.py /usr/local/bin/openalgo-restart-api.py
+        echo -e "${RED}❌ openalgo-restart-api.py not found${NC}"
+        return 1
+    fi
+    
+    # Copy the file
+    cp "$API_FILE" /usr/local/bin/openalgo-restart-api.py 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ Failed to copy API script${NC}"
+        return 1
     fi
     
     chmod +x /usr/local/bin/openalgo-restart-api.py
@@ -155,8 +163,14 @@ install_api() {
 setup_service() {
     echo -e "${YELLOW}Setting up systemd service...${NC}"
     
+    # Check if API is installed
+    if [ ! -f "/usr/local/bin/openalgo-restart-api.py" ]; then
+        echo -e "${RED}❌ API script not found. Please run 'Install API' first.${NC}"
+        return 1
+    fi
+    
     # Create service file
-    cat > /etc/systemd/system/openalgo-restart-api.service <<EOF
+    cat > /etc/systemd/system/openalgo-restart-api.service <<'SVCEOF'
 [Unit]
 Description=OpenAlgo REST API for Instance Management
 After=network.target
@@ -173,8 +187,14 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SVCEOF
     
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ Failed to create service file${NC}"
+        return 1
+    fi
+    
+    # Reload systemd
     systemctl daemon-reload
     systemctl enable openalgo-restart-api
     
@@ -183,6 +203,7 @@ EOF
     fuser -k 8888/tcp 2>/dev/null || true
     sleep 2
     
+    # Start service
     systemctl start openalgo-restart-api
     sleep 3
     
@@ -191,6 +212,7 @@ EOF
         return 0
     else
         echo -e "${RED}❌ Service failed to start${NC}"
+        echo -e "${YELLOW}Service logs:${NC}"
         journalctl -u openalgo-restart-api -n 20 --no-pager
         return 1
     fi
@@ -200,8 +222,8 @@ setup_firewall() {
     echo -e "${YELLOW}Configuring firewall...${NC}"
     
     if command -v ufw &>/dev/null; then
-        ufw allow 8888/tcp
-        ufw allow 8888/udp
+        ufw allow 8888/tcp > /dev/null 2>&1
+        ufw allow 8888/udp > /dev/null 2>&1
         echo -e "${GREEN}✅ Port 8888 opened in UFW${NC}"
     else
         echo -e "${BLUE}ℹ️  UFW not found, skipping firewall setup${NC}"
@@ -240,7 +262,7 @@ verify_api() {
     fi
     
     # Get IP
-    SERVER_IP=$(hostname -I | awk "{print \$1}")
+    SERVER_IP=$(hostname -I | awk '{print $1}')
     echo ""
     echo -e "${YELLOW}Access the dashboard:${NC}"
     echo -e "  ${GREEN}http://$SERVER_IP:8888${NC}"
@@ -252,4 +274,3 @@ verify_api() {
 
 # Start the menu
 menu_main
-'
