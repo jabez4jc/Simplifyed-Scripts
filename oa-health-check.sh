@@ -128,10 +128,10 @@ check_env_file() {
 
     print_ok ".env file exists"
 
-    # Check for critical variables
+    # Check for critical variables (handle spaces around =)
     local required_vars=("DATABASE_URL" "FLASK_PORT")
     for var in "${required_vars[@]}"; do
-        if grep -q "^$var=" "$env_file"; then
+        if grep -q "^[[:space:]]*$var[[:space:]]*=" "$env_file"; then
             print_ok ".env contains $var"
         else
             print_warning ".env missing $var"
@@ -139,11 +139,11 @@ check_env_file() {
     done
 
     # Check for BROKER - either as direct variable or extract from REDIRECT_URL
-    if grep -q "^BROKER=" "$env_file"; then
+    if grep -q "^[[:space:]]*BROKER[[:space:]]*=" "$env_file"; then
         print_ok ".env contains BROKER"
-    elif grep -q "^REDIRECT_URL=" "$env_file"; then
+    elif grep -q "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file"; then
         # Extract broker from REDIRECT_URL (e.g., https://domain.com/kotak/callback -> kotak)
-        local redirect_url=$(grep "^REDIRECT_URL=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"')
+        local redirect_url=$(grep "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"' | xargs)
         local broker=$(echo "$redirect_url" | sed 's|.*/\([^/]*\)/callback.*|\1|')
         if [ -n "$broker" ] && [ "$broker" != "$redirect_url" ]; then
             print_ok ".env contains BROKER (detected from REDIRECT_URL: $broker)"
@@ -398,12 +398,13 @@ print_summary() {
 # Show menu for instance selection
 show_menu() {
     echo ""
-    log_message "=== HEALTH CHECK OPTIONS ===" "$BLUE"
-    
+    echo -e "${BLUE}=== HEALTH CHECK OPTIONS ===${NC}"
+    echo ""
+
     local instances=($(ls -1 "$BASE_DIR" 2>/dev/null | grep "^openalgo"))
     
     if [ ${#instances[@]} -eq 0 ]; then
-        log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
+        echo -e "${RED}❌ No OpenAlgo instances found in $BASE_DIR${NC}"
         return 1
     fi
     
@@ -421,7 +422,7 @@ show_menu() {
     read -p "Select option [1-$total_options]: " choice
     
     if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > total_options )); then
-        log_message "Invalid choice" "$RED"
+        echo -e "${RED}Invalid choice${NC}"
         return 1
     fi
     
@@ -492,7 +493,7 @@ main() {
             check_instance "$command"
             print_summary
         else
-            log_message "Usage: $0 [all|system|INSTANCE_NAME]" "$YELLOW"
+            echo -e "${YELLOW}Usage: $0 [all|system|INSTANCE_NAME]${NC}"
             exit 1
         fi
     fi

@@ -29,6 +29,18 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.handle_instances_health()
         elif self.path == '/health':
             self.handle_health()
+        elif self.path.startswith('/api/logs/'):
+            instance = self.path.split('/api/logs/')[1].strip('/')
+            if instance:
+                self.handle_instance_logs(instance)
+            else:
+                self.send_json({"error": "Missing instance parameter"}, 400)
+        elif self.path.startswith('/api/broker-status/'):
+            instance = self.path.split('/api/broker-status/')[1].strip('/')
+            if instance:
+                self.handle_broker_status(instance)
+            else:
+                self.send_json({"error": "Missing instance parameter"}, 400)
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -121,10 +133,89 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
+    def handle_instance_logs(self, instance):
+        """Get last 100 lines of logs for an instance"""
+        try:
+            result = subprocess.run(
+                f"sudo journalctl -u openalgo{instance[8:]} -n 100 --no-pager",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            logs = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            self.send_json({
+                "instance": instance,
+                "logs": logs,
+                "count": len(logs),
+                "timestamp": str(datetime.now())
+            })
+        except Exception as e:
+            self.send_json({
+                "instance": instance,
+                "logs": [],
+                "error": str(e),
+                "timestamp": str(datetime.now())
+            }, 500)
+
+    def handle_broker_status(self, instance):
+        """Get broker authentication status for an instance"""
+        try:
+            inst_path = f"/var/python/openalgo-flask/{instance}"
+            env_file = f"{inst_path}/.env"
+
+            broker = None
+            redirect_url = None
+
+            # Extract broker from .env
+            if os.path.exists(env_file):
+                with open(env_file, 'r') as f:
+                    for line in f:
+                        if 'REDIRECT_URL' in line and '=' in line:
+                            redirect_url = line.split('=', 1)[1].strip().strip("'\"")
+                            # Extract broker from URL: https://domain.com/broker/callback
+                            import re
+                            match = re.search(r'/([^/]+)/callback', redirect_url)
+                            if match:
+                                broker = match.group(1)
+                            break
+
+            # Check for invalid session token in recent logs
+            logs_result = subprocess.run(
+                f"sudo journalctl -u openalgo{instance[8:]} -n 50 --no-pager",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+
+            logs_text = logs_result.stdout
+            authenticated = True
+            last_error = None
+            error_timestamp = None
+
+            if "invalid session token" in logs_text:
+                authenticated = False
+                last_error = "invalid session token"
+                # Try to extract timestamp of last error
+                for line in logs_text.split('\n'):
+                    if "invalid session token" in line:
+                        error_timestamp = line.split(']')[0].strip('[') if '[' in line else None
+
+            self.send_json({
+                "instance": instance,
+                "broker": broker,
+                "authenticated": authenticated,
+                "last_error": last_error,
+                "error_timestamp": error_timestamp,
+                "requires_login": not authenticated,
+                "timestamp": str(datetime.now())
+            })
+        except Exception as e:
+            self.send_json({
+                "instance": instance,
+                "error": str(e),
+                "timestamp": str(datetime.now())
+            }, 500)
+
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "logs": []}
-        
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "session_valid": True}
+
         try:
             result = subprocess.run(
                 f"systemctl is-active {instance}",
@@ -133,25 +224,42 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             health["status"] = result.stdout.strip()
         except:
             health["status"] = "unknown"
-        
+
         try:
             inst_path = f"/var/python/openalgo-flask/{instance}"
             if os.path.exists(f"{inst_path}/db/openalgo.db"):
                 health["database"] = True
         except:
             pass
-        
+
         try:
             env_file = f"/var/python/openalgo-flask/{instance}/.env"
             if os.path.exists(env_file):
                 with open(env_file, 'r') as f:
                     for line in f:
-                        if line.startswith('FLASK_PORT='):
-                            health["port"] = line.split('=')[1].strip()
-                            break
+                        if line.startswith('FLASK_PORT') and '=' in line:
+                            health["port"] = line.split('=')[1].strip().strip("'\"")
+                        elif 'REDIRECT_URL' in line and '=' in line:
+                            redirect_url = line.split('=', 1)[1].strip().strip("'\"")
+                            # Extract broker from URL
+                            import re
+                            match = re.search(r'/([^/]+)/callback', redirect_url)
+                            if match:
+                                health["broker"] = match.group(1)
         except:
             pass
-        
+
+        # Check session validity
+        try:
+            logs_result = subprocess.run(
+                f"sudo journalctl -u openalgo{instance[8:]} -n 50 --no-pager",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if "invalid session token" in logs_result.stdout:
+                health["session_valid"] = False
+        except:
+            pass
+
         return health
     
     def handle_health(self):
@@ -255,6 +363,8 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .badge-active{background:#d4edda;color:#155724}
 .badge-inactive{background:#f8d7da;color:#721c24}
 .badge-info{background:#cfe2ff;color:#084298}
+.badge-authenticated{background:#d4edda;color:#155724}
+.badge-unauthenticated{background:#f8d7da;color:#721c24}
 .alert{padding:15px;margin:20px 0;border-radius:8px;display:none}
 .alert.show{display:block}
 .alert-success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}
@@ -265,6 +375,14 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 .summary{background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:20px;border-left:4px solid #667eea}
 .actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
+.broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
+.logs-toggle{padding:8px 12px;background:#667eea;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-top:10px;width:100%}
+.logs-toggle:hover{background:#5568d3}
+.logs-section{display:none;margin-top:10px;padding:10px;background:#1e1e1e;border-radius:4px;border:1px solid #ccc}
+.logs-section.show{display:block}
+.logs-container{max-height:500px;overflow-y:auto;font-family:'Courier New',monospace;font-size:11px;color:#d4d4d4;line-height:1.4}
+.log-line{padding:2px 5px;word-break:break-all}
+.log-error{background:#c4444466;color:#ff6b6b}
 </style>
 </head>
 <body>
@@ -287,6 +405,8 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 </div>
 
 <script>
+let brokerStatusCache={};
+let logsCache={};
 async function loadInstances(){
 try{
 document.getElementById('loading').style.display='block';
@@ -304,12 +424,45 @@ document.getElementById('summary').innerHTML=`<p><strong>Total Instances:</stron
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
 const active=h.status==='active';
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+const broker=h.broker||'Unknown';
+const sessionValid=h.session_valid!==false;
+const brokerAuthBadge=sessionValid?`<span class="badge badge-authenticated">✓ Authenticated</span>`:`<span class="badge badge-unauthenticated">✗ Not Authenticated</span>`;
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
+}
+async function toggleLogs(inst){
+const logsSection=document.getElementById(`logs-${inst}`);
+logsSection.classList.toggle('show');
+if(logsSection.classList.contains('show')&&!logsCache[inst]){
+fetchLogs(inst);
+}
+}
+async function fetchLogs(inst){
+try{
+const r=await fetch(`/api/logs/${inst}`);
+const data=await r.json();
+const logsContent=document.getElementById(`logs-content-${inst}`);
+if(data.logs&&data.logs.length>0){
+const html=data.logs.map(log=>{
+const hasError=log.toLowerCase().includes('invalid session token')||log.toLowerCase().includes('error');
+return`<div class="log-line ${hasError?'log-error':''}">${escapeHtml(log)}</div>`;
+}).join('');
+logsContent.innerHTML=html;
+logsCache[inst]=true;
+}else{
+logsContent.innerHTML='<p style="color:#999">No logs available</p>';
+}
+}catch(e){
+document.getElementById(`logs-content-${inst}`).innerHTML=`<p style="color:#ff6b6b">Error loading logs: ${e.message}</p>`;
+}
+}
+function escapeHtml(text){
+const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+return text.replace(/[&<>"']/g,m=>map[m]);
 }
 async function restartAll(){
 if(!confirm('Restart all instances?'))return;
