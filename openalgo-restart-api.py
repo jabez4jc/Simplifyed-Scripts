@@ -227,7 +227,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
         try:
             inst_path = f"/var/python/openalgo-flask/{instance}"
-            if os.path.exists(f"{inst_path}/db/openalgo.db"):
+            # Extract instance number: openalgo1 -> 1, openalgo10 -> 10
+            instance_num = instance.replace('openalgo', '')
+            db_file = f"{inst_path}/db/openalgo{instance_num}.db"
+            if os.path.exists(db_file):
                 health["database"] = True
         except:
             pass
