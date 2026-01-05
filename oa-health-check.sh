@@ -120,16 +120,16 @@ check_zmq_port() {
 check_env_file() {
     local instance_dir="$1"
     local env_file="$instance_dir/.env"
-    
+
     if [ ! -f "$env_file" ]; then
         print_critical ".env file missing: $env_file"
         return 1
     fi
-    
+
     print_ok ".env file exists"
-    
+
     # Check for critical variables
-    local required_vars=("DATABASE_URL" "FLASK_PORT" "BROKER")
+    local required_vars=("DATABASE_URL" "FLASK_PORT")
     for var in "${required_vars[@]}"; do
         if grep -q "^$var=" "$env_file"; then
             print_ok ".env contains $var"
@@ -137,6 +137,22 @@ check_env_file() {
             print_warning ".env missing $var"
         fi
     done
+
+    # Check for BROKER - either as direct variable or extract from REDIRECT_URL
+    if grep -q "^BROKER=" "$env_file"; then
+        print_ok ".env contains BROKER"
+    elif grep -q "^REDIRECT_URL=" "$env_file"; then
+        # Extract broker from REDIRECT_URL (e.g., https://domain.com/kotak/callback -> kotak)
+        local redirect_url=$(grep "^REDIRECT_URL=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"')
+        local broker=$(echo "$redirect_url" | sed 's|.*/\([^/]*\)/callback.*|\1|')
+        if [ -n "$broker" ] && [ "$broker" != "$redirect_url" ]; then
+            print_ok ".env contains BROKER (detected from REDIRECT_URL: $broker)"
+        else
+            print_warning ".env missing BROKER (and REDIRECT_URL malformed)"
+        fi
+    else
+        print_warning ".env missing BROKER and REDIRECT_URL"
+    fi
 }
 
 # Check databases exist
