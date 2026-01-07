@@ -75,6 +75,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 self.handle_start_instance(instance)
             else:
                 self.send_json({"error": "Missing instance parameter"}, 400)
+        elif self.path == '/api/reboot-server':
+            self.handle_reboot_server()
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -177,24 +179,49 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                                 broker = match.group(1)
                             break
 
-            # Check for invalid session token in recent logs
+            # Check for authentication status in recent logs
             logs_result = subprocess.run(
-                f"sudo journalctl -u openalgo{instance[8:]} -n 50 --no-pager",
+                f"sudo journalctl -u openalgo{instance[8:]} -n 100 --no-pager",
                 shell=True, capture_output=True, text=True, timeout=5
             )
 
             logs_text = logs_result.stdout
-            authenticated = True
+            authenticated = False
             last_error = None
             error_timestamp = None
 
-            if "invalid session token" in logs_text:
-                authenticated = False
-                last_error = "invalid session token"
-                # Try to extract timestamp of last error
-                for line in logs_text.split('\n'):
-                    if "invalid session token" in line:
-                        error_timestamp = line.split(']')[0].strip('[') if '[' in line else None
+            # Check for NOT authenticated patterns
+            not_authenticated_patterns = [
+                "Session expired",
+                "Invalid session detected",
+                "No valid auth token or broker found"
+            ]
+
+            # Check for authenticated patterns
+            authenticated_patterns = [
+                "Master contract download completed",
+                "Successfully loaded.*symbols into cache"
+            ]
+
+            # Look for not authenticated patterns
+            for pattern in not_authenticated_patterns:
+                if pattern.lower() in logs_text.lower():
+                    authenticated = False
+                    last_error = pattern
+                    # Extract timestamp of last occurrence
+                    for line in logs_text.split('\n'):
+                        if pattern.lower() in line.lower():
+                            error_timestamp = line.split(']')[0].strip('[') if '[' in line else None
+                    break
+
+            # Look for authenticated patterns (these override not authenticated if found)
+            import re
+            for pattern in authenticated_patterns:
+                if re.search(pattern, logs_text, re.IGNORECASE):
+                    authenticated = True
+                    last_error = None
+                    error_timestamp = None
+                    break
 
             self.send_json({
                 "instance": instance,
@@ -252,14 +279,44 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except:
             pass
 
-        # Check session validity
+        # Check session validity using improved detection
         try:
             logs_result = subprocess.run(
-                f"sudo journalctl -u openalgo{instance[8:]} -n 50 --no-pager",
+                f"sudo journalctl -u openalgo{instance[8:]} -n 100 --no-pager",
                 shell=True, capture_output=True, text=True, timeout=5
             )
-            if "invalid session token" in logs_result.stdout:
-                health["session_valid"] = False
+            logs_text = logs_result.stdout
+
+            # Check for NOT authenticated patterns
+            not_authenticated_patterns = [
+                "Session expired",
+                "Invalid session detected",
+                "No valid auth token or broker found"
+            ]
+
+            # Check for authenticated patterns
+            authenticated_patterns = [
+                "Master contract download completed",
+                "Successfully loaded.*symbols into cache"
+            ]
+
+            # Default to valid
+            session_valid = True
+
+            # Look for not authenticated patterns
+            for pattern in not_authenticated_patterns:
+                if pattern.lower() in logs_text.lower():
+                    session_valid = False
+                    break
+
+            # Look for authenticated patterns (these override not authenticated if found)
+            import re
+            for pattern in authenticated_patterns:
+                if re.search(pattern, logs_text, re.IGNORECASE):
+                    session_valid = True
+                    break
+
+            health["session_valid"] = session_valid
         except:
             pass
 
@@ -316,14 +373,48 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             f"sudo systemctl start {instance}",
             shell=True, capture_output=True, timeout=30
         )
-        
+
         self.send_json({
             "status": "success",
             "message": f"Started {instance}",
             "instance": instance,
             "timestamp": str(datetime.now())
         })
-    
+
+    def handle_reboot_server(self):
+        """Reboot the server with fallback"""
+        def _reboot():
+            try:
+                # Try primary reboot command
+                result = subprocess.run(
+                    "sudo systemctl reboot",
+                    shell=True, capture_output=True, timeout=10
+                )
+                # If primary fails, use fallback
+                if result.returncode != 0:
+                    subprocess.run(
+                        "sudo shutdown -r now",
+                        shell=True, capture_output=True, timeout=10
+                    )
+            except Exception as e:
+                # Final fallback
+                try:
+                    subprocess.run(
+                        "sudo shutdown -r now",
+                        shell=True, capture_output=True, timeout=10
+                    )
+                except:
+                    pass
+
+        # Run reboot in background thread so response can be sent before shutdown
+        Thread(target=_reboot).start()
+
+        self.send_json({
+            "status": "success",
+            "message": "Server reboot initiated. The system will restart shortly.",
+            "timestamp": str(datetime.now())
+        })
+
     def _restart_all(self):
         """Background restart all"""
         subprocess.run(['/usr/local/bin/openalgo-daily-restart.sh'],
@@ -350,6 +441,8 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .btn-restart{background:#667eea;color:white}
 .btn-stop{background:#dc3545;color:white}
 .btn-start{background:#28a745;color:white}
+.btn-reboot{background:#ff6b6b;color:white}
+.btn-reboot:hover{background:#ff5252}
 .btn-small{padding:6px 12px;font-size:12px;margin:2px}
 .btn:hover{opacity:0.9;transform:translateY(-2px)}
 .instance{background:#f8f9fa;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #667eea}
@@ -386,6 +479,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .logs-container{max-height:500px;overflow-y:auto;font-family:'Courier New',monospace;font-size:11px;color:#d4d4d4;line-height:1.4}
 .log-line{padding:2px 5px;word-break:break-all}
 .log-error{background:#c4444466;color:#ff6b6b}
+.log-success{background:#22863a66;color:#85e89d}
 </style>
 </head>
 <body>
@@ -402,6 +496,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 </div>
 <button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button>
 <button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button>
+<button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instances...</p></div>
 <div id="instances"></div>
 </div>
@@ -451,8 +546,10 @@ const data=await r.json();
 const logsContent=document.getElementById(`logs-content-${inst}`);
 if(data.logs&&data.logs.length>0){
 const html=data.logs.map(log=>{
-const hasError=log.toLowerCase().includes('invalid session token')||log.toLowerCase().includes('error');
-return`<div class="log-line ${hasError?'log-error':''}">${escapeHtml(log)}</div>`;
+const lowerLog=log.toLowerCase();
+const hasAuthError=(lowerLog.includes('session expired')||lowerLog.includes('invalid session detected')||lowerLog.includes('no valid auth token'));
+const hasSuccess=(lowerLog.includes('master contract download completed')||lowerLog.includes('successfully loaded'));
+return`<div class="log-line ${hasAuthError?'log-error':''}${hasSuccess?'log-success':''}">${escapeHtml(log)}</div>`;
 }).join('');
 logsContent.innerHTML=html;
 logsCache[inst]=true;
@@ -492,6 +589,18 @@ if(!confirm(`Start ${inst}?`))return;
 await fetch('/api/start-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Starting ${inst}`,'info');
 setTimeout(loadInstances,1000);
+}
+async function rebootServer(){
+if(!confirm('⚠️ Are you sure you want to reboot the server? This will disconnect all instances!'))return;
+if(!confirm('⚠️ FINAL CONFIRMATION: The server will restart now. Continue?'))return;
+showAlert('Rebooting server... Connection will be lost shortly.','info');
+try{
+const r=await fetch('/api/reboot-server',{method:'POST'});
+const d=await r.json();
+showAlert(d.message,'success');
+}catch(e){
+showAlert('Reboot initiated (API connection lost as expected)','success');
+}
 }
 function showAlert(msg,type){
 const a=document.getElementById('alert');
