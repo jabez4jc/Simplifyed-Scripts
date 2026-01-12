@@ -116,6 +116,12 @@ else
     
     log_message "   Making swap persistent..." "$BLUE"
     echo "$SWAPFILE none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null
+
+    log_message "   Setting swappiness to 15..." "$BLUE"
+    sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null <<'EOF'
+vm.swappiness=15
+EOF
+    sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
     
     log_message "✅ 4GB swap configured successfully" "$GREEN"
 fi

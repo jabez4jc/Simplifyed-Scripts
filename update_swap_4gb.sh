@@ -39,6 +39,12 @@ sudo swapon $SWAPFILE
 # Persist swap in fstab
 echo "$SWAPFILE none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null
 
+# Set swappiness to 15
+sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null <<'EOF'
+vm.swappiness=15
+EOF
+sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
+
 # Display swap summary
 echo "✅ Swap configuration complete!"
 echo "-----------------------------------"

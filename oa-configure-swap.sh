@@ -252,7 +252,13 @@ main() {
     # Persist swap in fstab
     log_message "💾 Persisting swap configuration..." "$BLUE"
     echo "$SWAPFILE none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null
-    
+
+    log_message "⚙️  Setting swappiness to 15..." "$BLUE"
+    sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null <<'EOF'
+vm.swappiness=15
+EOF
+    sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
+
     # Display swap summary
     log_message "\n✅ Swap configuration complete!" "$GREEN"
     log_message "-----------------------------------" "$GREEN"
