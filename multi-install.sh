@@ -118,6 +118,59 @@ REPO_URL="https://github.com/marketcalls/openalgo.git"
 FLASK_PORT_BASE=5000
 WS_PORT_BASE=8765
 ZMQ_PORT_BASE=5555
+SELECTED_BRANCH="main"
+
+# Function to select git branch
+select_branch() {
+    local branch_input
+    local -a branches
+
+    log_message "\nFetching available branches from repo..." "$BLUE"
+    mapfile -t branches < <(git ls-remote --heads "$REPO_URL" | awk '{print $2}' | sed 's|refs/heads/||')
+
+    if [ ${#branches[@]} -eq 0 ]; then
+        log_message "⚠️ Unable to fetch branches. Defaulting to '$SELECTED_BRANCH'." "$YELLOW"
+        return
+    fi
+
+    log_message "Available branches:" "$BLUE"
+    for idx in "${!branches[@]}"; do
+        echo "  $((idx + 1))) ${branches[$idx]}" | tee -a "$LOG_FILE"
+    done
+
+    while true; do
+        read -p "Select branch by number or name (default: $SELECTED_BRANCH): " branch_input
+
+        if [ -z "$branch_input" ]; then
+            if printf '%s\n' "${branches[@]}" | grep -qx "$SELECTED_BRANCH"; then
+                break
+            else
+                SELECTED_BRANCH="${branches[0]}"
+                log_message "Default branch not found. Using '$SELECTED_BRANCH'." "$YELLOW"
+                break
+            fi
+        fi
+
+        if [[ "$branch_input" =~ ^[0-9]+$ ]]; then
+            if [ "$branch_input" -ge 1 ] && [ "$branch_input" -le "${#branches[@]}" ]; then
+                SELECTED_BRANCH="${branches[$((branch_input - 1))]}"
+                break
+            else
+                log_message "Invalid selection. Choose a valid number." "$RED"
+                continue
+            fi
+        fi
+
+        if printf '%s\n' "${branches[@]}" | grep -qx "$branch_input"; then
+            SELECTED_BRANCH="$branch_input"
+            break
+        fi
+
+        log_message "Invalid branch name. Please select from the list." "$RED"
+    done
+
+    log_message "Using branch: $SELECTED_BRANCH" "$GREEN"
+}
 
 # Detect existing instances (openalgo1, openalgo2, ...) to avoid overwriting
 EXISTING_INSTANCES=0
@@ -134,6 +187,9 @@ if [ -d "$BASE_DIR" ]; then
     done
 fi
 log_message "Detected $EXISTING_INSTANCES existing OpenAlgo instance(s) under $BASE_DIR" "$BLUE"
+
+# Select git branch to install
+select_branch
 
 # Arrays to store instance configurations
 declare -a DOMAINS
@@ -276,7 +332,7 @@ for ((n=1; n<=INSTANCES; n++)); do
     # Clone or update repository
     if [ ! -d "$INSTANCE_DIR" ]; then
         log_message "📥 Cloning repository to $INSTANCE_DIR" "$BLUE"
-        sudo git clone "$REPO_URL" "$INSTANCE_DIR"
+        sudo git clone -b "$SELECTED_BRANCH" --single-branch "$REPO_URL" "$INSTANCE_DIR"
         check_status "Failed to clone repository"
     else
         log_message "⚠️ Directory exists, skipping clone" "$YELLOW"
