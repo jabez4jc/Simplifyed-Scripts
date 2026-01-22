@@ -266,7 +266,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "session_valid": True}
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "session_valid": True}
 
         try:
             service_name = self._service_name(instance)
@@ -293,7 +293,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if os.path.exists(env_file):
                 with open(env_file, 'r') as f:
                     for line in f:
-                        if line.startswith('FLASK_PORT') and '=' in line:
+                        if line.startswith('DOMAIN=') and '=' in line:
+                            health["domain"] = line.split('=', 1)[1].strip().strip("'\"")
+                        elif line.startswith('FLASK_PORT') and '=' in line:
                             health["port"] = line.split('=')[1].strip().strip("'\"")
                         elif 'REDIRECT_URL' in line and '=' in line:
                             redirect_url = line.split('=', 1)[1].strip().strip("'\"")
@@ -553,9 +555,10 @@ const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
 const active=h.status==='active';
 const broker=h.broker||'Unknown';
+const domain=h.domain||'Unknown';
 const sessionValid=h.session_valid!==false;
 const brokerAuthBadge=sessionValid?`<span class="badge badge-authenticated">✓ Authenticated</span>`:`<span class="badge badge-unauthenticated">✗ Not Authenticated</span>`;
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){
