@@ -101,7 +101,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if os.path.isdir(base_dir):
                 for entry in os.scandir(base_dir):
                     if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
-                        instances.append(entry.name)
+                        suffix = entry.name[8:]
+                        if suffix.isdigit():
+                            instances.append(entry.name)
             self.send_json(sorted(instances))
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -114,7 +116,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if os.path.isdir(base_dir):
                 for entry in os.scandir(base_dir):
                     if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
-                        instances.append(entry.name)
+                        suffix = entry.name[8:]
+                        if suffix.isdigit():
+                            instances.append(entry.name)
             
             status = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
             
@@ -141,7 +145,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if os.path.isdir(base_dir):
                 for entry in os.scandir(base_dir):
                     if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
-                        instances.append(entry.name)
+                        suffix = entry.name[8:]
+                        if suffix.isdigit():
+                            instances.append(entry.name)
             
             health = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
             

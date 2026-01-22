@@ -23,7 +23,7 @@ if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     echo "❌ No OpenAlgo instances installed."
     exit 1

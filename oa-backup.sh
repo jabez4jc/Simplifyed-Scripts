@@ -292,7 +292,7 @@ show_menu() {
     echo ""
     log_message "=== BACKUP OPERATIONS ===" "$BLUE"
     
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
@@ -325,7 +325,7 @@ show_menu() {
 
 # Select single instance for backup
 select_instance_for_backup() {
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found" "$RED"
@@ -357,7 +357,7 @@ backup_instances() {
     local backup_type="$2"
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
@@ -409,7 +409,7 @@ restore_operation() {
     log_message "=== RESTORE BACKUP ===" "$BLUE"
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found" "$RED"

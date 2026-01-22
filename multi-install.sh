@@ -182,7 +182,7 @@ if [ -d "$BASE_DIR" ]; then
                 EXISTING_INSTANCES=$num
             fi
         fi
-    done < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null)
+    done < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null)
 fi
 log_message "Detected $EXISTING_INSTANCES existing OpenAlgo instance(s) under $BASE_DIR" "$BLUE"
 

@@ -375,7 +375,7 @@ show_menu() {
     log_message "=== UPDATE OPTIONS ===" "$BLUE"
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
@@ -417,7 +417,7 @@ show_menu() {
 update_all_instances() {
     log_message "Starting batch update of all instances..." "$BLUE"
     
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     local success=0
     local failed=0
     
@@ -445,7 +445,7 @@ show_dry_run_menu() {
     echo ""
     log_message "=== DRY-RUN OPTIONS ===" "$BLUE"
     
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         return 1

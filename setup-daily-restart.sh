@@ -114,7 +114,7 @@ clean_instance_logs() {
 log_to_file "Starting daily restart of all OpenAlgo instances"
 
 # Get list of instances (exclude symlinks)
-INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     log_to_file "No OpenAlgo instances found"
