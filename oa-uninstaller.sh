@@ -12,10 +12,30 @@ extract_domain() {
     echo "$1" | sed 's/-[^-]*$//' | sed 's/-/./g'
 }
 
+get_service_name() {
+    local instance_dir="$1"
+    local fallback_name="$2"
+    local env_file="$instance_dir/.env"
+    local domain=""
+
+    if [ -f "$env_file" ]; then
+        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    if [ -n "$domain" ]; then
+        echo "openalgo-${domain//./-}"
+    elif [[ "$fallback_name" == openalgo* ]]; then
+        echo "$fallback_name"
+    else
+        echo "openalgo$fallback_name"
+    fi
+}
+
 remove_instance() {
     local DEPLOY_NAME="$1"
     local INSTANCE_DIR="$BASE_DIR/$DEPLOY_NAME"
-    local SERVICE_NAME="openalgo-$DEPLOY_NAME"
+    local SERVICE_NAME
+    SERVICE_NAME=$(get_service_name "$INSTANCE_DIR" "$DEPLOY_NAME")
     local DOMAIN=$(extract_domain "$DEPLOY_NAME")
     local NGINX_CONF="$NGINX_AVAILABLE/$DOMAIN.conf"
     local NGINX_LINK="$NGINX_ENABLED/$DOMAIN.conf"

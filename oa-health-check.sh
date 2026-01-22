@@ -33,15 +33,20 @@ print_critical() {
     ((HEALTH_CRITICAL++))
 }
 
-# Extract domain from instance directory name (for newer naming convention)
-get_domain_from_dir() {
-    local dir_name="$1"
-    # For openalgo1, openalgo2 style: extract from .env or systemd service
-    # Return instance number for now
-    if [[ $dir_name =~ ^openalgo([0-9]+)$ ]]; then
-        echo "${BASH_REMATCH[1]}"
+get_service_name() {
+    local instance_name="$1"
+    local instance_dir="$BASE_DIR/$instance_name"
+    local env_file="$instance_dir/.env"
+    local domain=""
+
+    if [ -f "$env_file" ]; then
+        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    if [ -n "$domain" ]; then
+        echo "openalgo-${domain//./-}"
     else
-        echo "$dir_name"
+        echo "$instance_name"
     fi
 }
 
@@ -62,7 +67,8 @@ check_instance_directory() {
 # Check systemd service status
 check_service_status() {
     local instance_name="$1"
-    local service_name="openalgo$instance_name"
+    local service_name
+    service_name=$(get_service_name "$instance_name")
     
     if systemctl is-active --quiet "$service_name"; then
         print_ok "Service running: $service_name"
@@ -233,7 +239,8 @@ check_socket() {
 # Check recent errors in logs
 check_recent_errors() {
     local instance_name="$1"
-    local service_name="openalgo$instance_name"
+    local service_name
+    service_name=$(get_service_name "$instance_name")
     
     # Get last 20 lines of journalctl
     local error_count=$(sudo journalctl -u "$service_name" -n 100 2>/dev/null | grep -i "error\|exception\|traceback" | wc -l)
@@ -317,7 +324,7 @@ check_instance() {
     fi
     
     check_instance_directory "$instance_name" || return 1
-    check_service_status "$instance_num"
+    check_service_status "$instance_name"
     check_flask_port "$instance_num"
     check_websocket_port "$instance_num"
     check_zmq_port "$instance_num"
@@ -326,7 +333,7 @@ check_instance() {
     check_disk_space "$instance_dir"
     check_venv "$instance_dir"
     check_socket "$instance_dir"
-    check_recent_errors "$instance_num"
+    check_recent_errors "$instance_name"
     check_permissions "$instance_dir"
 }
 

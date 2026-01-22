@@ -72,6 +72,23 @@ log_to_file() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
+get_service_name() {
+    local instance_dir="$1"
+    local fallback_name="$2"
+    local env_file="$instance_dir/.env"
+    local domain=""
+
+    if [ -f "$env_file" ]; then
+        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    if [ -n "$domain" ]; then
+        echo "openalgo-${domain//./-}"
+    else
+        echo "$fallback_name"
+    fi
+}
+
 clean_instance_logs() {
     local instance_name="$1"
     local total_deleted=0
@@ -107,7 +124,7 @@ fi
 # Restart each instance
 restart_count=0
 for instance in "${INSTANCES[@]}"; do
-    SERVICE_NAME="$instance"
+    SERVICE_NAME=$(get_service_name "$BASE_DIR/$instance" "$instance")
 
     log_to_file "Cleaning logs for $SERVICE_NAME..."
     clean_instance_logs "$instance"

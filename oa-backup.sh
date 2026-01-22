@@ -23,6 +23,25 @@ log_message() {
     echo -e "${color}${message}${NC}" | tee -a "$BACKUP_LOG"
 }
 
+get_service_name() {
+    local instance_dir="$1"
+    local fallback_id="$2"
+    local env_file="$instance_dir/.env"
+    local domain=""
+
+    if [ -f "$env_file" ]; then
+        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    if [ -n "$domain" ]; then
+        echo "openalgo-${domain//./-}"
+    elif [[ "$fallback_id" == openalgo* ]]; then
+        echo "$fallback_id"
+    else
+        echo "openalgo$fallback_id"
+    fi
+}
+
 # Function to check command status
 check_status() {
     if [ $? -ne 0 ]; then
@@ -147,7 +166,8 @@ backup_nginx_config() {
 backup_service_file() {
     local instance_name="$1"
     local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
-    local service_name="openalgo$instance_num"
+    local service_name
+    service_name=$(get_service_name "$BASE_DIR/$instance_name" "$instance_num")
     local service_file="/etc/systemd/system/$service_name.service"
     
     if [ ! -f "$service_file" ]; then
@@ -482,7 +502,7 @@ restore_operation() {
     
     log_message "" "$BLUE"
     log_message "⚠ Remember to restart the instance after restore:" "$YELLOW"
-    log_message "  sudo systemctl restart openalgo<N>" "$YELLOW"
+    log_message "  sudo systemctl restart openalgo-<domain>" "$YELLOW"
 }
 
 # Main execution

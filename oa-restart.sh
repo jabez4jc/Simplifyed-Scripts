@@ -2,6 +2,23 @@
 
 BASE_DIR="/var/python/openalgo-flask"
 
+# Resolve service name for an instance (new installs use openalgo-<domain>)
+get_service_name() {
+    local instance_name="$1"
+    local env_file="$BASE_DIR/$instance_name/.env"
+    local domain=""
+
+    if [ -f "$env_file" ]; then
+        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    if [ -n "$domain" ]; then
+        echo "openalgo-${domain//./-}"
+    else
+        echo "$instance_name"
+    fi
+}
+
 # Discover installed instances
 INSTANCES=($(ls -1 "$BASE_DIR" 2>/dev/null))
 
@@ -30,7 +47,8 @@ fi
 
 restart_instance() {
     local INSTANCE_NAME="$1"
-    local SERVICE_NAME="$INSTANCE_NAME"
+    local SERVICE_NAME
+    SERVICE_NAME=$(get_service_name "$INSTANCE_NAME")
 
     local total_deleted=0
     local log_dir

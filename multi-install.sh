@@ -322,7 +322,8 @@ for ((n=1; n<=INSTANCES; n++)); do
     INSTANCE_DIR="$BASE_DIR/openalgo$i"
     VENV_PATH="$INSTANCE_DIR/venv"
     SOCKET_FILE="$INSTANCE_DIR/openalgo.sock"
-    SERVICE_NAME="openalgo$i"
+    SERVICE_DOMAIN="${DOMAIN//./-}"
+    SERVICE_NAME="openalgo-$SERVICE_DOMAIN"
 
     # Ports (now aligned with global index i)
     FLASK_PORT=$((FLASK_PORT_BASE + i - 1))
@@ -364,6 +365,12 @@ for ((n=1; n<=INSTANCES; n++)); do
     fi
 
     sudo cp "$INSTANCE_DIR/.sample.env" "$ENV_FILE"
+
+    if sudo grep -q "^DOMAIN=" "$ENV_FILE"; then
+        sudo sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|g" "$ENV_FILE"
+    else
+        echo "DOMAIN=$DOMAIN" | sudo tee -a "$ENV_FILE" > /dev/null
+    fi
 
     # Generate keys
     APP_KEY=$(generate_hex)
@@ -601,8 +608,8 @@ EOL
     # Enable and start service
     log_message "Starting service..." "$BLUE"
     sudo systemctl daemon-reload
-    sudo systemctl enable $SERVICE_NAME
-    sudo systemctl start $SERVICE_NAME
+    sudo systemctl enable "$SERVICE_NAME"
+    sudo systemctl start "$SERVICE_NAME"
     check_status "Failed to start service"
 
     log_message "✅ Instance $i installed successfully!" "$GREEN"
@@ -627,15 +634,16 @@ for ((n=1; n<=INSTANCES; n++)); do
     log_message "\nInstance $i:" "$BLUE"
     log_message "  Domain: https://${DOMAINS[$idx]}" "$GREEN"
     log_message "  Broker: ${BROKERS[$idx]}" "$BLUE"
-    log_message "  Service: openalgo$i" "$BLUE"
+    SERVICE_DOMAIN="${DOMAINS[$idx]//./-}"
+    log_message "  Service: openalgo-$SERVICE_DOMAIN" "$BLUE"
     log_message "  Directory: $BASE_DIR/openalgo$i" "$BLUE"
 done
 
 log_message "\n📚 USEFUL COMMANDS:" "$YELLOW"
 log_message "View all services: systemctl list-units 'openalgo*'" "$BLUE"
-log_message "Restart instance: sudo systemctl restart openalgo<N>" "$BLUE"
-log_message "View logs: sudo journalctl -u openalgo<N> -f" "$BLUE"
-log_message "Check status: sudo systemctl status openalgo<N>" "$BLUE"
+log_message "Restart instance: sudo systemctl restart openalgo-<domain>" "$BLUE"
+log_message "View logs: sudo journalctl -u openalgo-<domain> -f" "$BLUE"
+log_message "Check status: sudo systemctl status openalgo-<domain>" "$BLUE"
 
 log_message "\n📝 Installation log saved to: $LOG_FILE" "$BLUE"
 log_message "\n🎉 All instances are ready to use!" "$GREEN"

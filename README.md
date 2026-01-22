@@ -654,22 +654,25 @@ systemctl list-units 'openalgo*'
 
 ### Check instance status:
 ```bash
-sudo systemctl status openalgo<N>
+sudo systemctl status openalgo-<domain>
 ```
 
 ### View instance logs:
 ```bash
-sudo journalctl -u openalgo<N> -f
+sudo journalctl -u openalgo-<domain> -f
 ```
 
 ### Restart specific instance:
 ```bash
-sudo systemctl restart openalgo<N>
+sudo systemctl restart openalgo-<domain>
 ```
 
 ## Directory Structure
 
 Each instance is located at: `/var/python/openalgo-flask/openalgo<N>/`
+
+For new installs, systemd service names use the domain:
+`openalgo-<domain>` (for example `openalgo-example-com`).
 
 - `.env` - Environment variables and broker credentials
 - `app.py` - Flask application entry point

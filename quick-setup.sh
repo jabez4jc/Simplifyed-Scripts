@@ -195,6 +195,8 @@ log_message "╚═════════════════════�
 
 BASE_DIR="/var/python/openalgo-flask"
 INSTANCE_DIR="$BASE_DIR/openalgo1"
+SERVICE_DOMAIN="${DOMAIN//./-}"
+SERVICE_NAME="openalgo-$SERVICE_DOMAIN"
 REPO_URL="https://github.com/marketcalls/openalgo.git"
 
 log_message "\n📥 Setting up OpenAlgo instance..." "$BLUE"
@@ -254,6 +256,12 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 sudo cp "$INSTANCE_DIR/.sample.env" "$ENV_FILE"
+
+if sudo grep -q "^DOMAIN=" "$ENV_FILE"; then
+    sudo sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|g" "$ENV_FILE"
+else
+    echo "DOMAIN=$DOMAIN" | sudo tee -a "$ENV_FILE" > /dev/null
+fi
 
 # Generate keys
 APP_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
@@ -434,7 +442,7 @@ log_message "\n🔧 Creating systemd service..." "$BLUE"
 
 VENV_PATH="$INSTANCE_DIR/venv"
 
-sudo tee /etc/systemd/system/openalgo1.service > /dev/null << EOL
+sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOL
 [Unit]
 Description=OpenAlgo Instance 1 ($DOMAIN - $BROKER)
 After=network.target
@@ -458,14 +466,14 @@ WantedBy=multi-user.target
 EOL
 
 sudo systemctl daemon-reload
-sudo systemctl enable openalgo1
-sudo systemctl start openalgo1
+sudo systemctl enable "$SERVICE_NAME"
+sudo systemctl start "$SERVICE_NAME"
 check_status "Failed to start OpenAlgo service"
 
 # Wait for service to be ready
 sleep 3
 
-if ! systemctl is-active --quiet openalgo1; then
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
     log_message "⚠️  Service started but may not be ready yet" "$YELLOW"
     log_message "   Waiting for broker connection..." "$YELLOW"
     sleep 10
@@ -502,7 +510,7 @@ log_message "   Instance: openalgo1" "$BLUE"
 log_message "   Domain: https://$DOMAIN" "$BLUE"
 log_message "   Broker: $BROKER" "$BLUE"
 log_message "   Directory: $INSTANCE_DIR" "$BLUE"
-log_message "   Service: openalgo1" "$BLUE"
+log_message "   Service: $SERVICE_NAME" "$BLUE"
 
 log_message "\n🔌 NETWORK CONFIGURATION:" "$YELLOW"
 log_message "   Flask Port: 5000 (internal)" "$BLUE"
@@ -515,11 +523,11 @@ log_message "   Firewall: UFW enabled" "$BLUE"
 log_message "   SSL: Let's Encrypt (auto-renewal enabled)" "$BLUE"
 
 log_message "\n📚 USEFUL COMMANDS:" "$YELLOW"
-log_message "   View logs: sudo journalctl -u openalgo1 -f" "$BLUE"
-log_message "   Check status: sudo systemctl status openalgo1" "$BLUE"
-log_message "   Restart instance: sudo systemctl restart openalgo1" "$BLUE"
-log_message "   Stop instance: sudo systemctl stop openalgo1" "$BLUE"
-log_message "   Start instance: sudo systemctl start openalgo1" "$BLUE"
+log_message "   View logs: sudo journalctl -u $SERVICE_NAME -f" "$BLUE"
+log_message "   Check status: sudo systemctl status $SERVICE_NAME" "$BLUE"
+log_message "   Restart instance: sudo systemctl restart $SERVICE_NAME" "$BLUE"
+log_message "   Stop instance: sudo systemctl stop $SERVICE_NAME" "$BLUE"
+log_message "   Start instance: sudo systemctl start $SERVICE_NAME" "$BLUE"
 
 log_message "\n🎉 OpenAlgo is ready to use!" "$GREEN"
 log_message "   Access at: https://$DOMAIN" "$GREEN"

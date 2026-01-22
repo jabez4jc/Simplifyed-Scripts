@@ -19,6 +19,25 @@ log_message() {
     echo -e "${color}${message}${NC}" | tee -a "$UPDATE_LOG"
 }
 
+get_service_name() {
+    local instance_dir="$1"
+    local fallback_id="$2"
+    local env_file="$instance_dir/.env"
+    local domain=""
+
+    if [ -f "$env_file" ]; then
+        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    if [ -n "$domain" ]; then
+        echo "openalgo-${domain//./-}"
+    elif [[ "$fallback_id" == openalgo* ]]; then
+        echo "$fallback_id"
+    else
+        echo "openalgo$fallback_id"
+    fi
+}
+
 # Function to check command status
 check_status() {
     if [ $? -ne 0 ]; then
@@ -26,6 +45,31 @@ check_status() {
         return 1
     fi
     return 0
+}
+
+ensure_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log_message "uv not found, installing..." "$YELLOW"
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -y > /dev/null 2>&1
+        sudo apt-get install -y uv > /dev/null 2>&1
+    elif command -v yum >/dev/null 2>&1; then
+        sudo yum install -y uv > /dev/null 2>&1
+    else
+        log_message "❌ Unable to install uv (unsupported package manager)" "$RED"
+        return 1
+    fi
+
+    if command -v uv >/dev/null 2>&1; then
+        log_message "✓ uv installed" "$GREEN"
+        return 0
+    fi
+
+    log_message "❌ uv installation failed" "$RED"
+    return 1
 }
 
 # Function to get git status
@@ -162,7 +206,8 @@ update_instance() {
     local instance_name="$1"
     local instance_dir="$BASE_DIR/$instance_name"
     local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
-    local service_name="openalgo$instance_num"
+    local service_name
+    service_name=$(get_service_name "$instance_dir" "$instance_num")
     
     log_message "\n--- Updating Instance: $instance_name ---" "$BLUE"
     
@@ -186,6 +231,9 @@ update_instance() {
     # Create backup
     local backup_dir=$(backup_before_update "$instance_name")
     check_status "Failed to create backup" || return 1
+
+    # Ensure uv is available
+    ensure_uv || return 1
     
     # Check service status before update
     local was_running=false
@@ -229,30 +277,23 @@ update_instance() {
     local new_commit=$(git rev-parse --short HEAD 2>/dev/null)
     log_message "✓ Updated to commit: $new_commit" "$GREEN"
     
-    # Update dependencies if requirements changed
-    log_message "  Checking dependencies..." "$BLUE"
+    # Update dependencies (UV-only flow)
+    log_message "  Installing/updating dependencies with uv..." "$BLUE"
     
     local venv_path="$instance_dir/venv"
     if [ -d "$venv_path" ]; then
-        # Check if requirements files exist
-        local requirements_files=("requirements.txt" "requirements-nginx.txt")
-        local deps_updated=false
-        
-        for req_file in "${requirements_files[@]}"; do
-            if [ -f "$instance_dir/$req_file" ]; then
-                log_message "  Installing/updating dependencies from $req_file..." "$BLUE"
-                
-                local activate="source $venv_path/bin/activate"
-                sudo bash -c "$activate && pip install --upgrade -r $instance_dir/$req_file" 2>&1 | tee -a "$UPDATE_LOG"
-                
-                if [ $? -eq 0 ]; then
-                    deps_updated=true
-                    log_message "✓ Dependencies updated" "$GREEN"
-                else
-                    log_message "⚠ Dependency update had issues (non-critical)" "$YELLOW"
-                fi
+        if [ -f "$instance_dir/requirements.txt" ]; then
+            local activate="source $venv_path/bin/activate"
+            sudo bash -c "$activate && uv pip install -r $instance_dir/requirements.txt" 2>&1 | tee -a "$UPDATE_LOG"
+            
+            if [ $? -eq 0 ]; then
+                log_message "✓ Dependencies updated (uv)" "$GREEN"
+            else
+                log_message "⚠ Dependency update had issues (non-critical)" "$YELLOW"
             fi
-        done
+        else
+            log_message "⚠ requirements.txt not found, skipping dependency update" "$YELLOW"
+        fi
     else
         log_message "⚠ Virtual environment not found, skipping dependency update" "$YELLOW"
     fi
@@ -261,6 +302,19 @@ update_instance() {
     log_message "  Merging .env configuration..." "$BLUE"
     merge_env_file "$instance_dir" "$backup_dir"
     
+    # Run migration script (UV-only flow)
+    if [ -d "$instance_dir/upgrade" ] && [ -f "$instance_dir/upgrade/migrate_all.py" ]; then
+        log_message "  Running migrations with uv..." "$BLUE"
+        sudo bash -c "cd $instance_dir/upgrade && uv run migrate_all.py" 2>&1 | tee -a "$UPDATE_LOG"
+        if [ $? -eq 0 ]; then
+            log_message "✓ Migrations completed" "$GREEN"
+        else
+            log_message "⚠ Migration script reported issues (non-critical)" "$YELLOW"
+        fi
+    else
+        log_message "⚠ Migration script not found, skipping" "$YELLOW"
+    fi
+
     # Restart service
     if [ "$was_running" = true ]; then
         log_message "  Restarting service: $service_name" "$BLUE"
@@ -430,7 +484,8 @@ rollback_instance() {
     local instance_name="$2"
     local instance_dir="$BASE_DIR/$instance_name"
     local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
-    local service_name="openalgo$instance_num"
+    local service_name
+    service_name=$(get_service_name "$instance_dir" "$instance_num")
     
     if [ ! -d "$backup_dir" ]; then
         log_message "❌ Backup directory not found: $backup_dir" "$RED"

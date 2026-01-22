@@ -16,6 +16,19 @@ from datetime import datetime
 PORT = 8888
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
+    def _service_name(self, instance):
+        """Map instance directory to systemd service name."""
+        env_file = f"/var/python/openalgo-flask/{instance}/.env"
+        domain = None
+        if os.path.exists(env_file):
+            with open(env_file, 'r') as f:
+                for line in f:
+                    if line.startswith('DOMAIN='):
+                        domain = line.split('=', 1)[1].strip().strip("'\"")
+                        break
+        if domain:
+            return f"openalgo-{domain.replace('.', '-')}"
+        return instance
     
     def do_GET(self):
         """Handle GET requests"""
@@ -105,8 +118,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             
             for inst in instances:
                 try:
+                    service_name = self._service_name(inst)
                     result = subprocess.run(
-                        f"systemctl is-active {inst}",
+                        f"systemctl is-active {service_name}",
                         shell=True, capture_output=True, text=True, timeout=2
                     )
                     status["instances"][inst] = result.stdout.strip()
@@ -138,8 +152,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def handle_instance_logs(self, instance):
         """Get last 100 lines of logs for an instance"""
         try:
+            service_name = self._service_name(instance)
             result = subprocess.run(
-                f"sudo journalctl -u openalgo{instance[8:]} -n 100 --no-pager",
+                f"sudo journalctl -u {service_name} -n 100 --no-pager",
                 shell=True, capture_output=True, text=True, timeout=5
             )
             logs = result.stdout.strip().split('\n') if result.stdout.strip() else []
@@ -180,8 +195,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                             break
 
             # Check for authentication status in recent logs
+            service_name = self._service_name(instance)
             logs_result = subprocess.run(
-                f"sudo journalctl -u openalgo{instance[8:]} -n 100 --no-pager",
+                f"sudo journalctl -u {service_name} -n 100 --no-pager",
                 shell=True, capture_output=True, text=True, timeout=5
             )
 
@@ -244,8 +260,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "session_valid": True}
 
         try:
+            service_name = self._service_name(instance)
             result = subprocess.run(
-                f"systemctl is-active {instance}",
+                f"systemctl is-active {service_name}",
                 shell=True, capture_output=True, text=True, timeout=2
             )
             health["status"] = result.stdout.strip()
@@ -281,8 +298,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
         # Check session validity using improved detection
         try:
+            service_name = self._service_name(instance)
             logs_result = subprocess.run(
-                f"sudo journalctl -u openalgo{instance[8:]} -n 100 --no-pager",
+                f"sudo journalctl -u {service_name} -n 100 --no-pager",
                 shell=True, capture_output=True, text=True, timeout=5
             )
             logs_text = logs_result.stdout
@@ -341,8 +359,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     
     def handle_restart_instance(self, instance):
         """Restart specific instance"""
+        service_name = self._service_name(instance)
         Thread(target=lambda: subprocess.run(
-            f"sudo systemctl restart {instance}",
+            f"sudo systemctl restart {service_name}",
             shell=True, capture_output=True, timeout=60
         )).start()
         
@@ -355,8 +374,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     
     def handle_stop_instance(self, instance):
         """Stop specific instance"""
+        service_name = self._service_name(instance)
         subprocess.run(
-            f"sudo systemctl stop {instance}",
+            f"sudo systemctl stop {service_name}",
             shell=True, capture_output=True, timeout=30
         )
         
@@ -369,8 +389,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     
     def handle_start_instance(self, instance):
         """Start specific instance"""
+        service_name = self._service_name(instance)
         subprocess.run(
-            f"sudo systemctl start {instance}",
+            f"sudo systemctl start {service_name}",
             shell=True, capture_output=True, timeout=30
         )
 
