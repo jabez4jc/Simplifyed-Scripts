@@ -488,6 +488,17 @@ chmod +x oa-uninstaller.sh
 sudo ./oa-uninstaller.sh
 ```
 
+### `oa-clear-logs.sh`
+**Clear all OpenAlgo logs**
+
+Deletes per-instance log files and the daily restart log in one command.
+
+**Usage:**
+```bash
+chmod +x oa-clear-logs.sh
+sudo ./oa-clear-logs.sh
+```
+
 ### `oa-health-check.sh`
 **Monitor instance health and status**
 
