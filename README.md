@@ -148,6 +148,7 @@ sudo ./oa-restart.sh
 - Select specific instance to restart
 - Select "Restart ALL instances"
 - Auto-reloads Nginx after restart
+- Cleans per-instance log files before each restart
 
 ### `setup-daily-restart.sh`
 **Setup automatic daily restart of all instances at 8 AM IST**
@@ -158,6 +159,7 @@ Configures a cron job to automatically restart all OpenAlgo instances every day 
 - Automated setup of cron job
 - Restarts all instances sequentially
 - Logs all restart activities
+- Cleans per-instance log files before each restart
 - Verifies system timezone
 - Easy modification of restart time
 - Provides monitoring commands

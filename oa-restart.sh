@@ -32,6 +32,22 @@ restart_instance() {
     local INSTANCE_NAME="$1"
     local SERVICE_NAME="$INSTANCE_NAME"
 
+    local total_deleted=0
+    local log_dir
+    for log_dir in "$BASE_DIR/$INSTANCE_NAME/log" "$BASE_DIR/$INSTANCE_NAME/logs"; do
+        if [ -d "$log_dir" ]; then
+            count=$(find "$log_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$count" -gt 0 ]; then
+                find "$log_dir" -type f -delete 2>/dev/null
+                echo "🧹 Cleared $count log file(s) in $log_dir"
+                total_deleted=$((total_deleted + count))
+            fi
+        fi
+    done
+    if [ "$total_deleted" -eq 0 ]; then
+        echo "🧹 No instance log files to clean for $INSTANCE_NAME"
+    fi
+
     echo "🔁 Restarting $SERVICE_NAME..."
     sudo systemctl restart "$SERVICE_NAME"
     if [ $? -eq 0 ]; then

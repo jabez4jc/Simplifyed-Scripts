@@ -72,6 +72,28 @@ log_to_file() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
+clean_instance_logs() {
+    local instance_name="$1"
+    local total_deleted=0
+    local log_dir
+
+    for log_dir in "$BASE_DIR/$instance_name/log" "$BASE_DIR/$instance_name/logs"; do
+        if [ -d "$log_dir" ]; then
+            local count
+            count=$(find "$log_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$count" -gt 0 ]; then
+                find "$log_dir" -type f -delete 2>/dev/null
+                log_to_file "🧹 Cleared $count log file(s) in $log_dir"
+                total_deleted=$((total_deleted + count))
+            fi
+        fi
+    done
+
+    if [ "$total_deleted" -eq 0 ]; then
+        log_to_file "No instance log files to clean for $instance_name"
+    fi
+}
+
 log_to_file "Starting daily restart of all OpenAlgo instances"
 
 # Get list of instances
@@ -86,6 +108,9 @@ fi
 restart_count=0
 for instance in "${INSTANCES[@]}"; do
     SERVICE_NAME="$instance"
+
+    log_to_file "Cleaning logs for $SERVICE_NAME..."
+    clean_instance_logs "$instance"
     
     log_to_file "Restarting $SERVICE_NAME..."
     
