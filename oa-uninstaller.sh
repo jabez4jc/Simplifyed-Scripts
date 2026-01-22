@@ -28,6 +28,13 @@ remove_instance() {
     sudo systemctl disable "$SERVICE_NAME" 2>/dev/null
     sudo rm -f "/etc/systemd/system/$SERVICE_NAME.service"
 
+    echo "🧹 Cleaning instance log files..."
+    for log_dir in "$INSTANCE_DIR/log" "$INSTANCE_DIR/logs"; do
+        if [ -d "$log_dir" ]; then
+            sudo find "$log_dir" -type f -delete 2>/dev/null || true
+        fi
+    done
+
     echo "🗑️ Deleting files and directories..."
     sudo rm -rf "$INSTANCE_DIR"
     sudo rm -f "$SOCKET_FILE"
