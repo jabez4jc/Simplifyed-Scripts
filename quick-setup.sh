@@ -223,6 +223,10 @@ if [ ! -d "$INSTANCE_DIR" ]; then
     check_status "Failed to clone repository"
 fi
 
+# Create domain-named symlink for easier identification
+DOMAIN_SYMLINK="$BASE_DIR/openalgo-$SERVICE_DOMAIN"
+sudo ln -sfn "$INSTANCE_DIR" "$DOMAIN_SYMLINK"
+
 # Create virtual environment
 log_message "   Setting up Python virtual environment..." "$BLUE"
 if [ -d "$INSTANCE_DIR/venv" ]; then

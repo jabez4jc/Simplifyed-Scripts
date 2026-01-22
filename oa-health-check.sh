@@ -408,7 +408,7 @@ show_menu() {
     echo -e "${BLUE}=== HEALTH CHECK OPTIONS ===${NC}"
     echo ""
 
-    local instances=($(ls -1 "$BASE_DIR" 2>/dev/null | grep "^openalgo"))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         echo -e "${RED}❌ No OpenAlgo instances found in $BASE_DIR${NC}"
@@ -448,7 +448,7 @@ show_menu() {
 
 # Check all instances
 check_all_instances() {
-    local instances=($(ls -1 "$BASE_DIR" 2>/dev/null | grep "^openalgo"))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
     
     check_system_health
     
@@ -478,7 +478,7 @@ main() {
     fi
     
     # Get list of instances
-    local instances=($(ls -1 "$BASE_DIR" 2>/dev/null | grep "^openalgo"))
+    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
     
     if [ ${#instances[@]} -eq 0 ]; then
         echo -e "${YELLOW}ℹ No OpenAlgo instances found in $BASE_DIR${NC}"

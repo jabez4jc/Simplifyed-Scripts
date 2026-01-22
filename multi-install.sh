@@ -175,16 +175,14 @@ select_branch() {
 # Detect existing instances (openalgo1, openalgo2, ...) to avoid overwriting
 EXISTING_INSTANCES=0
 if [ -d "$BASE_DIR" ]; then
-    for d in "$BASE_DIR"/openalgo*; do
-        [ -d "$d" ] || continue
-        bn=$(basename "$d")
+    while IFS= read -r bn; do
         if [[ $bn =~ ^openalgo([0-9]+)$ ]]; then
             num=${BASH_REMATCH[1]}
             if (( num > EXISTING_INSTANCES )); then
                 EXISTING_INSTANCES=$num
             fi
         fi
-    done
+    done < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null)
 fi
 log_message "Detected $EXISTING_INSTANCES existing OpenAlgo instance(s) under $BASE_DIR" "$BLUE"
 
@@ -329,6 +327,10 @@ for ((n=1; n<=INSTANCES; n++)); do
     FLASK_PORT=$((FLASK_PORT_BASE + i - 1))
     WS_PORT=$((WS_PORT_BASE + i - 1))
     ZMQ_PORT=$((ZMQ_PORT_BASE + i - 1))
+
+    # Create domain-named symlink for easier identification
+    DOMAIN_SYMLINK="$BASE_DIR/openalgo-$SERVICE_DOMAIN"
+    sudo ln -sfn "$INSTANCE_DIR" "$DOMAIN_SYMLINK"
 
     # Clone or update repository
     if [ ! -d "$INSTANCE_DIR" ]; then
@@ -635,15 +637,17 @@ for ((n=1; n<=INSTANCES; n++)); do
     log_message "  Domain: https://${DOMAINS[$idx]}" "$GREEN"
     log_message "  Broker: ${BROKERS[$idx]}" "$BLUE"
     SERVICE_DOMAIN="${DOMAINS[$idx]//./-}"
-    log_message "  Service: openalgo-$SERVICE_DOMAIN" "$BLUE"
+    SERVICE_NAME="openalgo-$SERVICE_DOMAIN"
+    log_message "  Service: $SERVICE_NAME" "$BLUE"
     log_message "  Directory: $BASE_DIR/openalgo$i" "$BLUE"
+    log_message "  Commands:" "$BLUE"
+    log_message "    Status: sudo systemctl status $SERVICE_NAME" "$BLUE"
+    log_message "    Logs:   sudo journalctl -u $SERVICE_NAME -f" "$BLUE"
+    log_message "    Restart:sudo systemctl restart $SERVICE_NAME" "$BLUE"
 done
 
 log_message "\n📚 USEFUL COMMANDS:" "$YELLOW"
 log_message "View all services: systemctl list-units 'openalgo*'" "$BLUE"
-log_message "Restart instance: sudo systemctl restart openalgo-<domain>" "$BLUE"
-log_message "View logs: sudo journalctl -u openalgo-<domain> -f" "$BLUE"
-log_message "Check status: sudo systemctl status openalgo-<domain>" "$BLUE"
 
 log_message "\n📝 Installation log saved to: $LOG_FILE" "$BLUE"
 log_message "\n🎉 All instances are ready to use!" "$GREEN"

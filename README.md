@@ -671,8 +671,9 @@ sudo systemctl restart openalgo-<domain>
 
 Each instance is located at: `/var/python/openalgo-flask/openalgo<N>/`
 
-For new installs, systemd service names use the domain:
-`openalgo-<domain>` (for example `openalgo-example-com`).
+For new installs:
+- Systemd service names use the domain: `openalgo-<domain>` (for example `openalgo-example-com`)
+- A symlink is created for easy identification: `/var/python/openalgo-flask/openalgo-<domain> -> openalgo<N>`
 
 - `.env` - Environment variables and broker credentials
 - `app.py` - Flask application entry point

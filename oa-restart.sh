@@ -19,8 +19,8 @@ get_service_name() {
     fi
 }
 
-# Discover installed instances
-INSTANCES=($(ls -1 "$BASE_DIR" 2>/dev/null))
+# Discover installed instances (exclude symlinks)
+INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     echo "❌ No OpenAlgo instances found in $BASE_DIR"

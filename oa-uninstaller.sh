@@ -78,7 +78,7 @@ if [ ! -d "$BASE_DIR" ]; then
     exit 1
 fi
 
-INSTANCES=($(ls -1 "$BASE_DIR"))
+INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     echo "❌ No OpenAlgo instances installed."
     exit 1

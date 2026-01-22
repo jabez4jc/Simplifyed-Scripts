@@ -96,11 +96,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def handle_instances(self):
         """Get list of instances"""
         try:
-            result = subprocess.run(
-                "ls -1 /var/python/openalgo-flask 2>/dev/null | grep '^openalgo'",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            instances = [i.strip() for i in result.stdout.strip().split('\n') if i.strip()]
+            base_dir = "/var/python/openalgo-flask"
+            instances = []
+            if os.path.isdir(base_dir):
+                for entry in os.scandir(base_dir):
+                    if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
+                        instances.append(entry.name)
             self.send_json(sorted(instances))
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -108,11 +109,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def handle_status(self):
         """Get status of all instances"""
         try:
-            result = subprocess.run(
-                "ls -1 /var/python/openalgo-flask 2>/dev/null | grep '^openalgo'",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            instances = [i.strip() for i in result.stdout.strip().split('\n') if i.strip()]
+            base_dir = "/var/python/openalgo-flask"
+            instances = []
+            if os.path.isdir(base_dir):
+                for entry in os.scandir(base_dir):
+                    if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
+                        instances.append(entry.name)
             
             status = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
             
@@ -134,11 +136,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def handle_instances_health(self):
         """Get detailed health status of all instances"""
         try:
-            result = subprocess.run(
-                "ls -1 /var/python/openalgo-flask 2>/dev/null | grep '^openalgo'",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            instances = [i.strip() for i in result.stdout.strip().split('\n') if i.strip()]
+            base_dir = "/var/python/openalgo-flask"
+            instances = []
+            if os.path.isdir(base_dir):
+                for entry in os.scandir(base_dir):
+                    if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
+                        instances.append(entry.name)
             
             health = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
             
