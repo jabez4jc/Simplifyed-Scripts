@@ -9,6 +9,7 @@ import subprocess
 import json
 import sys
 import os
+import sqlite3
 from threading import Thread
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
@@ -16,6 +17,45 @@ from datetime import datetime
 PORT = 8888
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
+    def _read_auth_status(self, instance):
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        instance_num = instance.replace('openalgo', '')
+        db_file = f"{inst_path}/db/openalgo{instance_num}.db"
+
+        if not os.path.exists(db_file):
+            return False, "Auth database not found"
+
+        try:
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            row = None
+            for query in (
+                "SELECT is_revoked, auth, feed_token, broker FROM auth ORDER BY id DESC LIMIT 1",
+                "SELECT is_revoked, auth, feed_token, broker FROM auth ORDER BY rowid DESC LIMIT 1",
+            ):
+                try:
+                    cur.execute(query)
+                    row = cur.fetchone()
+                    break
+                except Exception:
+                    continue
+            conn.close()
+
+            if not row:
+                return False, "No auth record found"
+
+            is_revoked, auth, feed_token, broker = row
+            auth_blank = auth is None or str(auth).strip() == ""
+            feed_blank = feed_token is None or str(feed_token).strip() == ""
+            broker_blank = broker is None or str(broker).strip() == ""
+
+            if is_revoked == 1:
+                return False, "Auth revoked"
+            if is_revoked == 0 and (auth_blank or feed_blank or broker_blank):
+                return False, "Auth fields missing"
+            return True, None
+        except Exception as e:
+            return False, f"Auth check failed: {e}"
     def _service_name(self, instance):
         """Map instance directory to systemd service name."""
         env_file = f"/var/python/openalgo-flask/{instance}/.env"
@@ -203,50 +243,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                                 broker = match.group(1)
                             break
 
-            # Check for authentication status in recent logs
-            service_name = self._service_name(instance)
-            logs_result = subprocess.run(
-                f"sudo journalctl -u {service_name} -n 100 --no-pager",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-
-            logs_text = logs_result.stdout
-            authenticated = False
-            last_error = None
+            authenticated, last_error = self._read_auth_status(instance)
             error_timestamp = None
-
-            # Check for NOT authenticated patterns
-            not_authenticated_patterns = [
-                "Session expired",
-                "Invalid session detected",
-                "No valid auth token or broker found"
-            ]
-
-            # Check for authenticated patterns
-            authenticated_patterns = [
-                "Master contract download completed",
-                "Successfully loaded.*symbols into cache"
-            ]
-
-            # Look for not authenticated patterns
-            for pattern in not_authenticated_patterns:
-                if pattern.lower() in logs_text.lower():
-                    authenticated = False
-                    last_error = pattern
-                    # Extract timestamp of last occurrence
-                    for line in logs_text.split('\n'):
-                        if pattern.lower() in line.lower():
-                            error_timestamp = line.split(']')[0].strip('[') if '[' in line else None
-                    break
-
-            # Look for authenticated patterns (these override not authenticated if found)
-            import re
-            for pattern in authenticated_patterns:
-                if re.search(pattern, logs_text, re.IGNORECASE):
-                    authenticated = True
-                    last_error = None
-                    error_timestamp = None
-                    break
 
             self.send_json({
                 "instance": instance,
@@ -307,45 +305,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except:
             pass
 
-        # Check session validity using improved detection
         try:
-            service_name = self._service_name(instance)
-            logs_result = subprocess.run(
-                f"sudo journalctl -u {service_name} -n 100 --no-pager",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            logs_text = logs_result.stdout
-
-            # Check for NOT authenticated patterns
-            not_authenticated_patterns = [
-                "Session expired",
-                "Invalid session detected",
-                "No valid auth token or broker found"
-            ]
-
-            # Check for authenticated patterns
-            authenticated_patterns = [
-                "Master contract download completed",
-                "Successfully loaded.*symbols into cache"
-            ]
-
-            # Default to valid
-            session_valid = True
-
-            # Look for not authenticated patterns
-            for pattern in not_authenticated_patterns:
-                if pattern.lower() in logs_text.lower():
-                    session_valid = False
-                    break
-
-            # Look for authenticated patterns (these override not authenticated if found)
-            import re
-            for pattern in authenticated_patterns:
-                if re.search(pattern, logs_text, re.IGNORECASE):
-                    session_valid = True
-                    break
-
-            health["session_valid"] = session_valid
+            authenticated, _ = self._read_auth_status(instance)
+            health["session_valid"] = authenticated
         except:
             pass
 
