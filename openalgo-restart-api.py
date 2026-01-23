@@ -104,10 +104,59 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if domain:
             return f"openalgo-{domain.replace('.', '-')}"
         return instance
+
+    def _sanitize_instance(self, instance):
+        if not instance:
+            return None
+        instance = instance.strip()
+        if instance.startswith("openalgo") and instance[8:].isdigit():
+            return instance
+        return None
+
+    def _resolve_instance_from_host(self):
+        host = self.headers.get("Host", "")
+        host = host.split(":", 1)[0].strip()
+        if not host:
+            return None
+        import re
+        if not re.match(r"^[A-Za-z0-9.-]+$", host):
+            return None
+        symlink = f"/var/python/openalgo-flask/openalgo-{host.replace('.', '-')}"
+        if os.path.exists(symlink):
+            target = os.path.realpath(symlink)
+            return self._sanitize_instance(os.path.basename(target))
+        return None
+
+    def _resolve_monitor_instance(self):
+        instance = self._sanitize_instance(self.headers.get("X-OpenAlgo-Instance"))
+        if instance:
+            return instance
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        instance = self._sanitize_instance(params.get("instance", [None])[0])
+        if instance:
+            return instance
+        return self._resolve_instance_from_host()
+
+    def _require_monitor_instance(self):
+        instance = self._resolve_monitor_instance()
+        if not instance:
+            self.send_json({"error": "Instance not specified"}, 400)
+            return None
+        return instance
     
     def do_GET(self):
         """Handle GET requests"""
-        if self.path == '/' or self.path == '/index.html':
+        path = urlparse(self.path).path
+        if path == '/monitor' or path == '/monitor/':
+            self.serve_monitor_ui()
+        elif path == '/monitor/api/health':
+            self.handle_monitor_health()
+        elif path == '/monitor/api/logs':
+            self.handle_monitor_logs()
+        elif path == '/monitor/api/status':
+            self.handle_monitor_status()
+        elif self.path == '/' or self.path == '/index.html':
             self.serve_web_ui()
         elif self.path == '/api/instances':
             self.handle_instances()
@@ -143,7 +192,24 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": "Invalid JSON"}, 400)
             return
         
-        if self.path == '/api/restart-all':
+        path = urlparse(self.path).path
+        if path == '/monitor/api/restart':
+            instance = self._require_monitor_instance()
+            if instance:
+                self.handle_restart_instance(instance)
+        elif path == '/monitor/api/stop':
+            instance = self._require_monitor_instance()
+            if instance:
+                self.handle_stop_instance(instance)
+        elif path == '/monitor/api/start':
+            instance = self._require_monitor_instance()
+            if instance:
+                self.handle_start_instance(instance)
+        elif path == '/monitor/api/clear-logs':
+            instance = self._require_monitor_instance()
+            if instance:
+                self.handle_clear_logs_instance(instance)
+        elif self.path == '/api/restart-all':
             self.handle_restart_all()
         elif self.path == '/api/restart-instance':
             instance = data.get('instance', '')
@@ -232,6 +298,34 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.send_json(health)
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
+
+    def handle_monitor_health(self):
+        """Get detailed health status for the monitor instance"""
+        instance = self._require_monitor_instance()
+        if not instance:
+            return
+        health = self._get_instance_health(instance)
+        health["timestamp"] = str(datetime.now())
+        self.send_json(health)
+
+    def handle_monitor_status(self):
+        """Get simple status for the monitor instance"""
+        instance = self._require_monitor_instance()
+        if not instance:
+            return
+        health = self._get_instance_health(instance)
+        self.send_json({
+            "instance": instance,
+            "status": health.get("status", "unknown"),
+            "timestamp": str(datetime.now())
+        })
+
+    def handle_monitor_logs(self):
+        """Get logs for the monitor instance"""
+        instance = self._require_monitor_instance()
+        if not instance:
+            return
+        self.handle_instance_logs(instance)
     
     def handle_instance_logs(self, instance):
         """Get last 100 lines of logs for an instance"""
@@ -252,6 +346,42 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({
                 "instance": instance,
                 "logs": [],
+                "error": str(e),
+                "timestamp": str(datetime.now())
+            }, 500)
+
+    def handle_clear_logs_instance(self, instance):
+        """Clear per-instance log files"""
+        try:
+            inst_path = f"/var/python/openalgo-flask/{instance}"
+            if not os.path.isdir(inst_path):
+                self.send_json({"error": "Instance not found", "instance": instance}, 404)
+                return
+
+            deleted = 0
+            cleared_paths = []
+            for log_dir in (f"{inst_path}/log", f"{inst_path}/logs"):
+                if os.path.isdir(log_dir):
+                    for root, _, files in os.walk(log_dir):
+                        for name in files:
+                            file_path = os.path.join(root, name)
+                            try:
+                                os.remove(file_path)
+                                deleted += 1
+                            except Exception:
+                                continue
+                    cleared_paths.append(log_dir)
+
+            self.send_json({
+                "instance": instance,
+                "deleted": deleted,
+                "cleared_paths": cleared_paths,
+                "message": "Instance log files cleared",
+                "timestamp": str(datetime.now())
+            })
+        except Exception as e:
+            self.send_json({
+                "instance": instance,
                 "error": str(e),
                 "timestamp": str(datetime.now())
             }, 500)
@@ -455,7 +585,208 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         """Background restart all"""
         subprocess.run(['/usr/local/bin/openalgo-daily-restart.sh'],
                       capture_output=True, timeout=600)
-    
+
+    def serve_monitor_ui(self):
+        """Serve single-instance monitor UI"""
+        instance = self._resolve_monitor_instance() or ""
+        html = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAlgo Monitor</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
+.container{background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:900px;width:100%}
+.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;text-align:center}
+.header h1{font-size:28px;margin-bottom:10px}
+.content{padding:30px}
+.btn{padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600;margin:5px;white-space:nowrap}
+.btn-primary{background:#667eea;color:white;width:100%;padding:12px;font-size:14px}
+.btn-primary:hover{background:#5568d3}
+.btn-restart{background:#667eea;color:white}
+.btn-stop{background:#dc3545;color:white}
+.btn-start{background:#28a745;color:white}
+.btn-clear{background:#f0ad4e;color:white}
+.btn-clear:hover{background:#ec971f}
+.btn-small{padding:6px 12px;font-size:12px;margin:2px}
+.btn:hover{opacity:0.9;transform:translateY(-2px)}
+.instance{background:#f8f9fa;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #667eea}
+.instance-header{display:flex;justify-content:space-between;align-items:center}
+.instance-name{font-weight:600;color:#333;font-size:16px}
+.instance-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e0e0e0}
+.detail-item{font-size:13px}
+.detail-label{color:#666;font-weight:500}
+.detail-value{color:#333;font-weight:600;margin-top:2px}
+.active{color:#28a745}
+.inactive{color:#dc3545}
+.badge{padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600;margin-left:10px}
+.badge-active{background:#d4edda;color:#155724}
+.badge-inactive{background:#f8d7da;color:#721c24}
+.badge-authenticated{background:#d4edda;color:#155724}
+.badge-unauthenticated{background:#f8d7da;color:#721c24}
+.alert{padding:15px;margin:20px 0;border-radius:8px;display:none}
+.alert.show{display:block}
+.alert-success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}
+.alert-error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}
+.alert-info{background:#d1ecf1;color:#0c5460;border:1px solid #bee5eb}
+.loading{text-align:center;padding:40px;color:#666}
+.spinner{border:3px solid #f3f3f3;border-top:3px solid #667eea;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 10px}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
+.broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
+.logs-toggle{padding:8px 12px;background:#667eea;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-top:10px;width:100%}
+.logs-toggle:hover{background:#5568d3}
+.logs-section{display:none;margin-top:10px;padding:10px;background:#1e1e1e;border-radius:4px;border:1px solid #ccc}
+.logs-section.show{display:block}
+.logs-container{max-height:500px;overflow-y:auto;font-family:'Courier New',monospace;font-size:11px;color:#d4d4d4;line-height:1.4}
+.log-line{padding:2px 5px;word-break:break-all}
+.log-error{background:#c4444466;color:#ff6b6b}
+.log-success{background:#22863a66;color:#85e89d}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.toolbar .btn-primary{width:auto}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>🚀 OpenAlgo Monitor</h1>
+<p>Manage your OpenAlgo instance</p>
+</div>
+<div class="content">
+<div id="alert" class="alert"></div>
+<div class="toolbar">
+<button class="btn btn-primary" style="background:#28a745" onclick="loadInstance()">🔄 Refresh</button>
+<button class="btn btn-primary btn-restart" onclick="rebootInstance()">🔁 Reboot Instance</button>
+<button class="btn btn-primary btn-clear" onclick="clearLogs()">🧹 Clear Logs</button>
+</div>
+<div id="loading" class="loading"><div class="spinner"></div><p>Loading instance...</p></div>
+<div id="instance"></div>
+</div>
+</div>
+
+<script>
+const monitorInstance="__INSTANCE__";
+let logsLoaded=false;
+async function loadInstance(){
+if(!monitorInstance){
+showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
+document.getElementById('loading').style.display='none';
+return;
+}
+try{
+document.getElementById('loading').style.display='block';
+const r=await fetch('/monitor/api/health');
+const h=await r.json();
+document.getElementById('loading').style.display='none';
+if(h.error){
+showAlert(h.error,'error');
+return;
+}
+renderInstance(h);
+}catch(e){
+showAlert('Error: '+e.message,'error');
+}
+}
+function renderInstance(h){
+const inst=h.name||monitorInstance;
+const active=h.status==='active';
+const broker=h.broker||'Unknown';
+const domain=h.domain||'Unknown';
+const authName=h.auth_name||'Unknown';
+const authStatus=h.auth_status||((h.session_valid!==false)?'User Authenticated':'Not Authenticated');
+const isAuthenticated=authStatus==='User Authenticated';
+const brokerAuthBadge=isAuthenticated?`<span class="badge badge-authenticated">${authStatus}</span>`:`<span class="badge badge-unauthenticated">${authStatus}</span>`;
+const actions=active
+?`<button class="btn btn-small btn-stop" onclick="stopInstance()">⏹ Stop</button>`
+:`<button class="btn btn-small btn-start" onclick="startInstance()">▶ Start</button>`;
+document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="rebootInstance()">🔄 Restart</button>${actions}</div></div>`;
+}
+function toggleLogs(){
+const logsSection=document.getElementById('logs');
+if(!logsSection)return;
+logsSection.classList.toggle('show');
+if(logsSection.classList.contains('show')&&!logsLoaded){
+fetchLogs();
+}
+}
+async function fetchLogs(){
+try{
+const r=await fetch('/monitor/api/logs');
+const data=await r.json();
+const logsContent=document.getElementById('logs-content');
+if(data.logs&&data.logs.length>0){
+const html=data.logs.map(log=>{
+const lowerLog=log.toLowerCase();
+const hasAuthError=(lowerLog.includes('session expired')||lowerLog.includes('invalid session detected')||lowerLog.includes('no valid auth token'));
+const hasSuccess=(lowerLog.includes('master contract download completed')||lowerLog.includes('successfully loaded'));
+return`<div class="log-line ${hasAuthError?'log-error':''}${hasSuccess?'log-success':''}">${escapeHtml(log)}</div>`;
+}).join('');
+logsContent.innerHTML=html;
+logsLoaded=true;
+}else{
+logsContent.innerHTML='<p style="color:#999">No logs available</p>';
+}
+}catch(e){
+document.getElementById('logs-content').innerHTML=`<p style="color:#ff6b6b">Error loading logs: ${e.message}</p>`;
+}
+}
+function escapeHtml(text){
+const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+return text.replace(/[&<>"']/g,m=>map[m]);
+}
+async function post(path){
+const r=await fetch(path,{method:'POST'});
+return r.json();
+}
+async function rebootInstance(){
+if(!confirm('Restart this instance?'))return;
+showAlert('Restarting instance...','info');
+await post('/monitor/api/restart');
+setTimeout(loadInstance,1000);
+}
+async function stopInstance(){
+if(!confirm('Stop this instance?'))return;
+showAlert('Stopping instance...','info');
+await post('/monitor/api/stop');
+setTimeout(loadInstance,1000);
+}
+async function startInstance(){
+if(!confirm('Start this instance?'))return;
+showAlert('Starting instance...','info');
+await post('/monitor/api/start');
+setTimeout(loadInstance,1000);
+}
+async function clearLogs(){
+if(!confirm('Clear all log files for this instance?'))return;
+showAlert('Clearing logs...','info');
+await post('/monitor/api/clear-logs');
+logsLoaded=false;
+setTimeout(loadInstance,1000);
+}
+function showAlert(msg,type){
+const a=document.getElementById('alert');
+a.textContent=msg;
+a.className=`alert alert-${type} show`;
+if(type!=='error')setTimeout(()=>a.classList.remove('show'),4000);
+}
+window.addEventListener('load',loadInstance);
+setInterval(loadInstance,30000);
+</script>
+</body>
+</html>"""
+
+        html = html.replace("__INSTANCE__", instance)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
+        self.send_header('Content-Length', len(html))
+        self.end_headers()
+        self.wfile.write(html.encode('utf-8'))
+
     def serve_web_ui(self):
         """Serve HTML dashboard"""
         html = """<!DOCTYPE html>
