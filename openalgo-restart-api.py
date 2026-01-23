@@ -17,12 +17,24 @@ from datetime import datetime
 PORT = 8888
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
-    def _read_auth_status(self, instance):
+    def _get_auth_db_file(self, instance):
         inst_path = f"/var/python/openalgo-flask/{instance}"
         instance_num = instance.replace('openalgo', '')
-        db_file = f"{inst_path}/db/openalgo{instance_num}.db"
+        candidates = []
 
-        if not os.path.exists(db_file):
+        if instance_num.isdigit():
+            candidates.append(f"{inst_path}/db/openalgo{instance_num}.db")
+        candidates.append(f"{inst_path}/db/openalgo.db")
+
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return None
+
+    def _read_auth_status(self, instance):
+        db_file = self._get_auth_db_file(instance)
+
+        if not db_file:
             return False, "Auth database not found"
 
         try:
@@ -280,10 +292,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
         try:
             inst_path = f"/var/python/openalgo-flask/{instance}"
-            # Extract instance number: openalgo1 -> 1, openalgo10 -> 10
-            instance_num = instance.replace('openalgo', '')
-            db_file = f"{inst_path}/db/openalgo{instance_num}.db"
-            if os.path.exists(db_file):
+            db_file = self._get_auth_db_file(instance)
+            if db_file:
                 health["database"] = True
         except:
             pass
