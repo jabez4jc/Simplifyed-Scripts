@@ -61,8 +61,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             cur = conn.cursor()
             row = None
             for query in (
-                "SELECT is_revoked, auth, feed_token, broker, name FROM auth ORDER BY id DESC LIMIT 1",
-                "SELECT is_revoked, auth, feed_token, broker, name FROM auth ORDER BY rowid DESC LIMIT 1",
+                "SELECT is_revoked, auth, feed_token, broker, name FROM auth LIMIT 1",
             ):
                 try:
                     cur.execute(query)
@@ -85,6 +84,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 return False, "Auth revoked", broker, name
             if is_revoked == 0 and (auth_blank or feed_blank or broker_blank):
                 return False, "Auth fields missing", broker, name
+            if is_revoked == 0 and name_blank:
+                return False, "Auth name missing", broker, name
             return True, None, broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
