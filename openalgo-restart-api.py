@@ -629,6 +629,9 @@ setInterval(loadInstances,30000);
         
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
         self.send_header('Content-Length', len(html))
         self.end_headers()
         self.wfile.write(html.encode('utf-8'))
@@ -638,6 +641,9 @@ setInterval(loadInstances,30000);
         json_str = json.dumps(data)
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
         self.send_header('Content-Length', len(json_str))
         self.end_headers()
         self.wfile.write(json_str.encode('utf-8'))
@@ -648,9 +654,11 @@ setInterval(loadInstances,30000);
 
 if __name__ == '__main__':
     PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8888
-    
-    server = socketserver.TCPServer(("0.0.0.0", PORT), RestartHandler)
-    server.allow_reuse_address = True
+
+    class ReusableTCPServer(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    server = ReusableTCPServer(("0.0.0.0", PORT), RestartHandler)
     
     print(f"OpenAlgo API running on 0.0.0.0:{PORT}", flush=True)
     
