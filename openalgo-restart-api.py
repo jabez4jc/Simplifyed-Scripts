@@ -778,14 +778,15 @@ setInterval(loadInstance,30000);
 </html>"""
 
         html = html.replace("__INSTANCE__", instance)
+        html_bytes = html.encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
-        self.send_header('Content-Length', len(html))
+        self.send_header('Content-Length', len(html_bytes))
         self.end_headers()
-        self.wfile.write(html.encode('utf-8'))
+        self.wfile.write(html_bytes)
 
     def serve_web_ui(self):
         """Serve HTML dashboard"""
@@ -984,26 +985,28 @@ setInterval(loadInstances,30000);
 </body>
 </html>"""
         
+        html_bytes = html.encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
-        self.send_header('Content-Length', len(html))
+        self.send_header('Content-Length', len(html_bytes))
         self.end_headers()
-        self.wfile.write(html.encode('utf-8'))
+        self.wfile.write(html_bytes)
     
     def send_json(self, data, status=200):
         """Send JSON response"""
         json_str = json.dumps(data)
+        json_bytes = json_str.encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
-        self.send_header('Content-Length', len(json_str))
+        self.send_header('Content-Length', len(json_bytes))
         self.end_headers()
-        self.wfile.write(json_str.encode('utf-8'))
+        self.wfile.write(json_bytes)
     
     def log_message(self, format, *args):
         """Suppress logging"""
