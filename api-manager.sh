@@ -34,96 +34,20 @@ show_menu() {
 
 menu_main() {
     show_menu
-    echo "1) Install & Setup API"
-    echo "2) Verify API Status"
-    echo "3) Manage Service"
-    echo "4) View Logs"
-    echo "5) Exit"
+    echo "1) Setup / Update OpenAlgo Manager"
+    echo "2) Show Status & URL"
+    echo "3) View Logs"
+    echo "4) Exit"
     echo ""
-    read -p "Select option [1-5]: " choice
+    read -p "Select option [1-4]: " choice
     echo ""
     
     case $choice in
-        1) menu_setup ;;
-        2) verify_api ;;
-        3) menu_manage ;;
-        4) menu_logs ;;
-        5) exit 0 ;;
+        1) setup_update ;;
+        2) show_status ;;
+        3) show_logs ;;
+        4) exit 0 ;;
         *) echo "Invalid option"; sleep 2; menu_main ;;
-    esac
-}
-
-menu_setup() {
-    clear
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  SETUP & CONFIGURATION${NC}"
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo "1) Install API (copies openalgo-restart-api.py to /usr/local/bin/)"
-    echo "2) Setup Systemd Service (auto-start on boot)"
-    echo "3) Configure Firewall"
-    echo "4) Setup Everything (All of the above)"
-    echo "5) Back to Menu"
-    echo ""
-    read -p "Select option [1-5]: " choice
-    echo ""
-    
-    case $choice in
-        1) install_api; read -p "Press Enter to continue..."; menu_main ;;
-        2) setup_service; read -p "Press Enter to continue..."; menu_main ;;
-        3) setup_firewall; read -p "Press Enter to continue..."; menu_main ;;
-        4) install_api && echo "" && setup_service && echo "" && setup_firewall; read -p "Press Enter to continue..."; menu_main ;;
-        5) menu_main ;;
-        *) echo "Invalid option"; sleep 2; menu_setup ;;
-    esac
-}
-
-menu_manage() {
-    clear
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  SERVICE MANAGEMENT${NC}"
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo "1) Check Service Status"
-    echo "2) Start Service"
-    echo "3) Stop Service"
-    echo "4) Restart Service"
-    echo "5) Back to Menu"
-    echo ""
-    read -p "Select option [1-5]: " choice
-    echo ""
-    
-    case $choice in
-        1) systemctl status openalgo-restart-api; read -p "Press Enter to continue..."; menu_main ;;
-        2) systemctl start openalgo-restart-api; echo -e "${GREEN}✅ Started${NC}"; sleep 1; menu_main ;;
-        3) systemctl stop openalgo-restart-api; echo -e "${GREEN}✅ Stopped${NC}"; sleep 1; menu_main ;;
-        4) systemctl restart openalgo-restart-api; echo -e "${GREEN}✅ Restarted${NC}"; sleep 1; menu_main ;;
-        5) menu_main ;;
-        *) echo "Invalid option"; sleep 2; menu_manage ;;
-    esac
-}
-
-menu_logs() {
-    clear
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  API LOGS${NC}"
-    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo "1) Last 20 lines"
-    echo "2) Last 50 lines"
-    echo "3) Last 100 lines"
-    echo "4) Follow logs (press Ctrl+C to exit)"
-    echo "5) Back to Menu"
-    echo ""
-    read -p "Select option [1-5]: " choice
-    
-    case $choice in
-        1) journalctl -u openalgo-restart-api -n 20 --no-pager; read -p "Press Enter..."; menu_main ;;
-        2) journalctl -u openalgo-restart-api -n 50 --no-pager; read -p "Press Enter..."; menu_main ;;
-        3) journalctl -u openalgo-restart-api -n 100 --no-pager; read -p "Press Enter..."; menu_main ;;
-        4) journalctl -u openalgo-restart-api -f ;;
-        5) menu_main ;;
-        *) echo "Invalid option"; sleep 2; menu_logs ;;
     esac
 }
 
@@ -236,10 +160,26 @@ setup_firewall() {
     fi
 }
 
-verify_api() {
+setup_update() {
     clear
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  API VERIFICATION${NC}"
+    echo -e "${YELLOW}  SETUP / UPDATE${NC}"
+    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    install_api || { read -p "Press Enter to continue..."; menu_main; }
+    echo ""
+    setup_service || { read -p "Press Enter to continue..."; menu_main; }
+    echo ""
+    setup_firewall
+    echo ""
+    show_status
+}
+
+show_status() {
+    clear
+    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  STATUS${NC}"
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
     echo ""
     
@@ -275,6 +215,21 @@ verify_api() {
     echo ""
     
     read -p "Press Enter to continue..."
+    menu_main
+}
+
+show_logs() {
+    clear
+    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  API LOGS${NC}"
+    echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
+    echo ""
+    journalctl -u openalgo-restart-api -n 100 --no-pager
+    echo ""
+    read -p "Follow logs? (y/N): " follow
+    if [[ "$follow" =~ ^[Yy]$ ]]; then
+        journalctl -u openalgo-restart-api -f
+    fi
     menu_main
 }
 
