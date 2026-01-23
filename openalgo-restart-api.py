@@ -12,7 +12,7 @@ import os
 import sqlite3
 from threading import Thread
 from urllib.parse import urlparse, parse_qs
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 PORT = 8888
 
@@ -91,7 +91,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             return None
 
     def _ist_now(self):
-        return datetime.utcnow() + timedelta(hours=5, minutes=30)
+        return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
     def _ist_window_start(self, now_ist):
         window_start = now_ist.replace(hour=3, minute=0, second=0, microsecond=0)
