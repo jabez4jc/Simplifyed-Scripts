@@ -128,9 +128,14 @@ SVCEOF
     systemctl daemon-reload
     systemctl enable openalgo-restart-api
     
-    # Kill any existing processes
-    pkill -9 -f "python3.*openalgo-restart-api" 2>/dev/null || true
+    # Kill any existing processes using the port or script
+    pkill -9 -f "openalgo-restart-api.py" 2>/dev/null || true
     fuser -k 8888/tcp 2>/dev/null || true
+    if command -v ss &>/dev/null; then
+        if ss -tlnp 2>/dev/null | grep -q ":8888 "; then
+            fuser -k 8888/tcp 2>/dev/null || true
+        fi
+    fi
     sleep 2
     
     # Start service
