@@ -54,7 +54,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         db_file = self._get_auth_db_file(instance)
 
         if not db_file:
-            return False, "Auth database not found"
+            return False, "Not Authenticated - User not Setup", None, None
 
         try:
             conn = sqlite3.connect(db_file)
@@ -72,7 +72,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             conn.close()
 
             if not row:
-                return False, "No auth record found"
+                return False, "Not Authenticated - User not Setup", None, None
 
             is_revoked, auth, feed_token, broker, name = row
             auth_blank = auth is None or str(auth).strip() == ""
@@ -80,13 +80,15 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             broker_blank = broker is None or str(broker).strip() == ""
             name_blank = name is None or str(name).strip() == ""
 
+            if name_blank:
+                return False, "Not Authenticated - User not Setup", broker, name
+            if is_revoked == 1 and not (auth_blank or feed_blank or broker_blank):
+                return False, "Not Authenticated - Invalid Token", broker, name
             if is_revoked == 1:
-                return False, "Auth revoked", broker, name
-            if is_revoked == 0 and (auth_blank or feed_blank or broker_blank):
-                return False, "Auth fields missing", broker, name
-            if is_revoked == 0 and name_blank:
-                return False, "Auth name missing", broker, name
-            return True, None, broker, name
+                return False, "Not Authenticated - User Token Revoked", broker, name
+            if auth_blank or feed_blank or broker_blank:
+                return False, "Not Authenticated - Invalid Token", broker, name
+            return True, "User Authenticated", broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
     def _service_name(self, instance):
@@ -298,7 +300,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "session_valid": True}
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True}
 
         try:
             service_name = self._service_name(instance)
@@ -344,8 +346,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 health["broker"] = broker_db
             if name_db:
                 health["auth_name"] = name_db
-            elif last_error == "No auth record found":
-                health["auth_name"] = "No auth record found"
+            if last_error:
+                health["auth_status"] = last_error
+            elif authenticated:
+                health["auth_status"] = "User Authenticated"
         except:
             pass
 
@@ -557,8 +561,9 @@ const active=h.status==='active';
 const broker=h.broker||'Unknown';
 const domain=h.domain||'Unknown';
 const authName=h.auth_name||'Unknown';
-const sessionValid=h.session_valid!==false;
-const brokerAuthBadge=sessionValid?`<span class="badge badge-authenticated">✓ Authenticated</span>`:`<span class="badge badge-unauthenticated">✗ Not Authenticated</span>`;
+const authStatus=h.auth_status||((h.session_valid!==false)?'User Authenticated':'Not Authenticated');
+const isAuthenticated=authStatus==='User Authenticated';
+const brokerAuthBadge=isAuthenticated?`<span class="badge badge-authenticated">${authStatus}</span>`:`<span class="badge badge-unauthenticated">${authStatus}</span>`;
 return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
