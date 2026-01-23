@@ -446,6 +446,12 @@ log_message "\n🔧 Creating systemd service..." "$BLUE"
 
 VENV_PATH="$INSTANCE_DIR/venv"
 
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+    log_message "Stopping running service: $SERVICE_NAME" "$YELLOW"
+    sudo systemctl stop "$SERVICE_NAME"
+    sleep 2
+fi
+
 sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOL
 [Unit]
 Description=OpenAlgo Instance 1 ($DOMAIN - $BROKER)

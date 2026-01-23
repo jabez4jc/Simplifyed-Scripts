@@ -30,8 +30,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             cur = conn.cursor()
             row = None
             for query in (
-                "SELECT is_revoked, auth, feed_token, broker FROM auth ORDER BY id DESC LIMIT 1",
-                "SELECT is_revoked, auth, feed_token, broker FROM auth ORDER BY rowid DESC LIMIT 1",
+                "SELECT is_revoked, auth, feed_token, broker, name FROM auth ORDER BY id DESC LIMIT 1",
+                "SELECT is_revoked, auth, feed_token, broker, name FROM auth ORDER BY rowid DESC LIMIT 1",
             ):
                 try:
                     cur.execute(query)
@@ -44,18 +44,19 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if not row:
                 return False, "No auth record found"
 
-            is_revoked, auth, feed_token, broker = row
+            is_revoked, auth, feed_token, broker, name = row
             auth_blank = auth is None or str(auth).strip() == ""
             feed_blank = feed_token is None or str(feed_token).strip() == ""
             broker_blank = broker is None or str(broker).strip() == ""
+            name_blank = name is None or str(name).strip() == ""
 
             if is_revoked == 1:
-                return False, "Auth revoked"
+                return False, "Auth revoked", broker, name
             if is_revoked == 0 and (auth_blank or feed_blank or broker_blank):
-                return False, "Auth fields missing"
-            return True, None
+                return False, "Auth fields missing", broker, name
+            return True, None, broker, name
         except Exception as e:
-            return False, f"Auth check failed: {e}"
+            return False, f"Auth check failed: {e}", None, None
     def _service_name(self, instance):
         """Map instance directory to systemd service name."""
         env_file = f"/var/python/openalgo-flask/{instance}/.env"
@@ -243,12 +244,13 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                                 broker = match.group(1)
                             break
 
-            authenticated, last_error = self._read_auth_status(instance)
+            authenticated, last_error, broker_db, name_db = self._read_auth_status(instance)
             error_timestamp = None
 
             self.send_json({
                 "instance": instance,
-                "broker": broker,
+                "broker": broker_db or broker,
+                "name": name_db,
                 "authenticated": authenticated,
                 "last_error": last_error,
                 "error_timestamp": error_timestamp,
@@ -264,7 +266,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "session_valid": True}
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "session_valid": True}
 
         try:
             service_name = self._service_name(instance)
@@ -306,8 +308,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             pass
 
         try:
-            authenticated, _ = self._read_auth_status(instance)
+            authenticated, _, broker_db, name_db = self._read_auth_status(instance)
             health["session_valid"] = authenticated
+            if broker_db:
+                health["broker"] = broker_db
+            if name_db:
+                health["auth_name"] = name_db
         except:
             pass
 
@@ -518,9 +524,11 @@ const h=health.instances?.[inst]||{};
 const active=h.status==='active';
 const broker=h.broker||'Unknown';
 const domain=h.domain||'Unknown';
+const authName=h.auth_name||'Unknown';
 const sessionValid=h.session_valid!==false;
 const brokerAuthBadge=sessionValid?`<span class="badge badge-authenticated">✓ Authenticated</span>`:`<span class="badge badge-unauthenticated">✗ Not Authenticated</span>`;
 return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){

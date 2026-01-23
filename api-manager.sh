@@ -169,6 +169,12 @@ setup_service() {
         return 1
     fi
     
+    if systemctl is-active --quiet openalgo-restart-api; then
+        echo -e "${YELLOW}Stopping running service: openalgo-restart-api${NC}"
+        systemctl stop openalgo-restart-api
+        sleep 2
+    fi
+
     # Create service file
     cat > /etc/systemd/system/openalgo-restart-api.service <<'SVCEOF'
 [Unit]
