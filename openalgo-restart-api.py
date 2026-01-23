@@ -17,18 +17,37 @@ from datetime import datetime
 PORT = 8888
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
+    def _db_has_auth_table(self, db_file):
+        try:
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='auth'")
+            found = cur.fetchone() is not None
+            conn.close()
+            return found
+        except Exception:
+            return False
+
     def _get_auth_db_file(self, instance):
         inst_path = f"/var/python/openalgo-flask/{instance}"
         instance_num = instance.replace('openalgo', '')
+        db_dir = f"{inst_path}/db"
         candidates = []
 
         if instance_num.isdigit():
-            candidates.append(f"{inst_path}/db/openalgo{instance_num}.db")
-        candidates.append(f"{inst_path}/db/openalgo.db")
+            candidates.append(f"{db_dir}/openalgo{instance_num}.db")
+        candidates.append(f"{db_dir}/openalgo.db")
+        candidates.append(f"{db_dir}/auth.db")
 
         for path in candidates:
-            if os.path.exists(path):
+            if os.path.exists(path) and self._db_has_auth_table(path):
                 return path
+
+        if os.path.isdir(db_dir):
+            for entry in os.scandir(db_dir):
+                if entry.is_file() and entry.name.endswith(".db"):
+                    if self._db_has_auth_table(entry.path):
+                        return entry.path
         return None
 
     def _read_auth_status(self, instance):
