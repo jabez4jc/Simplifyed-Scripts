@@ -12,21 +12,45 @@ import os
 import sqlite3
 from threading import Thread
 from urllib.parse import urlparse, parse_qs
-from datetime import datetime
+from datetime import datetime, timedelta
 
 PORT = 8888
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
-    def _db_has_auth_table(self, db_file):
+    def _db_has_table(self, db_file, table_name):
         try:
             conn = sqlite3.connect(db_file)
             cur = conn.cursor()
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='auth'")
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             found = cur.fetchone() is not None
             conn.close()
             return found
         except Exception:
             return False
+
+    def _db_has_auth_table(self, db_file):
+        return self._db_has_table(db_file, "auth")
+
+    def _get_db_file_with_table(self, instance, table_name):
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        instance_num = instance.replace('openalgo', '')
+        db_dir = f"{inst_path}/db"
+        candidates = []
+
+        if instance_num.isdigit():
+            candidates.append(f"{db_dir}/openalgo{instance_num}.db")
+        candidates.append(f"{db_dir}/openalgo.db")
+
+        for path in candidates:
+            if os.path.exists(path) and self._db_has_table(path, table_name):
+                return path
+
+        if os.path.isdir(db_dir):
+            for entry in os.scandir(db_dir):
+                if entry.is_file() and entry.name.endswith(".db"):
+                    if self._db_has_table(entry.path, table_name):
+                        return entry.path
+        return None
 
     def _get_auth_db_file(self, instance):
         inst_path = f"/var/python/openalgo-flask/{instance}"
@@ -49,6 +73,97 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                     if self._db_has_auth_table(entry.path):
                         return entry.path
         return None
+
+    def _parse_db_datetime(self, value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        value = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(value, fmt)
+            except Exception:
+                continue
+        try:
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+
+    def _ist_now(self):
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+    def _ist_window_start(self, now_ist):
+        window_start = now_ist.replace(hour=3, minute=0, second=0, microsecond=0)
+        if now_ist < window_start:
+            window_start -= timedelta(days=1)
+        return window_start
+
+    def _get_master_contract_status(self, instance):
+        db_file = self._get_db_file_with_table(instance, "master_contract_status")
+        if not db_file:
+            return {
+                "is_ready": False,
+                "status": "Master Contract Data Not Ready",
+                "last_updated": None,
+                "total_symbols": None,
+                "message": None,
+                "broker": None,
+            }
+
+        try:
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT broker, message, last_updated, total_symbols, is_ready "
+                "FROM master_contract_status ORDER BY last_updated DESC LIMIT 1"
+            )
+            latest = cur.fetchone()
+
+            cur.execute(
+                "SELECT broker, message, last_updated, total_symbols, is_ready "
+                "FROM master_contract_status WHERE is_ready=1 "
+                "ORDER BY last_updated DESC LIMIT 20"
+            )
+            ready_rows = cur.fetchall()
+            conn.close()
+
+            now_ist = self._ist_now()
+            window_start = self._ist_window_start(now_ist)
+            window_end = window_start + timedelta(days=1)
+
+            ready_row = None
+            for row in ready_rows:
+                row_dt = self._parse_db_datetime(row[2])
+                if row_dt and window_start <= row_dt < window_end:
+                    ready_row = row
+                    break
+
+            is_ready = ready_row is not None
+            status = "Master Contract Data Ready" if is_ready else "Master Contract Data Not Ready"
+
+            if latest:
+                broker, message, last_updated, total_symbols, _ = latest
+            else:
+                broker = message = last_updated = total_symbols = None
+
+            return {
+                "is_ready": is_ready,
+                "status": status,
+                "last_updated": last_updated,
+                "total_symbols": total_symbols,
+                "message": message,
+                "broker": broker,
+            }
+        except Exception:
+            return {
+                "is_ready": False,
+                "status": "Master Contract Data Not Ready",
+                "last_updated": None,
+                "total_symbols": None,
+                "message": None,
+                "broker": None,
+            }
 
     def _read_auth_status(self, instance):
         db_file = self._get_auth_db_file(instance)
@@ -86,8 +201,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 return False, "Not Authenticated - Invalid Token", broker, name
             if is_revoked == 1:
                 return False, "Not Authenticated - User Token Revoked", broker, name
-            if auth_blank or feed_blank or broker_blank:
+            if broker_blank:
                 return False, "Not Authenticated - Invalid Token", broker, name
+            if auth_blank or feed_blank:
+                return True, "User Authenticated", broker, name
             return True, "User Authenticated", broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
@@ -430,7 +547,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True}
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None}
 
         try:
             service_name = self._service_name(instance)
@@ -480,6 +597,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 health["auth_status"] = last_error
             elif authenticated:
                 health["auth_status"] = "User Authenticated"
+        except:
+            pass
+
+        try:
+            health["master_contract"] = self._get_master_contract_status(instance)
         except:
             pass
 
@@ -636,6 +758,10 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 .actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
 .broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
+.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
+.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
+.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
+.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
 .logs-toggle{padding:8px 12px;background:#667eea;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-top:10px;width:100%}
 .logs-toggle:hover{background:#5568d3}
 .logs-section{display:none;margin-top:10px;padding:10px;background:#1e1e1e;border-radius:4px;border:1px solid #ccc}
@@ -698,10 +824,18 @@ const authName=h.auth_name||'Unknown';
 const authStatus=h.auth_status||((h.session_valid!==false)?'User Authenticated':'Not Authenticated');
 const isAuthenticated=authStatus==='User Authenticated';
 const brokerAuthBadge=isAuthenticated?`<span class="badge badge-authenticated">${authStatus}</span>`:`<span class="badge badge-unauthenticated">${authStatus}</span>`;
+const mc=h.master_contract||{};
+const mcReady=mc.is_ready===true;
+const mcStatus=mc.status||'Master Contract Data Not Ready';
+const mcBadge=mcReady?`<span class="badge badge-authenticated">${mcStatus}</span>`:`<span class="badge badge-unauthenticated">${mcStatus}</span>`;
+const mcLast=mc.last_updated||'Unknown';
+const mcSymbols=(mc.total_symbols!==undefined&&mc.total_symbols!==null)?mc.total_symbols:'N/A';
+const mcBroker=mc.broker||'Unknown';
+const mcMessage=mc.message||'N/A';
 const actions=active
 ?`<button class="btn btn-small btn-stop" onclick="stopInstance()">⏹ Stop</button>`
 :`<button class="btn btn-small btn-start" onclick="startInstance()">▶ Start</button>`;
-document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="rebootInstance()">🔄 Restart</button>${actions}</div></div>`;
+document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="rebootInstance()">🔄 Restart</button>${actions}</div></div>`;
 }
 function toggleLogs(){
 const logsSection=document.getElementById('logs');
@@ -896,7 +1030,15 @@ const authName=h.auth_name||'Unknown';
 const authStatus=h.auth_status||((h.session_valid!==false)?'User Authenticated':'Not Authenticated');
 const isAuthenticated=authStatus==='User Authenticated';
 const brokerAuthBadge=isAuthenticated?`<span class="badge badge-authenticated">${authStatus}</span>`:`<span class="badge badge-unauthenticated">${authStatus}</span>`;
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+const mc=h.master_contract||{};
+const mcReady=mc.is_ready===true;
+const mcStatus=mc.status||'Master Contract Data Not Ready';
+const mcBadge=mcReady?`<span class="badge badge-authenticated">${mcStatus}</span>`:`<span class="badge badge-unauthenticated">${mcStatus}</span>`;
+const mcLast=mc.last_updated||'Unknown';
+const mcSymbols=(mc.total_symbols!==undefined&&mc.total_symbols!==null)?mc.total_symbols:'N/A';
+const mcBroker=mc.broker||'Unknown';
+const mcMessage=mc.message||'N/A';
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){
