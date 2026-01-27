@@ -166,6 +166,50 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 "broker": None,
             }
 
+    def _invalidate_session(self, instance):
+        """Invalidate session by clearing auth tokens and marking revoked; delete today's master contract status."""
+        result = {"instance": instance, "auth_updated": False, "auth_error": None, "master_deleted": 0, "master_error": None}
+
+        auth_db = self._get_db_file_with_table(instance, "auth")
+        if auth_db:
+            try:
+                conn = sqlite3.connect(auth_db)
+                cur = conn.cursor()
+                cur.execute("UPDATE auth SET auth=NULL, feed_token=NULL, is_revoked=1")
+                conn.commit()
+                conn.close()
+                result["auth_updated"] = True
+            except Exception as e:
+                result["auth_error"] = str(e)
+        else:
+            result["auth_error"] = "Auth database not found"
+
+        master_db = self._get_db_file_with_table(instance, "master_contract_status")
+        if master_db:
+            try:
+                now_ist = self._ist_now()
+                window_start = self._ist_window_start(now_ist)
+                window_end = window_start + timedelta(days=1)
+                start_str = window_start.strftime("%Y-%m-%d %H:%M:%S")
+                end_str = window_end.strftime("%Y-%m-%d %H:%M:%S")
+
+                conn = sqlite3.connect(master_db)
+                cur = conn.cursor()
+                cur.execute(
+                    "DELETE FROM master_contract_status "
+                    "WHERE datetime(last_updated) >= datetime(?) AND datetime(last_updated) < datetime(?)",
+                    (start_str, end_str),
+                )
+                conn.commit()
+                result["master_deleted"] = cur.rowcount if cur.rowcount is not None else 0
+                conn.close()
+            except Exception as e:
+                result["master_error"] = str(e)
+        else:
+            result["master_error"] = "Master contract table not found"
+
+        return result
+
     def _read_auth_status(self, instance):
         db_file = self._get_auth_db_file(instance)
 
@@ -327,6 +371,18 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             instance = self._require_monitor_instance()
             if instance:
                 self.handle_clear_logs_instance(instance)
+        elif path == '/monitor/api/invalidate-session':
+            instance = self._require_monitor_instance()
+            if instance:
+                self.handle_invalidate_session(instance)
+        elif path == '/monitor/api/reboot-server':
+            self.handle_reboot_server()
+        elif path == '/api/invalidate-session':
+            instance = data.get('instance', '')
+            if instance:
+                self.handle_invalidate_session(instance)
+            else:
+                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/restart-all':
             self.handle_restart_all()
         elif self.path == '/api/restart-instance':
@@ -627,6 +683,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     
     def handle_restart_instance(self, instance):
         """Restart specific instance"""
+        invalidate_result = None
+        try:
+            invalidate_result = self._invalidate_session(instance)
+        except Exception:
+            invalidate_result = None
         service_name = self._service_name(instance)
         Thread(target=lambda: subprocess.run(
             f"sudo systemctl restart {service_name}",
@@ -637,6 +698,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "status": "success",
             "message": f"Restart triggered for {instance}",
             "instance": instance,
+            "session_invalidated": invalidate_result,
             "timestamp": str(datetime.now())
         })
     
@@ -667,6 +729,17 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "status": "success",
             "message": f"Started {instance}",
             "instance": instance,
+            "timestamp": str(datetime.now())
+        })
+
+    def handle_invalidate_session(self, instance):
+        """Invalidate session for a specific instance"""
+        result = self._invalidate_session(instance)
+        self.send_json({
+            "status": "success",
+            "message": f"Session invalidated for {instance}",
+            "instance": instance,
+            "details": result,
             "timestamp": str(datetime.now())
         })
 
@@ -729,8 +802,14 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .btn-primary{background:#667eea;color:white;width:100%;padding:12px;font-size:14px}
 .btn-primary:hover{background:#5568d3}
 .btn-restart{background:#667eea;color:white}
+.btn-invalidate{background:#6c757d;color:white}
+.btn-invalidate:hover{background:#5a6268}
+.btn-reboot{background:#ff6b6b;color:white}
+.btn-reboot:hover{background:#ff5252}
 .btn-stop{background:#dc3545;color:white}
 .btn-start{background:#28a745;color:white}
+.btn-invalidate{background:#6c757d;color:white}
+.btn-invalidate:hover{background:#5a6268}
 .btn-clear{background:#f0ad4e;color:white}
 .btn-clear:hover{background:#ec971f}
 .btn-small{padding:6px 12px;font-size:12px;margin:2px}
@@ -787,8 +866,10 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="alert" class="alert"></div>
 <div class="toolbar">
 <button class="btn btn-primary" style="background:#28a745" onclick="loadInstance()">🔄 Refresh</button>
-<button class="btn btn-primary btn-restart" onclick="rebootInstance()">🔁 Reboot Instance</button>
+<button class="btn btn-primary btn-restart" onclick="restartInstance()">🔄 Restart Instance</button>
+<button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
 <button class="btn btn-primary btn-clear" onclick="clearLogs()">🧹 Clear Logs</button>
+<button class="btn btn-primary btn-clear" style="background:#6c757d" onclick="invalidateSession()">🚫 Invalidate Session</button>
 </div>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instance...</p></div>
 <div id="instance"></div>
@@ -838,7 +919,7 @@ const mcMessage=mc.message||'N/A';
 const actions=active
 ?`<button class="btn btn-small btn-stop" onclick="stopInstance()">⏹ Stop</button>`
 :`<button class="btn btn-small btn-start" onclick="startInstance()">▶ Start</button>`;
-document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="rebootInstance()">🔄 Restart</button>${actions}</div></div>`;
+document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restartInstance()">🔄 Restart</button>${actions}</div></div>`;
 }
 function toggleLogs(){
 const logsSection=document.getElementById('logs');
@@ -877,9 +958,9 @@ async function post(path){
 const r=await fetch(path,{method:'POST'});
 return r.json();
 }
-async function rebootInstance(){
-if(!confirm('Restart this instance?'))return;
-showAlert('Restarting instance...','info');
+async function restartInstance(){
+if(!confirm('Restart this instance? This will invalidate the session.'))return;
+showAlert('Restarting instance and invalidating session...','info');
 await post('/monitor/api/restart');
 setTimeout(loadInstance,1000);
 }
@@ -901,6 +982,24 @@ showAlert('Clearing logs...','info');
 await post('/monitor/api/clear-logs');
 logsLoaded=false;
 setTimeout(loadInstance,1000);
+}
+async function invalidateSession(){
+if(!confirm('Invalidate the session for this instance? This will clear auth tokens and revoke the session.'))return;
+showAlert('Invalidating session...','info');
+await post('/monitor/api/invalidate-session');
+setTimeout(loadInstance,1000);
+}
+async function rebootServer(){
+if(!confirm('⚠️ Reboot the server? This will reboot all instances on this server.'))return;
+if(!confirm('⚠️ FINAL CONFIRMATION: The server will restart now. Continue?'))return;
+showAlert('Rebooting server... Connection will be lost shortly.','info');
+try{
+const r=await fetch('/monitor/api/reboot-server',{method:'POST'});
+const d=await r.json();
+showAlert(d.message,'success');
+}catch(e){
+showAlert('Reboot initiated (API connection lost as expected)','success');
+}
 }
 function showAlert(msg,type){
 const a=document.getElementById('alert');
@@ -977,6 +1076,8 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .summary{background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:20px;border-left:4px solid #667eea}
 .actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
 .broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
+.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
+.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
 .logs-toggle{padding:8px 12px;background:#667eea;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-top:10px;width:100%}
 .logs-toggle:hover{background:#5568d3}
 .logs-section{display:none;margin-top:10px;padding:10px;background:#1e1e1e;border-radius:4px;border:1px solid #ccc}
@@ -1041,7 +1142,7 @@ const mcLast=mc.last_updated||'Unknown';
 const mcSymbols=(mc.total_symbols!==undefined&&mc.total_symbols!==null)?mc.total_symbols:'N/A';
 const mcBroker=mc.broker||'Unknown';
 const mcMessage=mc.message||'N/A';
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){
@@ -1089,9 +1190,15 @@ showAlert(d.message,'success');
 setTimeout(loadInstances,2000);
 }
 async function restart(inst){
-if(!confirm(`Restart ${inst}?`))return;
+if(!confirm(`Restart ${inst}? This will invalidate the session.`))return;
 await fetch('/api/restart-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Restarting ${inst}`,'info');
+setTimeout(loadInstances,1000);
+}
+async function invalidate(inst){
+if(!confirm(`Invalidate session for ${inst}? This will clear auth tokens and revoke the session.`))return;
+await fetch('/api/invalidate-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+showAlert(`Invalidating session for ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
 async function stop(inst){
