@@ -10,6 +10,7 @@ import json
 import sys
 import os
 import sqlite3
+import time
 from threading import Thread
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
@@ -99,6 +100,106 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if now_ist < window_start:
             window_start -= timedelta(days=1)
         return window_start
+
+    def _read_cpu_times(self):
+        try:
+            with open("/proc/stat", "r") as f:
+                line = f.readline()
+            parts = line.split()
+            if len(parts) < 5 or parts[0] != "cpu":
+                return None, None
+            values = [int(p) for p in parts[1:]]
+            total = sum(values)
+            idle = values[3] + (values[4] if len(values) > 4 else 0)
+            return total, idle
+        except Exception:
+            return None, None
+
+    def _get_system_stats(self):
+        stats = {
+            "cpu_percent": None,
+            "load1": None,
+            "load5": None,
+            "load15": None,
+            "mem_total": None,
+            "mem_used": None,
+            "mem_available": None,
+            "mem_percent": None,
+            "swap_total": None,
+            "swap_used": None,
+            "swap_percent": None,
+            "disk_total": None,
+            "disk_used": None,
+            "disk_free": None,
+            "disk_percent": None,
+        }
+
+        total1, idle1 = self._read_cpu_times()
+        time.sleep(0.1)
+        total2, idle2 = self._read_cpu_times()
+        if total1 is not None and total2 is not None:
+            total_delta = total2 - total1
+            idle_delta = idle2 - idle1
+            if total_delta > 0:
+                stats["cpu_percent"] = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+
+        try:
+            load1, load5, load15 = os.getloadavg()
+            stats["load1"] = round(load1, 2)
+            stats["load5"] = round(load5, 2)
+            stats["load15"] = round(load15, 2)
+        except Exception:
+            pass
+
+        try:
+            meminfo = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) != 2:
+                        continue
+                    key = parts[0].strip()
+                    val_parts = parts[1].strip().split()
+                    if not val_parts:
+                        continue
+                    meminfo[key] = int(val_parts[0]) * 1024
+            mem_total = meminfo.get("MemTotal")
+            mem_available = meminfo.get("MemAvailable")
+            if mem_total is not None and mem_available is not None:
+                mem_used = mem_total - mem_available
+                stats["mem_total"] = mem_total
+                stats["mem_available"] = mem_available
+                stats["mem_used"] = mem_used
+                stats["mem_percent"] = round(100.0 * mem_used / mem_total, 1)
+
+            swap_total = meminfo.get("SwapTotal")
+            swap_free = meminfo.get("SwapFree")
+            if swap_total is not None and swap_free is not None and swap_total > 0:
+                swap_used = swap_total - swap_free
+                stats["swap_total"] = swap_total
+                stats["swap_used"] = swap_used
+                stats["swap_percent"] = round(100.0 * swap_used / swap_total, 1)
+            elif swap_total is not None:
+                stats["swap_total"] = swap_total
+                stats["swap_used"] = 0
+                stats["swap_percent"] = 0.0
+        except Exception:
+            pass
+
+        try:
+            stat = os.statvfs("/")
+            total = stat.f_frsize * stat.f_blocks
+            free = stat.f_frsize * stat.f_bavail
+            used = total - free
+            if total > 0:
+                stats["disk_total"] = total
+                stats["disk_free"] = free
+                stats["disk_used"] = used
+                stats["disk_percent"] = round(100.0 * used / total, 1)
+        except Exception:
+            pass
+
+        return stats
 
     def _get_master_contract_status(self, instance):
         db_file = self._get_db_file_with_table(instance, "master_contract_status")
@@ -468,7 +569,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             
             for inst in instances:
                 health["instances"][inst] = self._get_instance_health(inst)
-            
+
+            try:
+                health["system"] = self._get_system_stats()
+            except Exception:
+                health["system"] = None
+
             self.send_json(health)
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -479,6 +585,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if not instance:
             return
         health = self._get_instance_health(instance)
+        try:
+            health["system"] = self._get_system_stats()
+        except Exception:
+            health["system"] = None
         health["timestamp"] = str(datetime.now())
         self.send_json(health)
 
@@ -854,6 +964,11 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .log-success{background:#22863a66;color:#85e89d}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .toolbar .btn-primary{width:auto}
+.system-card{background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #28a745}
+.system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
+.system-item{font-size:13px}
+.system-label{color:#666;font-weight:500}
+.system-value{color:#333;font-weight:600;margin-top:2px}
 </style>
 </head>
 <body>
@@ -871,6 +986,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <button class="btn btn-primary btn-clear" onclick="clearLogs()">🧹 Clear Logs</button>
 <button class="btn btn-primary btn-clear" style="background:#6c757d" onclick="invalidateSession()">🚫 Invalidate Session</button>
 </div>
+<div id="system" class="system-card"></div>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instance...</p></div>
 <div id="instance"></div>
 </div>
@@ -894,6 +1010,7 @@ if(h.error){
 showAlert(h.error,'error');
 return;
 }
+renderSystem(h.system);
 renderInstance(h);
 }catch(e){
 showAlert('Error: '+e.message,'error');
@@ -953,6 +1070,30 @@ document.getElementById('logs-content').innerHTML=`<p style="color:#ff6b6b">Erro
 function escapeHtml(text){
 const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
 return text.replace(/[&<>"']/g,m=>map[m]);
+}
+function formatBytes(bytes){
+if(bytes===null||bytes===undefined)return 'N/A';
+const gb=bytes/1024/1024/1024;
+return gb.toFixed(1)+' GB';
+}
+function formatPercent(p){
+if(p===null||p===undefined)return 'N/A';
+return p.toFixed(1)+'%';
+}
+function renderSystem(sys){
+const el=document.getElementById('system');
+if(!sys){
+el.innerHTML='<h3>System</h3><p style="color:#999">System stats unavailable</p>';
+return;
+}
+el.innerHTML=`<h3>System</h3>
+<div class="system-grid">
+<div class="system-item"><div class="system-label">CPU</div><div class="system-value">${formatPercent(sys.cpu_percent)}</div></div>
+<div class="system-item"><div class="system-label">Load Avg</div><div class="system-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
+<div class="system-item"><div class="system-label">RAM Used</div><div class="system-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div></div>
+<div class="system-item"><div class="system-label">Swap Used</div><div class="system-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div></div>
+<div class="system-item"><div class="system-label">Storage Used</div><div class="system-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div></div>
+</div>`;
 }
 async function post(path){
 const r=await fetch(path,{method:'POST'});
@@ -1074,6 +1215,11 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .spinner{border:3px solid #f3f3f3;border-top:3px solid #667eea;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 10px}
 @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 .summary{background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:20px;border-left:4px solid #667eea}
+.system-card{background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #28a745}
+.system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
+.system-item{font-size:13px}
+.system-label{color:#666;font-weight:500}
+.system-value{color:#333;font-weight:600;margin-top:2px}
 .actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
 .broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
 .master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
@@ -1100,6 +1246,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <h3>Summary</h3>
 <div id="summary"><p>Loading...</p></div>
 </div>
+<div id="system" class="system-card"></div>
 <button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button>
 <button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button>
 <button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
@@ -1125,6 +1272,7 @@ return;
 }
 const running=Object.values(health.instances||{}).filter(i=>i.status==='active').length;
 document.getElementById('summary').innerHTML=`<p><strong>Total Instances:</strong> ${instances.length} | <strong>Running:</strong> <span class="active">${running}</span> | <strong>Stopped:</strong> <span class="inactive">${instances.length-running}</span></p>`;
+renderSystem(health.system);
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
 const active=h.status==='active';
@@ -1180,6 +1328,30 @@ document.getElementById(`logs-content-${inst}`).innerHTML=`<p style="color:#ff6b
 function escapeHtml(text){
 const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
 return text.replace(/[&<>"']/g,m=>map[m]);
+}
+function formatBytes(bytes){
+if(bytes===null||bytes===undefined)return 'N/A';
+const gb=bytes/1024/1024/1024;
+return gb.toFixed(1)+' GB';
+}
+function formatPercent(p){
+if(p===null||p===undefined)return 'N/A';
+return p.toFixed(1)+'%';
+}
+function renderSystem(sys){
+const el=document.getElementById('system');
+if(!sys){
+el.innerHTML='<h3>System</h3><p style="color:#999">System stats unavailable</p>';
+return;
+}
+el.innerHTML=`<h3>System</h3>
+<div class="system-grid">
+<div class="system-item"><div class="system-label">CPU</div><div class="system-value">${formatPercent(sys.cpu_percent)}</div></div>
+<div class="system-item"><div class="system-label">Load Avg</div><div class="system-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
+<div class="system-item"><div class="system-label">RAM Used</div><div class="system-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div></div>
+<div class="system-item"><div class="system-label">Swap Used</div><div class="system-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div></div>
+<div class="system-item"><div class="system-label">Storage Used</div><div class="system-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div></div>
+</div>`;
 }
 async function restartAll(){
 if(!confirm('Restart all instances?'))return;

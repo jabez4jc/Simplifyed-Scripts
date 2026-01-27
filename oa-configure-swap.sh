@@ -100,25 +100,28 @@ get_disk_space_info() {
     log_message "   Used: $used ($percent)" "$BLUE"
     log_message "   Available: $available" "$BLUE"
     
-    # Convert available to GB for reference
-    local available_gb=$(echo "$available" | sed 's/G//' | sed 's/M.*/0/')
-    if [[ "$available_gb" == "0" ]]; then
-        available_gb=$(echo "$available" | sed 's/T//' | awk '{printf "%.0f", $1 * 1024}')
-    fi
-    
+    # Convert available to GB (float) for reference
+    local available_gb=$(echo "$available" | awk '
+        {
+            if (match($0, /([0-9.]+)([A-Za-z])/, a)) {
+                num = a[1] + 0
+                unit = a[2]
+                if (unit == "T") gb = num * 1024
+                else if (unit == "G") gb = num
+                else if (unit == "M") gb = num / 1024
+                else gb = num / 1024 / 1024
+                printf "%.1f", gb
+            }
+        }')
+
     # Show recommended swap sizes
     log_message "\n📋 Recommended Swap Sizes:" "$YELLOW"
     log_message "   Based on available space ($available):" "$YELLOW"
-    
-    local available_numeric=$(echo "$available" | sed 's/[A-Z].*//g')
-    if [[ "$available" == *"T"* ]]; then
-        available_numeric=$(echo "$available" | sed 's/T.*//' | awk '{printf "%.0f", $1 * 1024}')
-        log_message "   • Conservative (50% of available): ~$((available_numeric / 2))GB" "$YELLOW"
-        log_message "   • Moderate (25% of available): ~$((available_numeric / 4))GB" "$YELLOW"
-    elif [[ "$available" == *"G"* ]]; then
-        available_numeric=$(echo "$available" | sed 's/G.*//')
-        log_message "   • Conservative (50% of available): ~$((available_numeric / 2))GB" "$YELLOW"
-        log_message "   • Moderate (25% of available): ~$((available_numeric / 4))GB" "$YELLOW"
+    if [ -n "$available_gb" ]; then
+        local conservative=$(awk -v gb="$available_gb" 'BEGIN{printf "%.1f", gb*0.5}')
+        local moderate=$(awk -v gb="$available_gb" 'BEGIN{printf "%.1f", gb*0.25}')
+        log_message "   • Conservative (50% of available): ~${conservative}GB" "$YELLOW"
+        log_message "   • Moderate (25% of available): ~${moderate}GB" "$YELLOW"
     fi
 }
 
