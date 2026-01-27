@@ -91,7 +91,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             return None
 
     def _ist_now(self):
-        return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        ist = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
+        return ist.replace(tzinfo=None)
 
     def _ist_window_start(self, now_ist):
         window_start = now_ist.replace(hour=3, minute=0, second=0, microsecond=0)
