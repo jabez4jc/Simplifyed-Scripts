@@ -395,19 +395,33 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _invalidate_session(self, instance):
         """Invalidate session by clearing auth tokens and marking revoked; delete today's master contract status."""
-        result = {"instance": instance, "auth_updated": False, "auth_error": None, "master_deleted": 0, "master_error": None}
+        result = {"instance": instance, "auth_updated": False, "auth_error": None, "auth_dbs": [], "master_deleted": 0, "master_error": None}
 
-        auth_db = self._get_db_file_with_table(instance, "auth")
-        if auth_db:
-            try:
-                conn = sqlite3.connect(auth_db)
-                cur = conn.cursor()
-                cur.execute("UPDATE auth SET auth=NULL, feed_token=NULL, is_revoked=1")
-                conn.commit()
-                conn.close()
-                result["auth_updated"] = True
-            except Exception as e:
-                result["auth_error"] = str(e)
+        auth_dbs = []
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        db_dir = f"{inst_path}/db"
+        if os.path.isdir(db_dir):
+            for entry in os.scandir(db_dir):
+                if entry.is_file() and entry.name.endswith(".db") and self._db_has_auth_table(entry.path):
+                    auth_dbs.append(entry.path)
+
+        if not auth_dbs:
+            fallback = self._get_auth_db_file(instance)
+            if fallback:
+                auth_dbs.append(fallback)
+
+        if auth_dbs:
+            for auth_db in auth_dbs:
+                try:
+                    conn = sqlite3.connect(auth_db)
+                    cur = conn.cursor()
+                    cur.execute("UPDATE auth SET auth=NULL, feed_token=NULL, is_revoked=1")
+                    conn.commit()
+                    conn.close()
+                    result["auth_updated"] = True
+                    result["auth_dbs"].append(auth_db)
+                except Exception as e:
+                    result["auth_error"] = str(e)
         else:
             result["auth_error"] = "Auth database not found"
 
