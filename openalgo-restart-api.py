@@ -567,6 +567,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 self.handle_broker_status(instance)
             else:
                 self.send_json({"error": "Missing instance parameter"}, 400)
+        elif self.path == '/api/scripts-status':
+            self.handle_scripts_status()
         elif self.path.startswith('/api/jobs/'):
             job_id = self.path.split('/api/jobs/')[1].strip('/')
             if job_id:
