@@ -1226,6 +1226,8 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
 .maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .maintenance-status{font-size:12px;color:#555}
+.scripts-status{display:flex;gap:12px;flex-wrap:wrap}
+.scripts-status{display:flex;gap:12px;flex-wrap:wrap}
 .btn-update{background:#17a2b8;color:white}
 .btn-update:hover{background:#138496}
 .btn-health{background:#20c997;color:white}
@@ -1250,7 +1252,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="system" class="system-card"></div>
 <div class="maintenance">
 <h3>Maintenance</h3>
-<div id="scripts-status" class="maintenance-status"></div>
+<div id="scripts-status" class="maintenance-status scripts-status"></div>
 <div class="maintenance-actions">
 <button id="btn-health-instance" class="btn btn-primary btn-health" onclick="runHealthCheck()">🩺 Health Check</button>
 <button id="btn-update-instance" class="btn btn-primary btn-update" onclick="updateInstance()">⬆ Update Instance</button>
@@ -1307,7 +1309,7 @@ return;
 }
 const items=Object.entries(data.scripts).map(([name,info])=>{
 const ok=info&&info.found;
-return `<div>${ok?'✅':'❌'} ${name}${ok?` <span style="color:#666">(${escapeHtml(info.path||'')})</span>`:''}</div>`;
+return `<span>${ok?'✅':'❌'} ${name}</span>`;
 }).join('');
 let extra='';
 if(data.missing&&data.missing.length){
@@ -1633,7 +1635,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="system" class="system-card"></div>
 <div class="maintenance">
 <h3>Maintenance</h3>
-<div id="scripts-status" class="maintenance-status"></div>
+<div id="scripts-status" class="maintenance-status scripts-status"></div>
 <div class="maintenance-actions">
 <button id="btn-health-all" class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
 <button id="btn-health-system" class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
@@ -1712,7 +1714,7 @@ return;
 }
 const items=Object.entries(data.scripts).map(([name,info])=>{
 const ok=info&&info.found;
-return `<div>${ok?'✅':'❌'} ${name}${ok?` <span style="color:#666">(${escapeHtml(info.path||'')})</span>`:''}</div>`;
+return `<span>${ok?'✅':'❌'} ${name}</span>`;
 }).join('');
 let extra='';
 if(data.missing&&data.missing.length){
