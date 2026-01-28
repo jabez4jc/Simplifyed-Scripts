@@ -11,13 +11,119 @@ import sys
 import os
 import sqlite3
 import time
-from threading import Thread
+import uuid
+import re
+from threading import Thread, Lock
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
 
 PORT = 8888
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
+    JOBS = {}
+    JOBS_LOCK = Lock()
+    JOB_LIMIT = 50
+
+    def _now_iso(self):
+        return datetime.now().isoformat(sep=' ', timespec='seconds')
+
+    def _strip_ansi(self, text):
+        if not text:
+            return text
+        ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+        return ansi_re.sub("", text)
+
+    def _find_script(self, script_name):
+        candidates = [
+            os.path.join(os.path.dirname(__file__), script_name),
+            os.path.join(os.getcwd(), script_name),
+            f"/usr/local/bin/{script_name}",
+            f"/usr/bin/{script_name}",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return None
+
+    def _prune_jobs_locked(self):
+        if len(self.JOBS) <= self.JOB_LIMIT:
+            return
+        ordered = sorted(self.JOBS.items(), key=lambda item: item[1].get("created_ts", 0))
+        for job_id, _ in ordered[:-self.JOB_LIMIT]:
+            self.JOBS.pop(job_id, None)
+
+    def _create_job(self, action, params):
+        job_id = uuid.uuid4().hex[:12]
+        job = {
+            "id": job_id,
+            "action": action,
+            "params": params,
+            "status": "queued",
+            "created_at": self._now_iso(),
+            "created_ts": time.time(),
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": None,
+            "output": "",
+            "error": None,
+        }
+        with self.JOBS_LOCK:
+            self.JOBS[job_id] = job
+            self._prune_jobs_locked()
+        return job_id
+
+    def _update_job(self, job_id, **updates):
+        with self.JOBS_LOCK:
+            job = self.JOBS.get(job_id)
+            if not job:
+                return None
+            job.update(updates)
+            return job
+
+    def _get_job(self, job_id):
+        with self.JOBS_LOCK:
+            job = self.JOBS.get(job_id)
+            return dict(job) if job else None
+
+    def _run_script_job(self, job_id, command, timeout=900):
+        self._update_job(job_id, status="running", started_at=self._now_iso())
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+            output = self._strip_ansi(output)
+            if len(output) > 200000:
+                output = output[:200000] + "\n...\n(Output truncated)"
+            self._update_job(
+                job_id,
+                status="success" if result.returncode == 0 else "error",
+                exit_code=result.returncode,
+                output=output.strip(),
+                finished_at=self._now_iso()
+            )
+        except subprocess.TimeoutExpired as e:
+            output = (e.stdout or "") + ("\n" + e.stderr if e.stderr else "")
+            output = self._strip_ansi(output)
+            self._update_job(
+                job_id,
+                status="timeout",
+                exit_code=None,
+                output=output.strip(),
+                error="Command timed out",
+                finished_at=self._now_iso()
+            )
+        except Exception as e:
+            self._update_job(
+                job_id,
+                status="error",
+                exit_code=None,
+                error=str(e),
+                finished_at=self._now_iso()
+            )
     def _db_has_table(self, db_file, table_name):
         try:
             conn = sqlite3.connect(db_file)
@@ -441,6 +547,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 self.handle_broker_status(instance)
             else:
                 self.send_json({"error": "Missing instance parameter"}, 400)
+        elif self.path.startswith('/api/jobs/'):
+            job_id = self.path.split('/api/jobs/')[1].strip('/')
+            if job_id:
+                self.handle_job_status(job_id)
+            else:
+                self.send_json({"error": "Missing job id"}, 400)
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -506,6 +618,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/reboot-server':
             self.handle_reboot_server()
+        elif self.path == '/api/health-check':
+            self.handle_health_check(data)
+        elif self.path == '/api/update':
+            self.handle_update(data)
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -711,6 +827,75 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 "error": str(e),
                 "timestamp": str(datetime.now())
             }, 500)
+
+    def handle_job_status(self, job_id):
+        job = self._get_job(job_id)
+        if not job:
+            self.send_json({"error": "Job not found"}, 404)
+            return
+        self.send_json(job)
+
+    def handle_health_check(self, data):
+        """Run oa-health-check.sh and return job id"""
+        scope = (data.get("scope") or "all").strip().lower()
+        instance = data.get("instance")
+
+        if scope not in ("all", "system", "instance"):
+            self.send_json({"error": "Invalid scope. Use all|system|instance"}, 400)
+            return
+
+        if scope == "instance":
+            instance = self._sanitize_instance(instance)
+            if not instance:
+                self.send_json({"error": "Invalid or missing instance"}, 400)
+                return
+
+        script_path = self._find_script("oa-health-check.sh")
+        if not script_path:
+            self.send_json({"error": "oa-health-check.sh not found"}, 500)
+            return
+
+        args = ["all"] if scope == "all" else ["system"] if scope == "system" else [instance]
+        job_id = self._create_job("health-check", {"scope": scope, "instance": instance})
+        command = ["sudo", "bash", script_path] + args
+        Thread(target=self._run_script_job, args=(job_id, command, 300), daemon=True).start()
+        self.send_json({
+            "status": "queued",
+            "job_id": job_id,
+            "message": "Health check started",
+            "timestamp": self._now_iso()
+        })
+
+    def handle_update(self, data):
+        """Run oa-update.sh and return job id"""
+        scope = (data.get("scope") or "all").strip().lower()
+        instance = data.get("instance")
+
+        if scope not in ("all", "instance"):
+            self.send_json({"error": "Invalid scope. Use all|instance"}, 400)
+            return
+
+        if scope == "instance":
+            instance = self._sanitize_instance(instance)
+            if not instance:
+                self.send_json({"error": "Invalid or missing instance"}, 400)
+                return
+
+        script_path = self._find_script("oa-update.sh")
+        if not script_path:
+            self.send_json({"error": "oa-update.sh not found"}, 500)
+            return
+
+        args = ["update-all"] if scope == "all" else [instance]
+        job_id = self._create_job("update", {"scope": scope, "instance": instance})
+        command = ["sudo", "bash", script_path] + args
+        Thread(target=self._run_script_job, args=(job_id, command, 1800), daemon=True).start()
+        self.send_json({
+            "status": "queued",
+            "job_id": job_id,
+            "message": "Update started",
+            "timestamp": self._now_iso()
+        })
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
@@ -1221,6 +1406,15 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .system-label{color:#666;font-weight:500}
 .system-value{color:#333;font-weight:600;margin-top:2px}
 .actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
+.maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
+.maintenance-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
+.maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.maintenance-status{font-size:12px;color:#555}
+.btn-update{background:#17a2b8;color:white}
+.btn-update:hover{background:#138496}
+.btn-health{background:#20c997;color:white}
+.btn-health:hover{background:#18a17a}
 .broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
 .master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
 .master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
@@ -1247,6 +1441,16 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="summary"><p>Loading...</p></div>
 </div>
 <div id="system" class="system-card"></div>
+<div class="maintenance">
+<h3>Maintenance</h3>
+<div class="maintenance-actions">
+<button class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
+<button class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
+<button class="btn btn-primary btn-update" onclick="updateAll()">⬆️ Update All Instances</button>
+</div>
+<div id="maintenance-status" class="maintenance-status"></div>
+<div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
+</div>
 <button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button>
 <button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button>
 <button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
@@ -1290,7 +1494,7 @@ const mcLast=mc.last_updated||'Unknown';
 const mcSymbols=(mc.total_symbols!==undefined&&mc.total_symbols!==null)?mc.total_symbols:'N/A';
 const mcBroker=mc.broker||'Unknown';
 const mcMessage=mc.message||'N/A';
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){
@@ -1360,6 +1564,70 @@ const r=await fetch('/api/restart-all',{method:'POST'});
 const d=await r.json();
 showAlert(d.message,'success');
 setTimeout(loadInstances,2000);
+}
+function showMaintenanceStatus(text){
+const statusEl=document.getElementById('maintenance-status');
+if(statusEl){statusEl.textContent=text||'';}
+}
+function showMaintenanceOutput(title,status,exitCode,output){
+const outputEl=document.getElementById('maintenance-output');
+const preEl=document.getElementById('maintenance-output-pre');
+const statusText=exitCode!==null&&exitCode!==undefined?`${status} (exit ${exitCode})`:status;
+showMaintenanceStatus(`${title} - ${statusText}`);
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
+}
+async function pollJob(jobId,title){
+try{
+const r=await fetch(`/api/jobs/${jobId}`);
+const job=await r.json();
+if(job.error){
+showAlert(job.error,'error');
+showMaintenanceOutput(title,'error',null,job.error);
+return;
+}
+if(job.status==='running'||job.status==='queued'){
+showMaintenanceStatus(`${title} - ${job.status}...`);
+const preEl=document.getElementById('maintenance-output-pre');
+const outputEl=document.getElementById('maintenance-output');
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML=escapeHtml(job.output||'Running...');}
+setTimeout(()=>pollJob(jobId,title),2000);
+return;
+}
+const message=job.output||job.error||'No output';
+showMaintenanceOutput(title,job.status,job.exit_code,message);
+}catch(e){
+showAlert('Error: '+e.message,'error');
+showMaintenanceOutput(title,'error',null,e.message);
+}
+}
+async function startJob(endpoint,payload,title){
+showMaintenanceStatus(`${title} - starting...`);
+const outputEl=document.getElementById('maintenance-output');
+const preEl=document.getElementById('maintenance-output-pre');
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML='Starting...';}
+const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
+const data=await r.json();
+if(data.error){
+showAlert(data.error,'error');
+showMaintenanceOutput(title,'error',null,data.error);
+return;
+}
+pollJob(data.job_id,title);
+}
+function runHealthCheck(scope,instance){
+const title=scope==='instance'?`Health Check (${instance})`:`Health Check (${scope})`;
+startJob('/api/health-check',{scope:scope,instance:instance},title);
+}
+function updateAll(){
+if(!confirm('Update ALL instances? This can take several minutes.'))return;
+startJob('/api/update',{scope:'all'},'Update All Instances');
+}
+function updateInstance(inst){
+if(!confirm(`Update ${inst}? This can take several minutes.`))return;
+startJob('/api/update',{scope:'instance',instance:inst},`Update ${inst}`);
 }
 async function restart(inst){
 if(!confirm(`Restart ${inst}? This will invalidate the session.`))return;
