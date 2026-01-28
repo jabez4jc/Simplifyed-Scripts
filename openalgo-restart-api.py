@@ -41,6 +41,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             os.environ.get("SCRIPTS_DIR"),
         ]
         candidates = []
+        # Default server path for scripts
+        default_root_dir = "/root/Simplifyed-Scripts"
+        candidates.append(os.path.join(default_root_dir, script_name))
         for env_dir in env_dirs:
             if env_dir:
                 candidates.append(os.path.join(env_dir, script_name))
@@ -639,6 +642,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.handle_health_check(data)
         elif self.path == '/api/update':
             self.handle_update(data)
+        elif self.path == '/api/scripts-status':
+            self.handle_scripts_status()
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -914,6 +919,45 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "timestamp": self._now_iso()
         })
 
+    def handle_scripts_status(self):
+        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh"]
+        scripts = {}
+        for name in script_names:
+            path = self._find_script(name)
+            scripts[name] = {"found": bool(path), "path": path}
+
+        missing = [name for name, info in scripts.items() if not info["found"]]
+
+        found_dirs = [os.path.dirname(info["path"]) for info in scripts.values() if info["path"]]
+        suggested_dir = None
+        if found_dirs:
+            counts = {}
+            for d in found_dirs:
+                counts[d] = counts.get(d, 0) + 1
+            suggested_dir = sorted(counts.items(), key=lambda x: (-x[1], x[0]))[0][0]
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            default_root_dir = "/root/Simplifyed-Scripts"
+            try:
+                if any(name.endswith(".sh") for name in os.listdir(default_root_dir)):
+                    suggested_dir = default_root_dir
+                elif any(name.endswith(".sh") for name in os.listdir(base_dir)):
+                    suggested_dir = base_dir
+            except Exception:
+                suggested_dir = None
+
+        suggested_fix = None
+        if suggested_dir:
+            suggested_fix = f"sudo ln -sf \"{suggested_dir}/\"*.sh /usr/local/bin/"
+
+        self.send_json({
+            "scripts": scripts,
+            "missing": missing,
+            "suggested_dir": suggested_dir,
+            "suggested_fix": suggested_fix,
+            "timestamp": self._now_iso()
+        })
+
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
         health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None}
@@ -1126,6 +1170,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .btn-clear:hover{background:#ec971f}
 .btn-small{padding:6px 12px;font-size:12px;margin:2px}
 .btn:hover{opacity:0.9;transform:translateY(-2px)}
+.btn:disabled{opacity:0.5;cursor:not-allowed;transform:none}
 .instance{background:#f8f9fa;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #667eea}
 .instance-header{display:flex;justify-content:space-between;align-items:center}
 .instance-name{font-weight:600;color:#333;font-size:16px}
@@ -1200,9 +1245,10 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="system" class="system-card"></div>
 <div class="maintenance">
 <h3>Maintenance</h3>
+<div id="scripts-status" class="maintenance-status"></div>
 <div class="maintenance-actions">
-<button class="btn btn-primary btn-health" onclick="runHealthCheck()">🩺 Health Check</button>
-<button class="btn btn-primary btn-update" onclick="updateInstance()">⬆ Update Instance</button>
+<button id="btn-health-instance" class="btn btn-primary btn-health" onclick="runHealthCheck()">🩺 Health Check</button>
+<button id="btn-update-instance" class="btn btn-primary btn-update" onclick="updateInstance()">⬆ Update Instance</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
@@ -1226,16 +1272,44 @@ try{
 document.getElementById('loading').style.display='block';
 const r=await fetch('/monitor/api/health');
 const h=await r.json();
+const r2=await fetch('/api/scripts-status');
+const scriptsStatus=await r2.json();
 document.getElementById('loading').style.display='none';
 if(h.error){
 showAlert(h.error,'error');
 return;
 }
 renderSystem(h.system);
+renderScriptsStatus(scriptsStatus);
 renderInstance(h);
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
+}
+function renderScriptsStatus(data){
+const el=document.getElementById('scripts-status');
+if(!el||!data||!data.scripts){
+return;
+}
+const items=Object.entries(data.scripts).map(([name,info])=>{
+const ok=info&&info.found;
+return `<div>${ok?'✅':'❌'} ${name}${ok?` <span style="color:#666">(${escapeHtml(info.path||'')})</span>`:''}</div>`;
+}).join('');
+let extra='';
+if(data.missing&&data.missing.length){
+const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
+extra=`<div style="margin-top:6px"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
+}
+el.innerHTML=(items||'')+extra;
+applyScriptsAvailability(data.scripts);
+}
+function applyScriptsAvailability(scripts){
+const healthOk=!!(scripts&&scripts['oa-health-check.sh']&&scripts['oa-health-check.sh'].found);
+const updateOk=!!(scripts&&scripts['oa-update.sh']&&scripts['oa-update.sh'].found);
+const btnHealth=document.getElementById('btn-health-instance');
+const btnUpdate=document.getElementById('btn-update-instance');
+if(btnHealth){btnHealth.disabled=!healthOk;btnHealth.title=healthOk?'':'oa-health-check.sh not found';}
+if(btnUpdate){btnUpdate.disabled=!updateOk;btnUpdate.title=updateOk?'':'oa-update.sh not found';}
 }
 function renderInstance(h){
 const inst=h.name||monitorInstance;
@@ -1549,10 +1623,11 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="system" class="system-card"></div>
 <div class="maintenance">
 <h3>Maintenance</h3>
+<div id="scripts-status" class="maintenance-status"></div>
 <div class="maintenance-actions">
-<button class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
-<button class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
-<button class="btn btn-primary btn-update" onclick="updateAll()">⬆️ Update All Instances</button>
+<button id="btn-health-all" class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
+<button id="btn-health-system" class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
+<button id="btn-update-all" class="btn btn-primary btn-update" onclick="updateAll()">⬆️ Update All Instances</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
@@ -1575,6 +1650,8 @@ const r1=await fetch('/api/instances');
 const instances=await r1.json();
 const r2=await fetch('/api/health');
 const health=await r2.json();
+const r3=await fetch('/api/scripts-status');
+const scriptsStatus=await r3.json();
 document.getElementById('loading').style.display='none';
 if(!instances||instances.length===0){
 document.getElementById('instances').innerHTML='<p>No instances found</p>';
@@ -1583,6 +1660,7 @@ return;
 const running=Object.values(health.instances||{}).filter(i=>i.status==='active').length;
 document.getElementById('summary').innerHTML=`<p><strong>Total Instances:</strong> ${instances.length} | <strong>Running:</strong> <span class="active">${running}</span> | <strong>Stopped:</strong> <span class="inactive">${instances.length-running}</span></p>`;
 renderSystem(health.system);
+renderScriptsStatus(scriptsStatus);
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
 const active=h.status==='active';
@@ -1606,6 +1684,33 @@ document.getElementById('instances').innerHTML=html;
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
+}
+function renderScriptsStatus(data){
+const el=document.getElementById('scripts-status');
+if(!el||!data||!data.scripts){
+return;
+}
+const items=Object.entries(data.scripts).map(([name,info])=>{
+const ok=info&&info.found;
+return `<div>${ok?'✅':'❌'} ${name}${ok?` <span style="color:#666">(${escapeHtml(info.path||'')})</span>`:''}</div>`;
+}).join('');
+let extra='';
+if(data.missing&&data.missing.length){
+const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
+extra=`<div style="margin-top:6px"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
+}
+el.innerHTML=(items||'')+extra;
+applyScriptsAvailability(data.scripts);
+}
+function applyScriptsAvailability(scripts){
+const healthOk=!!(scripts&&scripts['oa-health-check.sh']&&scripts['oa-health-check.sh'].found);
+const updateOk=!!(scripts&&scripts['oa-update.sh']&&scripts['oa-update.sh'].found);
+const btnHealthAll=document.getElementById('btn-health-all');
+const btnHealthSystem=document.getElementById('btn-health-system');
+const btnUpdateAll=document.getElementById('btn-update-all');
+if(btnHealthAll){btnHealthAll.disabled=!healthOk;btnHealthAll.title=healthOk?'':'oa-health-check.sh not found';}
+if(btnHealthSystem){btnHealthSystem.disabled=!healthOk;btnHealthSystem.title=healthOk?'':'oa-health-check.sh not found';}
+if(btnUpdateAll){btnUpdateAll.disabled=!updateOk;btnUpdateAll.title=updateOk?'':'oa-update.sh not found';}
 }
 async function toggleLogs(inst){
 const logsSection=document.getElementById(`logs-${inst}`);
