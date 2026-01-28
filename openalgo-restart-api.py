@@ -1222,6 +1222,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .system-value{color:#333;font-weight:600;margin-top:2px}
 .maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
 .maintenance-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.maintenance-actions .btn{flex:1 1 0;min-width:180px}
 .maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
 .maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .maintenance-status{font-size:12px;color:#555}
@@ -1641,9 +1642,11 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
 </div>
+<div class="toolbar">
 <button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button>
 <button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button>
 <button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
+</div>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instances...</p></div>
 <div id="instances"></div>
 </div>
