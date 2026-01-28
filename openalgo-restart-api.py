@@ -13,6 +13,7 @@ import sqlite3
 import time
 import uuid
 import re
+import shutil
 from threading import Thread, Lock
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
@@ -34,15 +35,31 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         return ansi_re.sub("", text)
 
     def _find_script(self, script_name):
-        candidates = [
-            os.path.join(os.path.dirname(__file__), script_name),
+        env_dirs = [
+            os.environ.get("OPENALGO_SCRIPTS_DIR"),
+            os.environ.get("OA_SCRIPTS_DIR"),
+            os.environ.get("SCRIPTS_DIR"),
+        ]
+        candidates = []
+        for env_dir in env_dirs:
+            if env_dir:
+                candidates.append(os.path.join(env_dir, script_name))
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.extend([
+            os.path.join(base_dir, script_name),
             os.path.join(os.getcwd(), script_name),
             f"/usr/local/bin/{script_name}",
             f"/usr/bin/{script_name}",
-        ]
+            f"/usr/local/sbin/{script_name}",
+            f"/usr/sbin/{script_name}",
+        ])
         for path in candidates:
             if os.path.exists(path):
                 return path
+        path_hit = shutil.which(script_name)
+        if path_hit:
+            return path_hit
         return None
 
     def _prune_jobs_locked(self):
@@ -1154,6 +1171,15 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .system-item{font-size:13px}
 .system-label{color:#666;font-weight:500}
 .system-value{color:#333;font-weight:600;margin-top:2px}
+.maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
+.maintenance-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
+.maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.maintenance-status{font-size:12px;color:#555}
+.btn-update{background:#17a2b8;color:white}
+.btn-update:hover{background:#138496}
+.btn-health{background:#20c997;color:white}
+.btn-health:hover{background:#18a17a}
 </style>
 </head>
 <body>
@@ -1172,6 +1198,15 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <button class="btn btn-primary btn-clear" style="background:#6c757d" onclick="invalidateSession()">🚫 Invalidate Session</button>
 </div>
 <div id="system" class="system-card"></div>
+<div class="maintenance">
+<h3>Maintenance</h3>
+<div class="maintenance-actions">
+<button class="btn btn-primary btn-health" onclick="runHealthCheck()">🩺 Health Check</button>
+<button class="btn btn-primary btn-update" onclick="updateInstance()">⬆ Update Instance</button>
+</div>
+<div id="maintenance-status" class="maintenance-status"></div>
+<div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
+</div>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instance...</p></div>
 <div id="instance"></div>
 </div>
@@ -1179,6 +1214,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 
 <script>
 const monitorInstance="__INSTANCE__";
+let resolvedInstance=null;
 let logsLoaded=false;
 async function loadInstance(){
 if(!monitorInstance){
@@ -1203,6 +1239,7 @@ showAlert('Error: '+e.message,'error');
 }
 function renderInstance(h){
 const inst=h.name||monitorInstance;
+resolvedInstance=inst||resolvedInstance;
 const active=h.status==='active';
 const broker=h.broker||'Unknown';
 const domain=h.domain||'Unknown';
@@ -1326,6 +1363,75 @@ showAlert(d.message,'success');
 }catch(e){
 showAlert('Reboot initiated (API connection lost as expected)','success');
 }
+}
+function showMaintenanceStatus(text){
+const statusEl=document.getElementById('maintenance-status');
+if(statusEl){statusEl.textContent=text||'';}
+}
+function showMaintenanceOutput(title,status,exitCode,output){
+const outputEl=document.getElementById('maintenance-output');
+const preEl=document.getElementById('maintenance-output-pre');
+const statusText=exitCode!==null&&exitCode!==undefined?`${status} (exit ${exitCode})`:status;
+showMaintenanceStatus(`${title} - ${statusText}`);
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
+}
+async function pollJob(jobId,title){
+try{
+const r=await fetch(`/api/jobs/${jobId}`);
+const job=await r.json();
+if(job.error){
+showAlert(job.error,'error');
+showMaintenanceOutput(title,'error',null,job.error);
+return;
+}
+if(job.status==='running'||job.status==='queued'){
+showMaintenanceStatus(`${title} - ${job.status}...`);
+const preEl=document.getElementById('maintenance-output-pre');
+const outputEl=document.getElementById('maintenance-output');
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML=escapeHtml(job.output||'Running...');}
+setTimeout(()=>pollJob(jobId,title),2000);
+return;
+}
+const message=job.output||job.error||'No output';
+showMaintenanceOutput(title,job.status,job.exit_code,message);
+}catch(e){
+showAlert('Error: '+e.message,'error');
+showMaintenanceOutput(title,'error',null,e.message);
+}
+}
+async function startJob(endpoint,payload,title){
+showMaintenanceStatus(`${title} - starting...`);
+const outputEl=document.getElementById('maintenance-output');
+const preEl=document.getElementById('maintenance-output-pre');
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML='Starting...';}
+const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
+const data=await r.json();
+if(data.error){
+showAlert(data.error,'error');
+showMaintenanceOutput(title,'error',null,data.error);
+return;
+}
+pollJob(data.job_id,title);
+}
+function runHealthCheck(){
+const target=resolvedInstance||monitorInstance;
+if(!target){
+showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
+return;
+}
+startJob('/api/health-check',{scope:'instance',instance:target},`Health Check (${target})`);
+}
+function updateInstance(){
+const target=resolvedInstance||monitorInstance;
+if(!target){
+showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
+return;
+}
+if(!confirm(`Update ${target}? This can take several minutes.`))return;
+startJob('/api/update',{scope:'instance',instance:target},`Update ${target}`);
 }
 function showAlert(msg,type){
 const a=document.getElementById('alert');
