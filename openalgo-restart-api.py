@@ -473,7 +473,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if broker_blank:
                 return False, "Not Authenticated - Invalid Token", broker, name
             if auth_blank or feed_blank:
-                return True, "User Authenticated", broker, name
+                return False, "Not Authenticated - Invalid Token", broker, name
             return True, "User Authenticated", broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
