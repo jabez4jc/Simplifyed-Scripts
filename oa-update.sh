@@ -38,6 +38,37 @@ get_service_name() {
     fi
 }
 
+# Determine the remote default branch (origin/HEAD)
+get_default_branch() {
+    local instance_dir="$1"
+
+    if [ ! -d "$instance_dir/.git" ]; then
+        return 1
+    fi
+
+    cd "$instance_dir" || return 1
+
+    local ref
+    ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)
+    if [ -n "$ref" ]; then
+        echo "${ref#refs/remotes/origin/}"
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/remotes/origin/main; then
+        echo "main"
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/remotes/origin/master; then
+        echo "master"
+        return 0
+    fi
+
+    echo "main"
+    return 0
+}
+
 # Function to check command status
 check_status() {
     if [ $? -ne 0 ]; then
@@ -250,21 +281,42 @@ update_instance() {
     # Fetch latest changes
     log_message "  Fetching latest changes..." "$BLUE"
     cd "$instance_dir"
-    sudo git fetch origin 2>&1 | tee -a "$UPDATE_LOG"
+    sudo git fetch --prune origin 2>&1 | tee -a "$UPDATE_LOG"
     check_status "Failed to fetch updates" || {
         [ "$was_running" = true ] && sudo systemctl start "$service_name"
         return 1
     }
+
+    # Resolve remote default branch after fetch
+    local default_branch
+    default_branch=$(get_default_branch "$instance_dir")
+    if [ -z "$default_branch" ]; then
+        default_branch="main"
+    fi
+    log_message "  Using remote default branch: $default_branch" "$BLUE"
+
+    # Ensure we are on the default branch
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" != "$default_branch" ]; then
+        log_message "  Switching to $default_branch..." "$BLUE"
+        sudo git checkout "$default_branch" 2>&1 | tee -a "$UPDATE_LOG"
+        if [ $? -ne 0 ]; then
+            log_message "❌ Unable to checkout $default_branch (local changes?)" "$RED"
+            [ "$was_running" = true ] && sudo systemctl start "$service_name"
+            return 1
+        fi
+    fi
     
     # Show available updates
     log_message "\n  Available updates:" "$BLUE"
-    sudo git log --oneline HEAD..origin/main -10 2>/dev/null | while read -r line; do
+    sudo git log --oneline HEAD..origin/"$default_branch" -10 2>/dev/null | while read -r line; do
         log_message "    $line" "$BLUE"
     done
     
     # Merge/rebase latest changes
     log_message "  Pulling latest changes..." "$BLUE"
-    sudo git pull origin main --ff-only 2>&1 | tee -a "$UPDATE_LOG"
+    sudo git pull origin "$default_branch" --ff-only 2>&1 | tee -a "$UPDATE_LOG"
     
     if [ $? -ne 0 ]; then
         log_message "⚠ Fast-forward merge failed. Repository may have local changes." "$YELLOW"
@@ -357,12 +409,19 @@ dry_run_update() {
     sudo git status 2>&1 | head -10 | tee -a "$UPDATE_LOG"
     
     log_message "\nFetching remote changes..." "$BLUE"
-    sudo git fetch origin 2>&1 | tail -2 | tee -a "$UPDATE_LOG"
+    sudo git fetch --prune origin 2>&1 | tail -2 | tee -a "$UPDATE_LOG"
+
+    local default_branch
+    default_branch=$(get_default_branch "$instance_dir")
+    if [ -z "$default_branch" ]; then
+        default_branch="main"
+    fi
+    log_message "Remote default branch: $default_branch" "$BLUE"
     
     log_message "\nChanges available:" "$BLUE"
-    sudo git log --oneline HEAD..origin/main -20 2>/dev/null | tee -a "$UPDATE_LOG"
+    sudo git log --oneline HEAD..origin/"$default_branch" -20 2>/dev/null | tee -a "$UPDATE_LOG"
     
-    if sudo git diff --quiet HEAD origin/main; then
+    if sudo git diff --quiet HEAD origin/"$default_branch"; then
         log_message "\n✓ Already up to date" "$GREEN"
     else
         log_message "\n⚠ Updates available from remote" "$YELLOW"
