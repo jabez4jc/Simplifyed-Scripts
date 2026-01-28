@@ -80,44 +80,38 @@ check_service_status() {
     fi
 }
 
-# Check if Flask port is listening
-check_flask_port() {
-    local instance_num="$1"
-    local flask_port=$((5000 + instance_num))
-    
-    if ss -tlnp 2>/dev/null | grep -q ":$flask_port "; then
-        print_ok "Flask port listening: localhost:$flask_port"
-        return 0
-    else
-        print_warning "Flask port not listening: localhost:$flask_port"
+get_env_value() {
+    local instance_dir="$1"
+    local key="$2"
+    local env_file="$instance_dir/.env"
+
+    if [ ! -f "$env_file" ]; then
         return 1
     fi
+
+    local value
+    value=$(grep -E "^${key}=" "$env_file" | head -1 | cut -d'=' -f2-)
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    echo "$value"
 }
 
-# Check if WebSocket port is listening
-check_websocket_port() {
-    local instance_num="$1"
-    local ws_port=$((8765 + instance_num))
-    
-    if ss -tlnp 2>/dev/null | grep -q ":$ws_port "; then
-        print_ok "WebSocket port listening: localhost:$ws_port"
-        return 0
-    else
-        print_warning "WebSocket port not listening: localhost:$ws_port"
+check_port_listening() {
+    local label="$1"
+    local port="$2"
+
+    if [ -z "$port" ]; then
+        print_warning "$label port not set in .env"
         return 1
     fi
-}
 
-# Check if ZMQ port is listening
-check_zmq_port() {
-    local instance_num="$1"
-    local zmq_port=$((5555 + instance_num))
-    
-    if ss -tlnp 2>/dev/null | grep -q ":$zmq_port "; then
-        print_ok "ZMQ port listening: localhost:$zmq_port"
+    if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+        print_ok "$label port listening: localhost:$port"
         return 0
     else
-        print_warning "ZMQ port not listening: localhost:$zmq_port"
+        print_warning "$label port not listening: localhost:$port"
         return 1
     fi
 }
@@ -135,7 +129,7 @@ check_env_file() {
     print_ok ".env file exists"
 
     # Check for critical variables (handle spaces around =)
-    local required_vars=("DATABASE_URL" "FLASK_PORT")
+    local required_vars=("DATABASE_URL" "FLASK_PORT" "WEBSOCKET_PORT" "ZMQ_PORT")
     for var in "${required_vars[@]}"; do
         if grep -q "^[[:space:]]*$var[[:space:]]*=" "$env_file"; then
             print_ok ".env contains $var"
@@ -325,10 +319,18 @@ check_instance() {
     
     check_instance_directory "$instance_name" || return 1
     check_service_status "$instance_name"
-    check_flask_port "$instance_num"
-    check_websocket_port "$instance_num"
-    check_zmq_port "$instance_num"
     check_env_file "$instance_dir"
+
+    local flask_port
+    local websocket_port
+    local zmq_port
+    flask_port=$(get_env_value "$instance_dir" "FLASK_PORT")
+    websocket_port=$(get_env_value "$instance_dir" "WEBSOCKET_PORT")
+    zmq_port=$(get_env_value "$instance_dir" "ZMQ_PORT")
+
+    check_port_listening "Flask" "$flask_port"
+    check_port_listening "WebSocket" "$websocket_port"
+    check_port_listening "ZMQ" "$zmq_port"
     check_databases "$instance_dir" "$instance_num"
     check_disk_space "$instance_dir"
     check_venv "$instance_dir"

@@ -172,6 +172,17 @@ setup_update() {
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
     echo ""
 
+    echo -e "${YELLOW}Linking scripts to /usr/local/bin...${NC}"
+    local script_dir
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+    if [ -d "$script_dir" ]; then
+        ln -sf "$script_dir/"*.sh /usr/local/bin/ 2>/dev/null
+        echo -e "${GREEN}✅ Scripts linked${NC}"
+    else
+        echo -e "${RED}❌ Script directory not found${NC}"
+    fi
+    echo ""
+
     install_api || { read -p "Press Enter to continue..."; menu_main; }
     echo ""
     setup_service || { read -p "Press Enter to continue..."; menu_main; }

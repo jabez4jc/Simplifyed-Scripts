@@ -1262,6 +1262,17 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 const monitorInstance="__INSTANCE__";
 let resolvedInstance=null;
 let logsLoaded=false;
+async function fetchJson(url, options){
+const r=await fetch(url,options);
+const text=await r.text();
+const contentType=(r.headers.get('content-type')||'').toLowerCase();
+try{
+return JSON.parse(text);
+}catch(e){
+const preview=text.replace(/\\s+/g,' ').slice(0,160);
+throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
+}
+}
 async function loadInstance(){
 if(!monitorInstance){
 showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
@@ -1270,10 +1281,8 @@ return;
 }
 try{
 document.getElementById('loading').style.display='block';
-const r=await fetch('/monitor/api/health');
-const h=await r.json();
-const r2=await fetch('/api/scripts-status');
-const scriptsStatus=await r2.json();
+const h=await fetchJson('/monitor/api/health');
+const scriptsStatus=await fetchJson('/api/scripts-status');
 document.getElementById('loading').style.display='none';
 if(h.error){
 showAlert(h.error,'error');
@@ -1344,8 +1353,7 @@ fetchLogs();
 }
 async function fetchLogs(){
 try{
-const r=await fetch('/monitor/api/logs');
-const data=await r.json();
+const data=await fetchJson('/monitor/api/logs');
 const logsContent=document.getElementById('logs-content');
 if(data.logs&&data.logs.length>0){
 const html=data.logs.map(log=>{
@@ -1392,8 +1400,7 @@ el.innerHTML=`<h3>System</h3>
 </div>`;
 }
 async function post(path){
-const r=await fetch(path,{method:'POST'});
-return r.json();
+return fetchJson(path,{method:'POST'});
 }
 async function restartInstance(){
 if(!confirm('Restart this instance? This will invalidate the session.'))return;
@@ -1452,8 +1459,7 @@ if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
 }
 async function pollJob(jobId,title){
 try{
-const r=await fetch(`/api/jobs/${jobId}`);
-const job=await r.json();
+const job=await fetchJson(`/api/jobs/${jobId}`);
 if(job.error){
 showAlert(job.error,'error');
 showMaintenanceOutput(title,'error',null,job.error);
@@ -1481,8 +1487,7 @@ const outputEl=document.getElementById('maintenance-output');
 const preEl=document.getElementById('maintenance-output-pre');
 if(outputEl){outputEl.style.display='block';}
 if(preEl){preEl.innerHTML='Starting...';}
-const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
-const data=await r.json();
+const data=await fetchJson(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
 if(data.error){
 showAlert(data.error,'error');
 showMaintenanceOutput(title,'error',null,data.error);
@@ -1643,15 +1648,23 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <script>
 let brokerStatusCache={};
 let logsCache={};
+async function fetchJson(url, options){
+const r=await fetch(url,options);
+const text=await r.text();
+const contentType=(r.headers.get('content-type')||'').toLowerCase();
+try{
+return JSON.parse(text);
+}catch(e){
+const preview=text.replace(/\\s+/g,' ').slice(0,160);
+throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
+}
+}
 async function loadInstances(){
 try{
 document.getElementById('loading').style.display='block';
-const r1=await fetch('/api/instances');
-const instances=await r1.json();
-const r2=await fetch('/api/health');
-const health=await r2.json();
-const r3=await fetch('/api/scripts-status');
-const scriptsStatus=await r3.json();
+const instances=await fetchJson('/api/instances');
+const health=await fetchJson('/api/health');
+const scriptsStatus=await fetchJson('/api/scripts-status');
 document.getElementById('loading').style.display='none';
 if(!instances||instances.length===0){
 document.getElementById('instances').innerHTML='<p>No instances found</p>';
@@ -1721,8 +1734,7 @@ fetchLogs(inst);
 }
 async function fetchLogs(inst){
 try{
-const r=await fetch(`/api/logs/${inst}`);
-const data=await r.json();
+const data=await fetchJson(`/api/logs/${inst}`);
 const logsContent=document.getElementById(`logs-content-${inst}`);
 if(data.logs&&data.logs.length>0){
 const html=data.logs.map(log=>{
@@ -1771,8 +1783,7 @@ el.innerHTML=`<h3>System</h3>
 async function restartAll(){
 if(!confirm('Restart all instances?'))return;
 showAlert('Restarting all...','info');
-const r=await fetch('/api/restart-all',{method:'POST'});
-const d=await r.json();
+const d=await fetchJson('/api/restart-all',{method:'POST'});
 showAlert(d.message,'success');
 setTimeout(loadInstances,2000);
 }
@@ -1790,8 +1801,7 @@ if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
 }
 async function pollJob(jobId,title){
 try{
-const r=await fetch(`/api/jobs/${jobId}`);
-const job=await r.json();
+const job=await fetchJson(`/api/jobs/${jobId}`);
 if(job.error){
 showAlert(job.error,'error');
 showMaintenanceOutput(title,'error',null,job.error);
@@ -1819,8 +1829,7 @@ const outputEl=document.getElementById('maintenance-output');
 const preEl=document.getElementById('maintenance-output-pre');
 if(outputEl){outputEl.style.display='block';}
 if(preEl){preEl.innerHTML='Starting...';}
-const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
-const data=await r.json();
+const data=await fetchJson(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
 if(data.error){
 showAlert(data.error,'error');
 showMaintenanceOutput(title,'error',null,data.error);
@@ -1842,25 +1851,25 @@ startJob('/api/update',{scope:'instance',instance:inst},`Update ${inst}`);
 }
 async function restart(inst){
 if(!confirm(`Restart ${inst}? This will invalidate the session.`))return;
-await fetch('/api/restart-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+await fetchJson('/api/restart-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Restarting ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
 async function invalidate(inst){
 if(!confirm(`Invalidate session for ${inst}? This will clear auth tokens and revoke the session.`))return;
-await fetch('/api/invalidate-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Invalidating session for ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
 async function stop(inst){
 if(!confirm(`Stop ${inst}?`))return;
-await fetch('/api/stop-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+await fetchJson('/api/stop-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Stopping ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
 async function start(inst){
 if(!confirm(`Start ${inst}?`))return;
-await fetch('/api/start-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+await fetchJson('/api/start-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Starting ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
@@ -1869,8 +1878,7 @@ if(!confirm('⚠️ Are you sure you want to reboot the server? This will discon
 if(!confirm('⚠️ FINAL CONFIRMATION: The server will restart now. Continue?'))return;
 showAlert('Rebooting server... Connection will be lost shortly.','info');
 try{
-const r=await fetch('/api/reboot-server',{method:'POST'});
-const d=await r.json();
+const d=await fetchJson('/api/reboot-server',{method:'POST'});
 showAlert(d.message,'success');
 }catch(e){
 showAlert('Reboot initiated (API connection lost as expected)','success');
