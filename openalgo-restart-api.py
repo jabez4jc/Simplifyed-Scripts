@@ -545,6 +545,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.handle_monitor_logs()
         elif path == '/monitor/api/status':
             self.handle_monitor_status()
+        elif path == '/monitor/api/scripts-status':
+            self.handle_scripts_status()
         elif self.path == '/' or self.path == '/index.html':
             self.serve_web_ui()
         elif self.path == '/api/instances':
@@ -1284,7 +1286,7 @@ return;
 try{
 document.getElementById('loading').style.display='block';
 const h=await fetchJson('/monitor/api/health');
-const scriptsStatus=await fetchJson('/api/scripts-status');
+const scriptsStatus=await fetchJson('/monitor/api/scripts-status');
 document.getElementById('loading').style.display='none';
 if(h.error){
 showAlert(h.error,'error');
