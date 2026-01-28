@@ -148,87 +148,46 @@ backup_before_update() {
     echo "$backup_dir"
 }
 
-# Merge .env file with new version
-merge_env_file() {
+# Refresh .env from .sample.env and overlay values from backup (skip ENV_CONFIG_VERSION)
+refresh_env_from_sample() {
     local instance_dir="$1"
     local backup_dir="$2"
     local env_file="$instance_dir/.env"
     local sample_env="$instance_dir/.sample.env"
     local old_env="$backup_dir/.env"
-    
-    # If no sample template exists, keep current .env
+
     if [ ! -f "$sample_env" ]; then
         log_message "⚠ .sample.env not found, keeping current .env" "$YELLOW"
         return 0
     fi
-    
-    # If no old .env exists, nothing to merge
+
     if [ ! -f "$old_env" ]; then
         log_message "⚠ Previous .env backup not found, keeping current .env" "$YELLOW"
         return 0
     fi
-    
-    # Get ENV_CONFIG_VERSION from both files
-    local new_version=$(sudo grep "ENV_CONFIG_VERSION" "$sample_env" | grep -oE "'[^']*'" | tr -d "'")
-    local old_version=$(sudo grep "ENV_CONFIG_VERSION" "$old_env" | grep -oE "'[^']*'" | tr -d "'")
-    
-    # If versions are not found, fall back to MD5 comparison
-    if [ -z "$new_version" ] || [ -z "$old_version" ]; then
-        log_message "⚠ ENV_CONFIG_VERSION not found, using hash comparison" "$YELLOW"
-        
-        local sample_env_hash=$(sudo md5sum "$sample_env" | awk '{print $1}')
-        local old_sample_hash=""
-        
-        if [ -f "$backup_dir/.sample.env" ]; then
-            old_sample_hash=$(sudo md5sum "$backup_dir/.sample.env" | awk '{print $1}')
-        fi
-        
-        if [ -n "$old_sample_hash" ] && [ "$sample_env_hash" = "$old_sample_hash" ]; then
-            log_message "    ✓ .sample.env unchanged, keeping current .env" "$GREEN"
-            return 0
-        fi
-    else
-        # Compare versions
-        if [ "$new_version" = "$old_version" ]; then
-            log_message "    ✓ ENV_CONFIG_VERSION unchanged ($new_version), keeping current .env" "$GREEN"
-            return 0
-        fi
-        
-        log_message "    Detected ENV_CONFIG_VERSION change ($old_version → $new_version), merging..." "$BLUE"
-    fi
-    
-    # Create temporary merged file
-    local temp_env=$(mktemp)
+
+    local temp_env
+    temp_env=$(mktemp)
     sudo cp "$sample_env" "$temp_env"
-    
-    # Extract key variables from old .env and preserve them in new template
-    local keys_to_preserve=("BROKER" "FLASK_PORT" "WEBSOCKET_PORT" "ZMQ_PORT" "DATABASE_URL" "LATENCY_DATABASE_URL" "LOGS_DATABASE_URL" "SESSION_COOKIE_NAME" "CSRF_COOKIE_NAME" "FLASK_HOST_IP" "WEBSOCKET_HOST" "WEBSOCKET_URL" "CORS_ALLOWED_ORIGINS" "YOUR_BROKER_API_KEY" "YOUR_BROKER_API_SECRET" "YOUR_BROKER_MARKET_API_KEY" "YOUR_BROKER_MARKET_API_SECRET" "APP_KEY" "API_KEY_PEPPER")
-    
-    for key in "${keys_to_preserve[@]}"; do
-        # Get the value from old .env
-        local old_value=$(sudo grep "^${key}=" "$old_env" | cut -d'=' -f2-)
-        
-        if [ -n "$old_value" ]; then
-            # Replace placeholder in new template with old value
-            sudo sed -i "s|^${key}=.*|${key}=${old_value}|g" "$temp_env"
-        fi
-    done
-    
-    # Also check for any custom variables in old .env that might not be in template
+
+    # Overlay all values from old .env except ENV_CONFIG_VERSION
     sudo grep "^[A-Z_]*=" "$old_env" | while IFS='=' read -r key value; do
-        if ! sudo grep -q "^${key}=" "$temp_env"; then
-            # Add custom variable to new .env if it doesn't exist
+        if [ "$key" = "ENV_CONFIG_VERSION" ]; then
+            continue
+        fi
+        if sudo grep -q "^${key}=" "$temp_env"; then
+            sudo sed -i "s|^${key}=.*|${key}=${value}|g" "$temp_env"
+        else
             echo "${key}=${value}" | sudo tee -a "$temp_env" > /dev/null
         fi
     done
-    
-    # Replace current .env with merged version
+
     sudo cp "$temp_env" "$env_file"
     sudo chown www-data:www-data "$env_file"
     sudo chmod 644 "$env_file"
     rm -f "$temp_env"
-    
-    log_message "    ✓ .env merged (preserved: ports, broker, credentials, keys)" "$GREEN"
+
+    log_message "    ✓ .env refreshed from .sample.env and updated from backup" "$GREEN"
     return 0
 }
 
@@ -247,12 +206,13 @@ update_instance() {
         log_message "❌ Instance directory not found: $instance_dir" "$RED"
         return 1
     fi
+
+    # Mark repo safe for root to avoid "dubious ownership" errors
+    sudo git config --global --add safe.directory "$instance_dir" 2>/dev/null
     
     # Get current git status
     local git_status=$(get_git_status "$instance_dir")
     if [ $? -eq 0 ]; then
-        # Mark repo safe for root to avoid "dubious ownership" errors
-        sudo git config --global --add safe.directory "$instance_dir" 2>/dev/null
         IFS='|' read -r branch remote commit <<< "$git_status"
         log_message "Current branch: $branch" "$BLUE"
         log_message "Current commit: $commit" "$BLUE"
@@ -284,10 +244,12 @@ update_instance() {
     log_message "  Fetching latest changes..." "$BLUE"
     cd "$instance_dir"
     sudo git fetch --prune origin 2>&1 | tee -a "$UPDATE_LOG"
-    check_status "Failed to fetch updates" || {
+    local fetch_status=${PIPESTATUS[0]}
+    if [ $fetch_status -ne 0 ]; then
+        log_message "Error: Failed to fetch updates" "$RED"
         [ "$was_running" = true ] && sudo systemctl start "$service_name"
         return 1
-    }
+    fi
 
     # Resolve remote default branch after fetch
     local default_branch
@@ -319,12 +281,23 @@ update_instance() {
     # Merge/rebase latest changes
     log_message "  Pulling latest changes..." "$BLUE"
     sudo git pull origin "$default_branch" --ff-only 2>&1 | tee -a "$UPDATE_LOG"
-    
-    if [ $? -ne 0 ]; then
-        log_message "⚠ Fast-forward merge failed. Repository may have local changes." "$YELLOW"
-        log_message "  Manual intervention needed. Backup saved at: $backup_dir" "$YELLOW"
-        [ "$was_running" = true ] && sudo systemctl start "$service_name"
-        return 1
+    local pull_status=${PIPESTATUS[0]}
+    if [ $pull_status -ne 0 ]; then
+        log_message "⚠ Fast-forward pull failed. Forcing reset to origin/$default_branch (local changes will be discarded)." "$YELLOW"
+        sudo git fetch --prune origin 2>&1 | tee -a "$UPDATE_LOG"
+        local refetch_status=${PIPESTATUS[0]}
+        if [ $refetch_status -ne 0 ]; then
+            log_message "Error: Failed to re-fetch updates" "$RED"
+            [ "$was_running" = true ] && sudo systemctl start "$service_name"
+            return 1
+        fi
+        sudo git reset --hard "origin/$default_branch" 2>&1 | tee -a "$UPDATE_LOG"
+        local reset_status=${PIPESTATUS[0]}
+        if [ $reset_status -ne 0 ]; then
+            log_message "❌ Force reset failed. Backup saved at: $backup_dir" "$RED"
+            [ "$was_running" = true ] && sudo systemctl start "$service_name"
+            return 1
+        fi
     fi
     
     # Get new commit
@@ -353,8 +326,8 @@ update_instance() {
     fi
     
     # Merge .env file changes
-    log_message "  Merging .env configuration..." "$BLUE"
-    merge_env_file "$instance_dir" "$backup_dir"
+    log_message "  Refreshing .env configuration..." "$BLUE"
+    refresh_env_from_sample "$instance_dir" "$backup_dir"
     
     # Run migration script (UV-only flow)
     if [ -d "$instance_dir/upgrade" ] && [ -f "$instance_dir/upgrade/migrate_all.py" ]; then
