@@ -251,6 +251,8 @@ update_instance() {
     # Get current git status
     local git_status=$(get_git_status "$instance_dir")
     if [ $? -eq 0 ]; then
+        # Mark repo safe for root to avoid "dubious ownership" errors
+        sudo git config --global --add safe.directory "$instance_dir" 2>/dev/null
         IFS='|' read -r branch remote commit <<< "$git_status"
         log_message "Current branch: $branch" "$BLUE"
         log_message "Current commit: $commit" "$BLUE"
