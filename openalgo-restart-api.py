@@ -547,6 +547,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.handle_monitor_status()
         elif path == '/monitor/api/scripts-status':
             self.handle_scripts_status()
+        elif path.startswith('/monitor/api/jobs/'):
+            job_id = path.split('/monitor/api/jobs/')[1].strip('/')
+            if job_id:
+                self.handle_job_status(job_id)
+            else:
+                self.send_json({"error": "Missing job id"}, 400)
         elif self.path == '/' or self.path == '/index.html':
             self.serve_web_ui()
         elif self.path == '/api/instances':
@@ -614,6 +620,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 self.handle_invalidate_session(instance)
         elif path == '/monitor/api/reboot-server':
             self.handle_reboot_server()
+        elif path == '/monitor/api/health-check':
+            self.handle_health_check(data)
+        elif path == '/monitor/api/update':
+            self.handle_update(data)
         elif path == '/api/invalidate-session':
             instance = data.get('instance', '')
             if instance:
@@ -1222,7 +1232,9 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .system-value{color:#333;font-weight:600;margin-top:2px}
 .maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
 .maintenance-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-.maintenance-actions .btn{flex:1 1 0;min-width:180px}
+.maintenance-actions .btn{flex:1 1 0;min-width:180px;width:auto}
+.manager-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.manager-toolbar .btn{flex:1 1 0;min-width:180px;width:auto}
 .maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
 .maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .maintenance-status{font-size:12px;color:#555}
@@ -1269,6 +1281,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 const monitorInstance="__INSTANCE__";
 let resolvedInstance=null;
 let logsLoaded=false;
+const monitorApiBase='/monitor/api';
 async function fetchJson(url, options){
 const r=await fetch(url,options);
 const text=await r.text();
@@ -1288,8 +1301,8 @@ return;
 }
 try{
 document.getElementById('loading').style.display='block';
-const h=await fetchJson('/monitor/api/health');
-const scriptsStatus=await fetchJson('/monitor/api/scripts-status');
+const h=await fetchJson(`${monitorApiBase}/health`);
+const scriptsStatus=await fetchJson(`${monitorApiBase}/scripts-status`);
 document.getElementById('loading').style.display='none';
 if(h.error){
 showAlert(h.error,'error');
@@ -1360,7 +1373,7 @@ fetchLogs();
 }
 async function fetchLogs(){
 try{
-const data=await fetchJson('/monitor/api/logs');
+const data=await fetchJson(`${monitorApiBase}/logs`);
 const logsContent=document.getElementById('logs-content');
 if(data.logs&&data.logs.length>0){
 const html=data.logs.map(log=>{
@@ -1466,7 +1479,7 @@ if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
 }
 async function pollJob(jobId,title){
 try{
-const job=await fetchJson(`/api/jobs/${jobId}`);
+const job=await fetchJson(`${monitorApiBase}/jobs/${jobId}`);
 if(job.error){
 showAlert(job.error,'error');
 showMaintenanceOutput(title,'error',null,job.error);
@@ -1508,7 +1521,7 @@ if(!target){
 showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
 return;
 }
-startJob('/api/health-check',{scope:'instance',instance:target},`Health Check (${target})`);
+startJob(`${monitorApiBase}/health-check`,{scope:'instance',instance:target},`Health Check (${target})`);
 }
 function updateInstance(){
 const target=resolvedInstance||monitorInstance;
@@ -1517,7 +1530,7 @@ showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
 return;
 }
 if(!confirm(`Update ${target}? This can take several minutes.`))return;
-startJob('/api/update',{scope:'instance',instance:target},`Update ${target}`);
+startJob(`${monitorApiBase}/update`,{scope:'instance',instance:target},`Update ${target}`);
 }
 function showAlert(msg,type){
 const a=document.getElementById('alert');
@@ -1644,7 +1657,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
 </div>
-<div class="toolbar">
+<div class="manager-toolbar">
 <button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button>
 <button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button>
 <button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
