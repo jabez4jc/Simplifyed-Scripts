@@ -483,14 +483,15 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
             if name_blank:
                 return False, "Not Authenticated - User not Setup", broker, name
-            if is_revoked == 1 and not (auth_blank or feed_blank or broker_blank):
-                return False, "Not Authenticated - Invalid Token", broker, name
             if is_revoked == 1:
                 return False, "Not Authenticated - User Token Revoked", broker, name
             if broker_blank:
                 return False, "Not Authenticated - Invalid Token", broker, name
-            if auth_blank or feed_blank:
+            if auth_blank:
                 return False, "Not Authenticated - Invalid Token", broker, name
+            # Some brokers may not provide feed_token; don't treat it as invalid auth
+            if feed_blank:
+                return True, "User Authenticated", broker, name
             return True, "User Authenticated", broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
