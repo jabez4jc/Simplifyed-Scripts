@@ -1341,7 +1341,13 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .system-label{color:#666;font-weight:500}
 .system-value{color:#333;font-weight:600;margin-top:2px}
 .maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
-.maintenance-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.maintenance-actions{display:flex;gap:8px;flex-wrap:nowrap;margin:10px 0}
+.maintenance-actions .btn{flex:1 1 0;width:auto;min-width:0;margin:0}
+.maintenance-actions .btn-primary{width:auto}
+.manager-toolbar{display:flex;gap:8px;flex-wrap:nowrap;margin-bottom:10px}
+.manager-toolbar .btn{flex:1 1 0;width:auto;min-width:0;margin:0}
+.manager-toolbar .btn-primary{width:auto}
+.scripts-status{display:flex;gap:12px;flex-wrap:wrap}
 .maintenance-actions .btn{flex:1 1 0;min-width:180px;width:auto}
 .manager-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .manager-toolbar .btn{flex:1 1 0;min-width:180px;width:auto}
