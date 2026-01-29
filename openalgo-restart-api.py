@@ -24,6 +24,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     JOBS = {}
     JOBS_LOCK = Lock()
     JOB_LIMIT = 50
+    GIT_FETCH_CACHE = {}
+    GIT_LOCK = Lock()
+    GIT_FETCH_TTL = 300
 
     def _now_iso(self):
         return datetime.now().isoformat(sep=' ', timespec='seconds')
@@ -64,6 +67,93 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if path_hit:
             return path_hit
         return None
+
+    def _git_run(self, instance_dir, args, timeout=6):
+        try:
+            result = subprocess.run(
+                ["git"] + args,
+                cwd=instance_dir,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            if result.returncode != 0:
+                return None
+            return result.stdout.strip()
+        except Exception:
+            return None
+
+    def _ensure_git_safe(self, instance_dir):
+        try:
+            subprocess.run(
+                ["sudo", "git", "config", "--global", "--add", "safe.directory", instance_dir],
+                capture_output=True,
+                text=True,
+                timeout=4
+            )
+        except Exception:
+            pass
+
+    def _get_default_branch(self, instance_dir):
+        ref = self._git_run(instance_dir, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+        if ref and ref.startswith("refs/remotes/origin/"):
+            return ref.split("/", 3)[-1]
+        if self._git_run(instance_dir, ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"]) is not None:
+            return "main"
+        if self._git_run(instance_dir, ["show-ref", "--verify", "--quiet", "refs/remotes/origin/master"]) is not None:
+            return "master"
+        return "main"
+
+    def _maybe_fetch_origin(self, instance_dir):
+        with self.GIT_LOCK:
+            cached = self.GIT_FETCH_CACHE.get(instance_dir, {})
+            last_ts = cached.get("ts", 0)
+            if time.time() - last_ts < self.GIT_FETCH_TTL:
+                return
+            self.GIT_FETCH_CACHE[instance_dir] = {"ts": time.time()}
+        try:
+            subprocess.run(
+                ["sudo", "git", "fetch", "--prune", "origin"],
+                cwd=instance_dir,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+        except Exception:
+            pass
+
+    def _get_git_info(self, instance):
+        instance_dir = f"/var/python/openalgo-flask/{instance}"
+        if not os.path.isdir(os.path.join(instance_dir, ".git")):
+            return None
+
+        self._ensure_git_safe(instance_dir)
+        self._maybe_fetch_origin(instance_dir)
+
+        branch = self._get_default_branch(instance_dir)
+        current_commit = self._git_run(instance_dir, ["rev-parse", "--short", "HEAD"])
+        latest_commit = self._git_run(instance_dir, ["rev-parse", "--short", f"origin/{branch}"])
+        current_date = self._git_run(instance_dir, ["log", "-1", "--format=%cd", "--date=iso", "HEAD"])
+        latest_date = self._git_run(instance_dir, ["log", "-1", "--format=%cd", "--date=iso", f"origin/{branch}"])
+        ahead_behind = self._git_run(instance_dir, ["rev-list", "--left-right", "--count", f"HEAD...origin/{branch}"])
+        ahead = behind = None
+        if ahead_behind and " " in ahead_behind:
+            ahead_str, behind_str = ahead_behind.split(" ", 1)
+            try:
+                ahead = int(ahead_str)
+                behind = int(behind_str)
+            except Exception:
+                ahead = behind = None
+
+        return {
+            "branch": branch,
+            "current_commit": current_commit,
+            "current_date": current_date,
+            "latest_commit": latest_commit,
+            "latest_date": latest_date,
+            "ahead": ahead,
+            "behind": behind,
+        }
 
     def _prune_jobs_locked(self):
         if len(self.JOBS) <= self.JOB_LIMIT:
@@ -989,7 +1079,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None}
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None}
 
         try:
             service_name = self._service_name(instance)
@@ -1045,6 +1135,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         try:
             health["master_contract"] = self._get_master_contract_status(instance)
         except:
+            pass
+
+        try:
+            health["git"] = self._get_git_info(instance)
+        except Exception:
             pass
 
         return health
@@ -1373,10 +1468,16 @@ const mcLast=mc.last_updated||'Unknown';
 const mcSymbols=(mc.total_symbols!==undefined&&mc.total_symbols!==null)?mc.total_symbols:'N/A';
 const mcBroker=mc.broker||'Unknown';
 const mcMessage=mc.message||'N/A';
+const git=h.git||{};
+const gitCurrent=git.current_commit||'N/A';
+const gitLatest=git.latest_commit||'N/A';
+const gitBehind=(git.behind!==null&&git.behind!==undefined)?`${git.behind} behind`:'';
+const gitUpdated=git.current_date||'Unknown';
+const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurrent} → ${gitLatest} ${gitBehind}`.trim();
 const actions=active
 ?`<button class="btn btn-small btn-stop" onclick="stopInstance()">⏹ Stop</button>`
 :`<button class="btn btn-small btn-start" onclick="startInstance()">▶ Start</button>`;
-document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restartInstance()">🔄 Restart</button>${actions}</div></div>`;
+document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restartInstance()">🔄 Restart</button>${actions}</div></div>`;
 }
 function toggleLogs(){
 const logsSection=document.getElementById('logs');
@@ -1728,7 +1829,13 @@ const mcLast=mc.last_updated||'Unknown';
 const mcSymbols=(mc.total_symbols!==undefined&&mc.total_symbols!==null)?mc.total_symbols:'N/A';
 const mcBroker=mc.broker||'Unknown';
 const mcMessage=mc.message||'N/A';
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+const git=h.git||{};
+const gitCurrent=git.current_commit||'N/A';
+const gitLatest=git.latest_commit||'N/A';
+const gitBehind=(git.behind!==null&&git.behind!==undefined)?`${git.behind} behind`:'';
+const gitUpdated=git.current_date||'Unknown';
+const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurrent} → ${gitLatest} ${gitBehind}`.trim();
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 }catch(e){
