@@ -170,11 +170,22 @@ refresh_env_from_sample() {
     temp_env=$(mktemp)
     sudo cp "$sample_env" "$temp_env"
 
-    # Overlay all values from old .env except ENV_CONFIG_VERSION
+    # Overlay all values from old .env except selected keys that should track defaults
+    local skip_keys=(
+        "ENV_CONFIG_VERSION"
+        "HISTORIFY_DATABASE_URL"
+        "HISTORICAL_DATABASE_URL"
+        "HISTORIFY_DB_URL"
+        "HISTORIFY_DB_PATH"
+        "HISTORIFY_DUCKDB_PATH"
+    )
+
     sudo grep "^[A-Z_]*=" "$old_env" | while IFS='=' read -r key value; do
-        if [ "$key" = "ENV_CONFIG_VERSION" ]; then
-            continue
-        fi
+        for skip_key in "${skip_keys[@]}"; do
+            if [ "$key" = "$skip_key" ]; then
+                continue 2
+            fi
+        done
         if sudo grep -q "^${key}=" "$temp_env"; then
             sudo sed -i "s|^${key}=.*|${key}=${value}|g" "$temp_env"
         else
@@ -184,11 +195,61 @@ refresh_env_from_sample() {
 
     sudo cp "$temp_env" "$env_file"
     sudo chown www-data:www-data "$env_file"
-    sudo chmod 644 "$env_file"
+    sudo chmod 600 "$env_file"
     rm -f "$temp_env"
 
     log_message "    ✓ .env refreshed from .sample.env and updated from backup" "$GREEN"
     return 0
+}
+
+ensure_historify_db() {
+    local instance_dir="$1"
+    local env_file="$instance_dir/.env"
+    local key=""
+    local value=""
+
+    for candidate in HISTORIFY_DATABASE_URL HISTORICAL_DATABASE_URL HISTORIFY_DB_URL HISTORIFY_DB_PATH HISTORIFY_DUCKDB_PATH; do
+        value=$(grep -E "^${candidate}=" "$env_file" | head -1 | cut -d'=' -f2-)
+        if [ -n "$value" ]; then
+            key="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$value" ]; then
+        return 0
+    fi
+
+    # Strip quotes
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+
+    local path="$value"
+    if [[ "$path" == *"://"* ]]; then
+        path=$(echo "$path" | sed -E 's|^[a-zA-Z0-9+.-]+://+||')
+    fi
+
+    local file_path=""
+    if [[ "$path" == /db/* ]]; then
+        file_path="$instance_dir/${path#/}"
+    elif [[ "$path" == db/* ]]; then
+        file_path="$instance_dir/$path"
+    elif [[ "$path" == /* ]]; then
+        file_path="$path"
+    else
+        file_path="$instance_dir/$path"
+    fi
+
+    local dir_path
+    dir_path=$(dirname "$file_path")
+    sudo mkdir -p "$dir_path"
+    if [ ! -f "$file_path" ]; then
+        sudo touch "$file_path"
+    fi
+    sudo chown www-data:www-data "$file_path"
+    sudo chmod 644 "$file_path"
 }
 
 # Function to update single instance
@@ -328,6 +389,7 @@ update_instance() {
     # Merge .env file changes
     log_message "  Refreshing .env configuration..." "$BLUE"
     refresh_env_from_sample "$instance_dir" "$backup_dir"
+    ensure_historify_db "$instance_dir"
     
     # Run migration script (UV-only flow)
     if [ -d "$instance_dir/upgrade" ] && [ -f "$instance_dir/upgrade/migrate_all.py" ]; then
