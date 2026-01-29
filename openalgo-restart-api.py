@@ -1771,18 +1771,18 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div class="maintenance">
 <h3>Maintenance</h3>
 <div id="scripts-status" class="maintenance-status scripts-status"></div>
-<div class="maintenance-actions">
-<button id="btn-health-all" class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
-<button id="btn-health-system" class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
-<button id="btn-update-all" class="btn btn-primary btn-update" onclick="updateAll()">⬆️ Update All Instances</button>
+<div class="maintenance-actions" style="display:flex;gap:8px;flex-wrap:nowrap">
+<button id="btn-health-all" class="btn btn-primary btn-health" style="flex:1 1 0;width:auto;margin:0" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
+<button id="btn-health-system" class="btn btn-primary btn-health" style="flex:1 1 0;width:auto;margin:0" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
+<button id="btn-update-all" class="btn btn-primary btn-update" style="flex:1 1 0;width:auto;margin:0" onclick="updateAll()">⬆️ Update All Instances</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
 </div>
-<div class="manager-toolbar">
-<button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button>
-<button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button>
-<button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
+<div class="manager-toolbar" style="display:flex;gap:8px;flex-wrap:nowrap;margin-bottom:10px">
+<button class="btn btn-primary" style="flex:1 1 0;width:auto;margin:0" onclick="restartAll()">🔄 Restart All Instances</button>
+<button class="btn btn-primary" style="background:#28a745;flex:1 1 0;width:auto;margin:0" onclick="loadInstances()">🔄 Refresh</button>
+<button class="btn btn-primary btn-reboot" style="flex:1 1 0;width:auto;margin:0" onclick="rebootServer()">⚡ Reboot Server</button>
 </div>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instances...</p></div>
 <div id="instances"></div>

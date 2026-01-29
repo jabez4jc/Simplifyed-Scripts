@@ -332,6 +332,24 @@ update_instance() {
             return 1
         fi
     fi
+
+    # Skip if already up to date
+    local current_hash
+    local latest_hash
+    current_hash=$(git rev-parse --short HEAD 2>/dev/null)
+    latest_hash=$(git rev-parse --short "origin/$default_branch" 2>/dev/null)
+    if [ -n "$current_hash" ] && [ -n "$latest_hash" ] && [ "$current_hash" = "$latest_hash" ]; then
+        local dirty=""
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            dirty=" (local changes present)"
+        fi
+        log_message "✓ Already up to date at $current_hash$dirty — skipping update steps" "$GREEN"
+        if [ "$was_running" = true ]; then
+            log_message "  Starting service: $service_name" "$BLUE"
+            sudo systemctl start "$service_name"
+        fi
+        return 0
+    fi
     
     # Show available updates
     log_message "\n  Available updates:" "$BLUE"
