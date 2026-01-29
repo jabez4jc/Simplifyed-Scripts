@@ -563,7 +563,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             conn.close()
 
             if not row:
-                return False, "Not Authenticated - User not Setup", None, None
+                return False, "User Not Setup", None, None
 
             is_revoked, auth, feed_token, broker, name = row
             auth_blank = auth is None or str(auth).strip() == ""
@@ -572,16 +572,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             name_blank = name is None or str(name).strip() == ""
 
             if name_blank:
-                return False, "Not Authenticated - User not Setup", broker, name
+                return False, "User Not Setup", broker, name
             if is_revoked == 1:
-                return False, "Not Authenticated - User Token Revoked", broker, name
-            if broker_blank:
-                return False, "Not Authenticated - Invalid Token", broker, name
+                return False, "User Not Authenticated: Token Revoked", broker, name
             if auth_blank:
-                return False, "Not Authenticated - Invalid Token", broker, name
-            # Some brokers may not provide feed_token; don't treat it as invalid auth
-            if feed_blank:
-                return True, "User Authenticated", broker, name
+                return False, "User Not Authenticated: Auth Token Not Updated", broker, name
             return True, "User Authenticated", broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
