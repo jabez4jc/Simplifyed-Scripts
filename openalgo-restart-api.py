@@ -14,6 +14,7 @@ import time
 import uuid
 import re
 import shutil
+import glob
 from threading import Thread, Lock
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
@@ -516,60 +517,62 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             }
 
     def _invalidate_session(self, instance):
-        """Invalidate session by clearing auth tokens and marking revoked; delete today's master contract status."""
-        result = {"instance": instance, "auth_updated": False, "auth_error": None, "auth_dbs": [], "master_deleted": 0, "master_error": None}
-
-        auth_dbs = []
+        """Invalidate session using instance auth models and reset master contract status."""
         inst_path = f"/var/python/openalgo-flask/{instance}"
-        db_dir = f"{inst_path}/db"
-        if os.path.isdir(db_dir):
-            for entry in os.scandir(db_dir):
-                if entry.is_file() and entry.name.endswith(".db") and self._db_has_auth_table(entry.path):
-                    auth_dbs.append(entry.path)
+        result = {
+            "instance": instance,
+            "auth_updated": False,
+            "auth_error": None,
+            "output": "",
+            "exit_code": None,
+        }
 
-        if not auth_dbs:
-            fallback = self._get_auth_db_file(instance)
-            if fallback:
-                auth_dbs.append(fallback)
+        if not os.path.isdir(inst_path):
+            result["auth_error"] = "Instance not found"
+            return result
 
-        if auth_dbs:
-            for auth_db in auth_dbs:
-                try:
-                    conn = sqlite3.connect(auth_db)
-                    cur = conn.cursor()
-                    cur.execute("UPDATE auth SET auth=NULL, feed_token=NULL, is_revoked=1")
-                    conn.commit()
-                    conn.close()
-                    result["auth_updated"] = True
-                    result["auth_dbs"].append(auth_db)
-                except Exception as e:
-                    result["auth_error"] = str(e)
-        else:
-            result["auth_error"] = "Auth database not found"
+        script = f"""
+set -euo pipefail
+ROOT="{inst_path}"
+set -a
+source "$ROOT/.env"
+set +a
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "openalgo")
+from database.auth_db import Auth, upsert_auth
+from database.master_contract_status_db import update_status
 
-        master_db = self._get_db_file_with_table(instance, "master_contract_status")
-        if master_db:
-            try:
-                now_ist = self._ist_now()
-                window_start = self._ist_window_start(now_ist)
-                window_end = window_start + timedelta(days=1)
-                start_str = window_start.strftime("%Y-%m-%d %H:%M:%S")
-                end_str = window_end.strftime("%Y-%m-%d %H:%M:%S")
+users = Auth.query.all()
+if not users:
+    print("No auth users found.")
+    raise SystemExit(0)
 
-                conn = sqlite3.connect(master_db)
-                cur = conn.cursor()
-                cur.execute(
-                    "DELETE FROM master_contract_status "
-                    "WHERE datetime(last_updated) >= datetime(?) AND datetime(last_updated) < datetime(?)",
-                    (start_str, end_str),
-                )
-                conn.commit()
-                result["master_deleted"] = cur.rowcount if cur.rowcount is not None else 0
-                conn.close()
-            except Exception as e:
-                result["master_error"] = str(e)
-        else:
-            result["master_error"] = "Master contract table not found"
+for auth in users:
+    upsert_auth(auth.name, "", "", revoke=True)
+    print(f"Revoked: {{auth.name}}")
+
+    if auth.broker:
+        update_status(auth.broker, "pending", "Invalidated by admin script")
+        print(f"Reset master contract status: {{auth.broker}}")
+PY
+"""
+        try:
+            proc = subprocess.run(
+                ["bash", "-lc", script],
+                cwd=inst_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            result["exit_code"] = proc.returncode
+            result["output"] = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+            if proc.returncode == 0:
+                result["auth_updated"] = True
+            else:
+                result["auth_error"] = f"Script failed (exit {proc.returncode})"
+        except Exception as e:
+            result["auth_error"] = str(e)
 
         return result
 
@@ -1000,11 +1003,31 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                         except Exception:
                             continue
 
+            # Cleanup /tmp logs: keep latest update_*.log only
+            tmp_deleted = 0
+            tmp_kept = None
+            try:
+                update_logs = [p for p in glob.glob("/tmp/update_*.log") if os.path.isfile(p)]
+                if update_logs:
+                    tmp_kept = max(update_logs, key=lambda p: os.path.getmtime(p))
+                for path in glob.glob("/tmp/*.log"):
+                    if tmp_kept and os.path.abspath(path) == os.path.abspath(tmp_kept):
+                        continue
+                    try:
+                        os.remove(path)
+                        tmp_deleted += 1
+                    except Exception:
+                        continue
+            except Exception:
+                tmp_deleted = tmp_deleted
+
             self.send_json({
                 "instance": instance,
                 "deleted": deleted,
                 "deleted_dirs": deleted_dirs,
                 "cleared_paths": cleared_paths,
+                "tmp_deleted": tmp_deleted,
+                "tmp_kept": tmp_kept,
                 "message": f"Instance logs cleared (kept {today}; files removed: {deleted}, folders removed: {deleted_dirs})",
                 "timestamp": str(datetime.now())
             })

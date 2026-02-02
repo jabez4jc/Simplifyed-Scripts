@@ -46,6 +46,21 @@ for inst in "${INSTANCES[@]}"; do
     done
 done
 
+# Clear /tmp logs, keep only the latest update_*.log
+latest_update_log="$(ls -t /tmp/update_*.log 2>/dev/null | head -n 1)"
+tmp_deleted=0
+for log_file in /tmp/*.log; do
+    [ -e "$log_file" ] || continue
+    if [ -n "$latest_update_log" ] && [ "$log_file" = "$latest_update_log" ]; then
+        continue
+    fi
+    rm -f "$log_file" 2>/dev/null || true
+    tmp_deleted=$((tmp_deleted + 1))
+done
+if [ "$tmp_deleted" -gt 0 ]; then
+    echo "✅ Cleared $tmp_deleted /tmp log file(s) (kept $(basename "$latest_update_log" 2>/dev/null))"
+fi
+
 if [ -f "$DAILY_RESTART_LOG" ]; then
     rm -f "$DAILY_RESTART_LOG"
     echo "✅ Removed daily restart log: $DAILY_RESTART_LOG"
