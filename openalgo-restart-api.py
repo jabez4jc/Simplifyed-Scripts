@@ -575,47 +575,57 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         script = """
 set -euo pipefail
 ROOT="."
+if [ ! -f "$ROOT/.env" ]; then
+  echo "AUTH_STATUS=not_setup;BROKER=;NAME="
+  exit 0
+fi
 set -a
 source "$ROOT/.env"
 set +a
-python3 - <<'PY'
+PYTHONWARNINGS=ignore python3 -W ignore - <<'PY'
 import sys
 sys.path.insert(0, "openalgo")
 
-from database.auth_db import Auth
+def out(status, broker="", name="", detail=""):
+    parts=[f"AUTH_STATUS={status}", f"BROKER={broker or ''}", f"NAME={name or ''}"]
+    if detail:
+        parts.append(f"DETAIL={detail}")
+    print(";".join(parts))
 
-users = Auth.query.all()
-if not users:
-    print("AUTH_STATUS=not_setup")
-    raise SystemExit(0)
-
-found = False
-for auth in users:
-    name = getattr(auth, "name", None)
-    broker = getattr(auth, "broker", None)
-    is_revoked = getattr(auth, "is_revoked", None)
-    auth_token = getattr(auth, "auth", None)
-    feed_token = getattr(auth, "feed_token", None)
-    found = True
-    name_blank = name is None or str(name).strip() == ""
-    auth_blank = auth_token is None or str(auth_token).strip() in ("", "None", "null", "nil", "false", "0", "{}", "[]")
-    feed_blank = feed_token is None or str(feed_token).strip() in ("", "None", "null", "nil", "false", "0", "{}", "[]")
-    revoked = bool(is_revoked) if is_revoked is not None else False
-
-    if name_blank:
-        print(f\"AUTH_STATUS=not_setup;BROKER={broker or ''};NAME=\")
+try:
+    from database.auth_db import Auth
+    users = Auth.query.all()
+    if not users:
+        out("not_setup")
         raise SystemExit(0)
-    if revoked:
-        print(f\"AUTH_STATUS=revoked;BROKER={broker or ''};NAME={name}\")
-        raise SystemExit(0)
-    if auth_blank:
-        print(f\"AUTH_STATUS=missing_token;BROKER={broker or ''};NAME={name}\")
-        raise SystemExit(0)
-    print(f\"AUTH_STATUS=ok;BROKER={broker or ''};NAME={name}\")
-    raise SystemExit(0)
 
-if not found:
-    print(\"AUTH_STATUS=not_setup\")
+    for auth in users:
+        name = getattr(auth, "name", None)
+        broker = getattr(auth, "broker", None)
+        is_revoked = getattr(auth, "is_revoked", None)
+        auth_token = getattr(auth, "auth", None)
+        feed_token = getattr(auth, "feed_token", None)
+        name_blank = name is None or str(name).strip() == ""
+        auth_blank = auth_token is None or str(auth_token).strip() in ("", "None", "null", "nil", "false", "0", "{}", "[]")
+        revoked = bool(is_revoked) if is_revoked is not None else False
+
+        if name_blank:
+            out("not_setup", broker=broker)
+            raise SystemExit(0)
+        if revoked:
+            out("revoked", broker=broker, name=name)
+            raise SystemExit(0)
+        if auth_blank:
+            out("missing_token", broker=broker, name=name)
+            raise SystemExit(0)
+        out("ok", broker=broker, name=name)
+        raise SystemExit(0)
+
+    out("not_setup")
+except SystemExit:
+    raise
+except Exception as e:
+    out("error", detail=str(e))
 PY
 """
         try:
@@ -626,7 +636,7 @@ PY
                 text=True,
                 timeout=30,
             )
-            output = (proc.stdout or "").strip()
+            output = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
             broker = None
             name = None
             status = None
@@ -648,6 +658,13 @@ PY
                     return False, "User Not Authenticated: Token Revoked", broker, name
                 if status_value == "missing_token":
                     return False, "User Not Authenticated: Auth Token Not Updated", broker, name
+                if status_value == "error":
+                    detail = ""
+                    for part in parts[1:]:
+                        if part.startswith("DETAIL="):
+                            detail = part.split("=", 1)[1].strip()
+                            break
+                    return False, f"Auth check failed: {detail or 'error'}", broker, name
                 return False, "User Not Setup", broker, name
             return False, "Auth check failed: invalid status", None, None
         except Exception as e:
