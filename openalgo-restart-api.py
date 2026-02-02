@@ -14,7 +14,6 @@ import time
 import uuid
 import re
 import shutil
-import glob
 from threading import Thread, Lock
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
@@ -960,92 +959,31 @@ PY
             if not os.path.isdir(inst_path):
                 self.send_json({"error": "Instance not found", "instance": instance}, 404)
                 return
+            clear_script = self._find_script("oa-clear-logs.sh")
+            if not clear_script:
+                self.send_json({"error": "oa-clear-logs.sh not found", "instance": instance}, 500)
+                return
 
-            deleted = 0
-            deleted_dirs = 0
-            cleared_paths = []
-            today = datetime.now().strftime("%Y-%m-%d")
-            today_date = datetime.now().date()
-
-            for log_dir in (f"{inst_path}/log", f"{inst_path}/logs"):
-                if not os.path.isdir(log_dir):
-                    continue
-                cleared_paths.append(log_dir)
-
-                for entry in os.scandir(log_dir):
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            if entry.name == today:
-                                continue
-                            shutil.rmtree(entry.path, ignore_errors=True)
-                            deleted_dirs += 1
-                            continue
-                        if entry.is_file(follow_symlinks=False):
-                            mtime_date = datetime.fromtimestamp(entry.stat().st_mtime).date()
-                            if mtime_date == today_date:
-                                continue
-                            os.remove(entry.path)
-                            deleted += 1
-                    except Exception:
-                        continue
-
-                for root, dirs, files in os.walk(log_dir):
-                    if root.startswith(os.path.join(log_dir, today)):
-                        continue
-                    for name in files:
-                        file_path = os.path.join(root, name)
-                        try:
-                            mtime_date = datetime.fromtimestamp(os.path.getmtime(file_path)).date()
-                            if mtime_date == today_date:
-                                continue
-                            os.remove(file_path)
-                            deleted += 1
-                        except Exception:
-                            continue
-
-            # Cleanup /tmp logs: keep latest update_*.log only
-            tmp_deleted = 0
-            tmp_kept = None
-            try:
-                update_logs = [p for p in glob.glob("/tmp/update_*.log") if os.path.isfile(p)]
-                if update_logs:
-                    tmp_kept = max(update_logs, key=lambda p: os.path.getmtime(p))
-                for path in glob.glob("/tmp/*.log"):
-                    if tmp_kept and os.path.abspath(path) == os.path.abspath(tmp_kept):
-                        continue
-                    try:
-                        os.remove(path)
-                        tmp_deleted += 1
-                    except Exception:
-                        continue
-            except Exception:
-                tmp_deleted = tmp_deleted
-
-            clear_safe = {"ran": False, "path": None, "exit_code": None}
-            try:
-                clear_script = self._find_script("openalgo-clear-safe.sh")
-                if clear_script:
-                    clear_safe["ran"] = True
-                    clear_safe["path"] = clear_script
-                    proc = subprocess.run(
-                        ["sudo", "bash", clear_script, "--apply"],
-                        capture_output=True,
-                        text=True,
-                        timeout=300,
-                    )
-                    clear_safe["exit_code"] = proc.returncode
-            except Exception:
-                clear_safe["exit_code"] = -1
+            proc = subprocess.run(
+                ["sudo", "bash", clear_script, "--yes", "--instance", instance],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            message = (proc.stdout or "").strip()
+            if proc.returncode != 0:
+                self.send_json({
+                    "instance": instance,
+                    "error": f"Clear logs failed (exit {proc.returncode})",
+                    "output": message,
+                    "timestamp": str(datetime.now())
+                }, 500)
+                return
 
             self.send_json({
                 "instance": instance,
-                "deleted": deleted,
-                "deleted_dirs": deleted_dirs,
-                "cleared_paths": cleared_paths,
-                "tmp_deleted": tmp_deleted,
-                "tmp_kept": tmp_kept,
-                "clear_safe": clear_safe,
-                "message": f"Instance logs cleared (kept {today}; files removed: {deleted}, folders removed: {deleted_dirs})",
+                "message": "Clear logs completed",
+                "output": message,
                 "timestamp": str(datetime.now())
             })
         except Exception as e:
@@ -1167,7 +1105,7 @@ PY
         })
 
     def handle_scripts_status(self):
-        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "openalgo-clear-safe.sh"]
+        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "oa-clear-logs.sh"]
         scripts = {}
         for name in script_names:
             path = self._find_script(name)
