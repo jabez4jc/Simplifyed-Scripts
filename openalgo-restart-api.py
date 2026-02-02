@@ -2035,6 +2035,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <script>
 let brokerStatusCache={};
 let logsCache={};
+let terminalInstances=[];
 async function fetchJson(url, options){
 const r=await fetch(url,options);
 const text=await r.text();
@@ -2095,6 +2096,7 @@ showAlert('Error: '+e.message,'error');
 function populateTerminalInstances(instances){
 const select=document.getElementById('term-instance');
 if(!select)return;
+terminalInstances=Array.isArray(instances)?instances:[];
 if(!instances||instances.length===0){
 select.innerHTML='<option value="">No instances</option>';
 }else{
@@ -2115,6 +2117,19 @@ val=opt?opt.value:'';
 }
 return (val||'').trim();
 }
+function resolveInstance(){
+let inst=getSelectedInstance();
+const select=document.getElementById('term-instance');
+if(!inst&&select&&select.options&&select.options.length){
+select.selectedIndex=0;
+inst=getSelectedInstance();
+}
+if(!inst&&terminalInstances.length){
+inst=terminalInstances[0];
+if(select){select.value=inst;}
+}
+return (inst||'').trim();
+}
 function updateTerminalFields(){
 const action=document.getElementById('term-action')?.value;
 const dbWrap=document.getElementById('term-db-wrap');
@@ -2129,7 +2144,7 @@ loadTerminalDbs();
 }
 async function loadTerminalDbs(){
 const action=document.getElementById('term-action')?.value;
-const inst=getSelectedInstance();
+const inst=resolveInstance();
 const dbSelect=document.getElementById('term-db');
 if(!dbSelect)return;
 if(!inst){
@@ -2155,7 +2170,7 @@ document.getElementById('term-instance')?.addEventListener('change',loadTerminal
 document.getElementById('term-action')?.dispatchEvent(new Event('change'));
 async function runTerminal(){
 const action=document.getElementById('term-action').value;
-const instance=getSelectedInstance();
+const instance=resolveInstance();
 const lines=document.getElementById('term-lines').value;
 const db=document.getElementById('term-db').value;
 const query=document.getElementById('term-query').value;
