@@ -1996,20 +1996,20 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <option value="sqlite_select">sqlite3 SELECT</option>
 </select>
 </div>
-<div>
+<div id="term-instance-wrap">
 <div class="detail-label">Instance</div>
 <select id="term-instance" class="btn" style="width:100%"></select>
 </div>
-<div>
+<div id="term-lines-wrap">
 <div class="detail-label">Lines</div>
 <input id="term-lines" class="btn" style="width:100%" type="number" min="10" max="500" value="100"/>
 </div>
-<div>
+<div id="term-db-wrap">
 <div class="detail-label">DB</div>
 <select id="term-db" class="btn" style="width:100%"></select>
 </div>
 </div>
-<div style="margin-top:10px">
+<div id="term-query-wrap" style="margin-top:10px">
 <div class="detail-label">Query (SELECT only)</div>
 <textarea id="term-query" class="btn" style="width:100%;min-height:70px"></textarea>
 </div>
@@ -2095,7 +2095,23 @@ showAlert('Error: '+e.message,'error');
 function populateTerminalInstances(instances){
 const select=document.getElementById('term-instance');
 if(!select)return;
+if(!instances||instances.length===0){
+select.innerHTML='<option value="">No instances</option>';
+}else{
 select.innerHTML=instances.map(i=>`<option value="${i}">${i}</option>`).join('');
+}
+loadTerminalDbs();
+}
+function updateTerminalFields(){
+const action=document.getElementById('term-action')?.value;
+const dbWrap=document.getElementById('term-db-wrap');
+const queryWrap=document.getElementById('term-query-wrap');
+const linesWrap=document.getElementById('term-lines-wrap');
+const instanceWrap=document.getElementById('term-instance-wrap');
+if(dbWrap){dbWrap.style.display=(action==='sqlite_select')?'block':'none';}
+if(queryWrap){queryWrap.style.display=(action==='sqlite_select')?'block':'none';}
+if(linesWrap){linesWrap.style.display=(action==='journalctl_tail')?'block':'none';}
+if(instanceWrap){instanceWrap.style.display=(action==='df'||action==='free'||action==='uptime')?'none':'block';}
 loadTerminalDbs();
 }
 async function loadTerminalDbs(){
@@ -2104,7 +2120,7 @@ const inst=document.getElementById('term-instance')?.value;
 const dbSelect=document.getElementById('term-db');
 if(!dbSelect)return;
 if(!inst){
-dbSelect.innerHTML='';
+dbSelect.innerHTML='<option value="">Select instance</option>';
 return;
 }
 if(action!=='sqlite_select'){
@@ -2113,29 +2129,14 @@ return;
 }
 try{
 const data=await fetchJson(`/api/terminal/dbs?instance=${encodeURIComponent(inst)}`);
-dbSelect.innerHTML=(data.dbs||[]).map(d=>`<option value="${d}">${d}</option>`).join('');
+const dbs=data.dbs||[];
+dbSelect.innerHTML=dbs.length?dbs.map(d=>`<option value="${d}">${d}</option>`).join(''):'<option value="">No databases found</option>';
 }catch(e){
-dbSelect.innerHTML='';
+dbSelect.innerHTML='<option value="">Error loading dbs</option>';
 }
 }
 document.getElementById('term-action')?.addEventListener('change',()=>{
-const action=document.getElementById('term-action').value;
-const query=document.getElementById('term-query');
-const db=document.getElementById('term-db');
-const lines=document.getElementById('term-lines');
-if(action==='sqlite_select'){
-query.style.display='block';
-db.style.display='block';
-}else{
-query.style.display='none';
-db.style.display='none';
-}
-if(action==='journalctl_tail'){
-lines.style.display='block';
-}else{
-lines.style.display='none';
-}
-loadTerminalDbs();
+updateTerminalFields();
 });
 document.getElementById('term-instance')?.addEventListener('change',loadTerminalDbs);
 document.getElementById('term-action')?.dispatchEvent(new Event('change'));
@@ -2147,6 +2148,18 @@ const db=document.getElementById('term-db').value;
 const query=document.getElementById('term-query').value;
 const output=document.getElementById('term-output');
 if(output){output.textContent='Running...';}
+if((action==='systemctl_status'||action==='journalctl_tail'||action==='sqlite_select')&&!instance){
+if(output){output.textContent='Instance required for this action.';}
+return;
+}
+if(action==='sqlite_select' && !db){
+if(output){output.textContent='Please select a database.';}
+return;
+}
+if(action==='sqlite_select' && (!query||!query.trim())){
+if(output){output.textContent='Please enter a SELECT query.';}
+return;
+}
 const payload={action,instance,lines,db,query};
 try{
 const data=await fetchJson('/api/terminal/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
