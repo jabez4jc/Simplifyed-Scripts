@@ -187,6 +187,20 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             return False
         return True
 
+    def _list_instances(self):
+        base_dir = "/var/python/openalgo-flask"
+        instances = []
+        if os.path.isdir(base_dir):
+            for entry in os.scandir(base_dir):
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if not entry.name.startswith("openalgo"):
+                    continue
+                suffix = entry.name[8:]
+                if suffix.isdigit() or (suffix.startswith("-") and suffix[1:] and all(ch.isalnum() or ch == "-" for ch in suffix[1:])):
+                    instances.append(entry.name)
+        return sorted(instances)
+
     def _prune_jobs_locked(self):
         if len(self.JOBS) <= self.JOB_LIMIT:
             return
@@ -1149,6 +1163,9 @@ PY
         params = parse_qs(urlparse(self.path).query)
         instance = self._sanitize_instance(params.get("instance", [None])[0])
         if not instance:
+            instances = self._list_instances()
+            instance = instances[0] if instances else None
+        if not instance:
             self.send_json({"error": "Invalid or missing instance"}, 400)
             return
         dbs = self._list_db_files(instance)
@@ -1178,6 +1195,9 @@ PY
         cmd = None
         if action in ("systemctl_status", "journalctl_tail"):
             if not instance:
+                instances = self._list_instances()
+                instance = instances[0] if instances else None
+            if not instance:
                 self.send_json({"error": "Instance required for this action"}, 400)
                 return
             service_name = self._service_name(instance)
@@ -1192,6 +1212,9 @@ PY
         elif action == "uptime":
             cmd = ["uptime"]
         elif action == "sqlite_select":
+            if not instance:
+                instances = self._list_instances()
+                instance = instances[0] if instances else None
             if not instance:
                 self.send_json({"error": "Instance required for sqlite query"}, 400)
                 return
@@ -2110,12 +2133,19 @@ updateTerminalFields();
 function getSelectedInstance(){
 const select=document.getElementById('term-instance');
 if(!select)return'';
-let val=select.value;
-if(!val&&select.options&&select.options.length){
-const opt=select.options[select.selectedIndex];
-val=opt?opt.value:'';
+let val='';
+if(select.selectedOptions&&select.selectedOptions.length){
+const opt=select.selectedOptions[0];
+val=(opt.value||opt.text||'').trim();
 }
-return (val||'').trim();
+if(!val){
+val=(select.value||'').trim();
+}
+if(!val&&select.options&&select.options.length){
+const opt=select.options[0];
+val=(opt.value||opt.text||'').trim();
+}
+return val;
 }
 function resolveInstance(){
 let inst=getSelectedInstance();
