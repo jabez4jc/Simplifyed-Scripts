@@ -529,40 +529,18 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if not os.path.isdir(inst_path):
             result["auth_error"] = "Instance not found"
             return result
+        script_path = self._find_script("oa-invalidate-session.sh")
+        if not script_path:
+            result["auth_error"] = "oa-invalidate-session.sh not found"
+            return result
 
-        script = f"""
-set -euo pipefail
-ROOT="{inst_path}"
-set -a
-source "$ROOT/.env"
-set +a
-python3 - <<'PY'
-import sys
-sys.path.insert(0, "openalgo")
-from database.auth_db import Auth, upsert_auth
-from database.master_contract_status_db import update_status
-
-users = Auth.query.all()
-if not users:
-    print("No auth users found.")
-    raise SystemExit(0)
-
-for auth in users:
-    upsert_auth(auth.name, "", "", revoke=True)
-    print(f"Revoked: {{auth.name}}")
-
-    if auth.broker:
-        update_status(auth.broker, "pending", "Invalidated by admin script")
-        print(f"Reset master contract status: {{auth.broker}}")
-PY
-"""
         try:
             proc = subprocess.run(
-                ["bash", "-lc", script],
+                ["sudo", "bash", script_path, "--instance", instance],
                 cwd=inst_path,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=60,
             )
             result["exit_code"] = proc.returncode
             result["output"] = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
@@ -576,64 +554,88 @@ PY
         return result
 
     def _read_auth_status(self, instance):
-        db_file = self._get_auth_db_file(instance)
-
-        if not db_file:
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        if not os.path.isdir(inst_path):
             return False, "User Not Setup", None, None
 
+        script = """
+set -euo pipefail
+ROOT="."
+set -a
+source "$ROOT/.env"
+set +a
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "openalgo")
+
+from database.auth_db import Auth
+
+users = Auth.query.all()
+if not users:
+    print("AUTH_STATUS=not_setup")
+    raise SystemExit(0)
+
+found = False
+for auth in users:
+    name = getattr(auth, "name", None)
+    broker = getattr(auth, "broker", None)
+    is_revoked = getattr(auth, "is_revoked", None)
+    auth_token = getattr(auth, "auth", None)
+    feed_token = getattr(auth, "feed_token", None)
+    found = True
+    name_blank = name is None or str(name).strip() == ""
+    auth_blank = auth_token is None or str(auth_token).strip() in ("", "None", "null", "nil", "false", "0", "{}", "[]")
+    feed_blank = feed_token is None or str(feed_token).strip() in ("", "None", "null", "nil", "false", "0", "{}", "[]")
+    revoked = bool(is_revoked) if is_revoked is not None else False
+
+    if name_blank:
+        print(f\"AUTH_STATUS=not_setup;BROKER={broker or ''};NAME=\")
+        raise SystemExit(0)
+    if revoked:
+        print(f\"AUTH_STATUS=revoked;BROKER={broker or ''};NAME={name}\")
+        raise SystemExit(0)
+    if auth_blank:
+        print(f\"AUTH_STATUS=missing_token;BROKER={broker or ''};NAME={name}\")
+        raise SystemExit(0)
+    print(f\"AUTH_STATUS=ok;BROKER={broker or ''};NAME={name}\")
+    raise SystemExit(0)
+
+if not found:
+    print(\"AUTH_STATUS=not_setup\")
+PY
+"""
         try:
-            conn = sqlite3.connect(db_file)
-            cur = conn.cursor()
-            row = None
-            row_count = None
-            for query in (
-                "SELECT COUNT(*) FROM auth",
-                "SELECT is_revoked, auth, feed_token, broker, name FROM auth LIMIT 1",
-            ):
-                try:
-                    cur.execute(query)
-                    result = cur.fetchone()
-                    if query.startswith("SELECT COUNT"):
-                        row_count = result[0] if result else None
-                        continue
-                    row = result
+            proc = subprocess.run(
+                ["bash", "-lc", script],
+                cwd=inst_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            output = (proc.stdout or "").strip()
+            broker = None
+            name = None
+            status = None
+            for line in output.splitlines():
+                if line.startswith("AUTH_STATUS="):
+                    status = line
                     break
-                except Exception:
-                    continue
-            conn.close()
-
-            if not row:
-                return False, "User Not Setup", None, None
-            if row_count is not None and row_count > 1:
-                return False, "User Not Authenticated: Multiple Auth Records", None, None
-
-            is_revoked, auth, feed_token, broker, name = row
-
-            def _is_blank(value):
-                if value is None:
-                    return True
-                text = str(value).strip()
-                if text == "":
-                    return True
-                lowered = text.lower()
-                if lowered in ("none", "null", "nil", "false", "0"):
-                    return True
-                if text in ("{}", "[]"):
-                    return True
-                return False
-
-            auth_blank = _is_blank(auth)
-            feed_blank = _is_blank(feed_token)
-            broker_blank = broker is None or str(broker).strip() == ""
-            name_blank = name is None or str(name).strip() == ""
-
-            if name_blank:
+            if status:
+                parts = status.split(";")
+                status_value = parts[0].split("=", 1)[1].strip()
+                for part in parts[1:]:
+                    if part.startswith("BROKER="):
+                        broker = part.split("=", 1)[1].strip() or None
+                    elif part.startswith("NAME="):
+                        name = part.split("=", 1)[1].strip() or None
+                if status_value == "ok":
+                    return True, "User Authenticated", broker, name
+                if status_value == "revoked":
+                    return False, "User Not Authenticated: Token Revoked", broker, name
+                if status_value == "missing_token":
+                    return False, "User Not Authenticated: Auth Token Not Updated", broker, name
                 return False, "User Not Setup", broker, name
-            if is_revoked == 1:
-                return False, "User Not Authenticated: Token Revoked", broker, name
-            if auth_blank:
-                return False, "User Not Authenticated: Auth Token Not Updated", broker, name
-            return True, "User Authenticated", broker, name
+            return False, "Auth check failed: invalid status", None, None
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
     def _service_name(self, instance):
@@ -1105,7 +1107,7 @@ PY
         })
 
     def handle_scripts_status(self):
-        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "oa-clear-logs.sh"]
+        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "oa-clear-logs.sh", "oa-invalidate-session.sh"]
         scripts = {}
         for name in script_names:
             path = self._find_script(name)
