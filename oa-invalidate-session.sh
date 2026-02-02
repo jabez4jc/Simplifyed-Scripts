@@ -54,7 +54,7 @@ python3 - <<'PY'
 import sys
 sys.path.insert(0, "openalgo")
 
-from database.auth_db import Auth, upsert_auth
+from database.auth_db import Auth, upsert_auth, db
 from database.master_contract_status_db import update_status
 
 users = Auth.query.all()
@@ -65,6 +65,14 @@ if not users:
 for auth in users:
     upsert_auth(auth.name, "", "", revoke=True)
     print(f"Revoked: {auth.name}")
+    try:
+        Auth.query.filter_by(name=auth.name).update(
+            {"is_revoked": 1, "auth": "", "feed_token": ""}
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"Failed to mark revoked for {auth.name}: {e}")
 
     if auth.broker:
         update_status(auth.broker, "pending", "Invalidated by admin script")
