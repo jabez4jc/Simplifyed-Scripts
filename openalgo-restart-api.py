@@ -657,6 +657,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             return instance
         if re.match(r"^openalgo-[A-Za-z0-9-]+$", instance):
             return instance
+        if re.match(r"^[A-Za-z0-9.-]+$", instance):
+            candidate = f"openalgo-{instance.replace('.', '-')}"
+            if os.path.isdir(f"/var/python/openalgo-flask/{candidate}"):
+                return candidate
         return None
 
     def _resolve_instance_from_host(self):
@@ -667,10 +671,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         import re
         if not re.match(r"^[A-Za-z0-9.-]+$", host):
             return None
-        symlink = f"/var/python/openalgo-flask/openalgo-{host.replace('.', '-')}"
-        if os.path.exists(symlink):
-            target = os.path.realpath(symlink)
-            return self._sanitize_instance(os.path.basename(target))
+        candidate = f"/var/python/openalgo-flask/openalgo-{host.replace('.', '-')}"
+        if os.path.exists(candidate):
+            return self._sanitize_instance(os.path.basename(candidate))
         return None
 
     def _resolve_monitor_instance(self):
