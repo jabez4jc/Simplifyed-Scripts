@@ -10,10 +10,10 @@ DAILY_RESTART_LOG="/var/log/openalgo-daily-restart.log"
 TODAY="$(date +%F)"
 
 APPLY=1
-TMP_DAYS=1
+TMP_DAYS=0
 VARTMP_DAYS=7
 TMP_WIPE_ALL=0
-TRUNCATE_MB=100
+TRUNCATE_MB=0
 JOURNAL_MAX="200M"
 JOURNAL_RETENTION="7day"
 DO_APT=1
@@ -22,6 +22,8 @@ LOGFILE="/var/log/openalgo-clear-safe.log"
 LOCKFILE="/var/lock/openalgo-clear-safe.lock"
 NO_CONFIRM=0
 ONLY_INSTANCE=""
+INSTALL_TIMER=0
+RSYSLOG_ROTATE_FILE="/etc/logrotate.d/rsyslog"
 
 usage() {
   cat <<EOF
@@ -37,9 +39,10 @@ Options:
   --tmp-days N             Delete /tmp files older than N days (default: ${TMP_DAYS})
   --vartmp-days N          Delete /var/tmp files older than N days (default: ${VARTMP_DAYS})
   --tmp-wipe-all           Delete ALL contents of /tmp and /var/tmp (more aggressive)
-  --truncate-mb N          Truncate active logs only if > N MB (default: ${TRUNCATE_MB})
+  --truncate-mb N          Truncate active logs only if > N MB (default: ${TRUNCATE_MB}, 0=always)
   --journal-max 200M       Cap systemd journal to size (default: ${JOURNAL_MAX})
   --journal-retention 7day Retention cap (default: ${JOURNAL_RETENTION})
+  --install-timer          Install/enable daily cleanup timer (03:10)
   --no-apt                 Skip apt cleanup
   --no-docker              Skip Docker prune even if Docker is installed
   -h, --help               Help
@@ -68,6 +71,14 @@ need_root() {
 }
 
 has() { command -v "$1" >/dev/null 2>&1; }
+is_open() {
+  local f="$1"
+  if has lsof; then
+    lsof "$f" >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --truncate-mb) TRUNCATE_MB="${2:?}"; shift 2 ;;
     --journal-max) JOURNAL_MAX="${2:?}"; shift 2 ;;
     --journal-retention) JOURNAL_RETENTION="${2:?}"; shift 2 ;;
+    --install-timer) INSTALL_TIMER=1; shift ;;
     --no-apt) DO_APT=0; shift ;;
     --no-docker) DO_DOCKER=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -127,17 +139,52 @@ total_deleted=0
 for inst in "${INSTANCES[@]}"; do
     for log_dir in "$BASE_DIR/$inst/log" "$BASE_DIR/$inst/logs"; do
         if [ -d "$log_dir" ]; then
-            file_count=$(find "$log_dir" -type f -daystart -mtime +0 2>/dev/null | wc -l | tr -d ' ')
+            file_count=0
+            while IFS= read -r file_path; do
+                base_name=$(basename "$file_path")
+                file_date=$(echo "$base_name" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n 1 || true)
+                if [[ -n "$file_date" ]]; then
+                    if [[ "$file_date" != "$TODAY" ]]; then
+                        file_count=$((file_count + 1))
+                    fi
+                else
+                    if find "$file_path" -daystart -mtime +0 >/dev/null 2>&1; then
+                        :
+                    else
+                        file_count=$((file_count + 1))
+                    fi
+                fi
+            done < <(find "$log_dir" -type f 2>/dev/null)
             dir_count=$(find "$log_dir" -mindepth 1 -maxdepth 1 -type d ! -name "$TODAY" 2>/dev/null | wc -l | tr -d ' ')
             if [ "$file_count" -gt 0 ] || [ "$dir_count" -gt 0 ]; then
                 if [[ "$APPLY" -eq 1 ]]; then
-                    find "$log_dir" -type f -daystart -mtime +0 -delete 2>/dev/null
+                    while IFS= read -r file_path; do
+                        base_name=$(basename "$file_path")
+                        file_date=$(echo "$base_name" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n 1 || true)
+                        if [[ -n "$file_date" ]]; then
+                            if [[ "$file_date" != "$TODAY" ]]; then
+                                if ! is_open "$file_path"; then
+                                    rm -f "$file_path" 2>/dev/null || true
+                                fi
+                            fi
+                        else
+                            if find "$file_path" -daystart -mtime +0 >/dev/null 2>&1; then
+                                :
+                            else
+                                if ! is_open "$file_path"; then
+                                    rm -f "$file_path" 2>/dev/null || true
+                                fi
+                            fi
+                        fi
+                    done < <(find "$log_dir" -type f 2>/dev/null)
                     find "$log_dir" -mindepth 1 -maxdepth 1 -type d ! -name "$TODAY" -exec rm -rf {} + 2>/dev/null
                 else
                     echo "[DRY-RUN] Would clear $file_count file(s) and $dir_count folder(s) in $log_dir (kept $TODAY)"
                 fi
-                echo "✅ Cleared $file_count log file(s) and $dir_count log folder(s) in $log_dir (kept $TODAY)"
-                total_deleted=$((total_deleted + file_count + dir_count))
+                if [[ "$APPLY" -eq 1 ]]; then
+                    echo "✅ Cleared $file_count log file(s) and $dir_count log folder(s) in $log_dir (kept $TODAY)"
+                    total_deleted=$((total_deleted + file_count + dir_count))
+                fi
             fi
         fi
     done
@@ -176,9 +223,27 @@ fi
 ########################################
 # 2) Rotate logs once, then delete rotated logs
 ########################################
+# Cap syslog rotation
+run "cat > ${RSYSLOG_ROTATE_FILE} << 'EOF'
+/var/log/syslog
+{
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    maxsize 50M
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}
+EOF"
+
 if [[ -f /etc/logrotate.conf ]]; then
   run "logrotate -f /etc/logrotate.conf"
 fi
+run "logrotate -f /etc/logrotate.d/rsyslog"
 
 run "rm -f /var/log/syslog.[0-9] /var/log/syslog.[0-9][0-9] /var/log/syslog.*.gz 2>/dev/null || true"
 run "rm -f /var/log/auth.log.[0-9] /var/log/auth.log.[0-9][0-9] /var/log/auth.log.*.gz 2>/dev/null || true"
@@ -195,6 +260,10 @@ run "rm -f /var/log/dpkg.log.*.gz /var/log/alternatives.log.*.gz 2>/dev/null || 
 truncate_if_big() {
   local f="$1"
   [[ -f "$f" ]] || return 0
+  if [[ "$TRUNCATE_MB" -le 0 ]]; then
+    run "truncate -s 0 '$f'"
+    return 0
+  fi
   local mb
   mb=$(du -m "$f" | awk '{print $1}')
   if [[ "$mb" -ge "$TRUNCATE_MB" ]]; then
@@ -274,11 +343,50 @@ else
 fi
 
 ########################################
+# 9) Log spam summary (top offenders)
+########################################
+run "tail -n 2000 /var/log/syslog | cut -d: -f1-2 | sort | uniq -c | sort -nr | head -n 20"
+
+########################################
 # Final report
 ########################################
 run "sync"
 run "df -hT /"
 log "===== END openalgo-clear-safe ====="
+
+########################################
+# Optional systemd timer install
+########################################
+if [[ "$INSTALL_TIMER" -eq 1 ]]; then
+  run "cat > /usr/local/bin/oa-clear-logs.sh.timer-wrapper << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+/usr/local/bin/oa-clear-logs.sh --yes
+EOF"
+  run "chmod 755 /usr/local/bin/oa-clear-logs.sh.timer-wrapper"
+  run "cat > /etc/systemd/system/openalgo-clear-safe.service << 'EOF'
+[Unit]
+Description=OpenAlgo safe disk cleanup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oa-clear-logs.sh.timer-wrapper
+EOF"
+  run "cat > /etc/systemd/system/openalgo-clear-safe.timer << 'EOF'
+[Unit]
+Description=Run OpenAlgo safe disk cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 03:10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF"
+  run "systemctl daemon-reload"
+  run "systemctl enable --now openalgo-clear-safe.timer"
+  run "systemctl list-timers | grep openalgo || true"
+fi
 
 say
 say "Done."

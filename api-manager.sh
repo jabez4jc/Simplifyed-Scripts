@@ -183,6 +183,16 @@ setup_update() {
     fi
     echo ""
 
+    if [ -x "/usr/local/bin/oa-clear-logs.sh" ]; then
+        echo -e "${YELLOW}Installing daily cleanup timer...${NC}"
+        /usr/local/bin/oa-clear-logs.sh --install-timer --yes >/dev/null 2>&1 || true
+        echo -e "${GREEN}✅ Cleanup timer installed${NC}"
+        echo ""
+    else
+        echo -e "${YELLOW}⚠️  oa-clear-logs.sh not found; skipping timer install${NC}"
+        echo ""
+    fi
+
     install_api || { read -p "Press Enter to continue..."; menu_main; }
     echo ""
     setup_service || { read -p "Press Enter to continue..."; menu_main; }
