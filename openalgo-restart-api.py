@@ -2100,7 +2100,20 @@ select.innerHTML='<option value="">No instances</option>';
 }else{
 select.innerHTML=instances.map(i=>`<option value="${i}">${i}</option>`).join('');
 }
-loadTerminalDbs();
+if(select.options.length){
+select.selectedIndex=0;
+}
+updateTerminalFields();
+}
+function getSelectedInstance(){
+const select=document.getElementById('term-instance');
+if(!select)return'';
+let val=select.value;
+if(!val&&select.options&&select.options.length){
+const opt=select.options[select.selectedIndex];
+val=opt?opt.value:'';
+}
+return (val||'').trim();
 }
 function updateTerminalFields(){
 const action=document.getElementById('term-action')?.value;
@@ -2116,7 +2129,7 @@ loadTerminalDbs();
 }
 async function loadTerminalDbs(){
 const action=document.getElementById('term-action')?.value;
-const inst=document.getElementById('term-instance')?.value;
+const inst=getSelectedInstance();
 const dbSelect=document.getElementById('term-db');
 if(!dbSelect)return;
 if(!inst){
@@ -2142,7 +2155,7 @@ document.getElementById('term-instance')?.addEventListener('change',loadTerminal
 document.getElementById('term-action')?.dispatchEvent(new Event('change'));
 async function runTerminal(){
 const action=document.getElementById('term-action').value;
-const instance=document.getElementById('term-instance').value;
+const instance=getSelectedInstance();
 const lines=document.getElementById('term-lines').value;
 const db=document.getElementById('term-db').value;
 const query=document.getElementById('term-query').value;
