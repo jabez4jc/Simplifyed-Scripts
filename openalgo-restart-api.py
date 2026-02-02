@@ -568,105 +568,21 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         return result
 
     def _read_auth_status(self, instance):
-        inst_path = f"/var/python/openalgo-flask/{instance}"
-        if not os.path.isdir(inst_path):
+        db_file = self._get_auth_db_file(instance)
+        if not db_file:
             return False, "User Not Setup", None, None
-
-        script = """
-set -euo pipefail
-ROOT="."
-if [ ! -f "$ROOT/.env" ]; then
-  echo "AUTH_STATUS=not_setup;BROKER=;NAME="
-  exit 0
-fi
-set -a
-source "$ROOT/.env"
-set +a
-PYTHONWARNINGS=ignore python3 -W ignore - <<'PY'
-import sys
-sys.path.insert(0, "openalgo")
-
-def out(status, broker="", name="", detail=""):
-    parts=[f"AUTH_STATUS={status}", f"BROKER={broker or ''}", f"NAME={name or ''}"]
-    if detail:
-        parts.append(f"DETAIL={detail}")
-    print(";".join(parts))
-
-try:
-    from database.auth_db import Auth
-    users = Auth.query.all()
-    if not users:
-        out("not_setup")
-        raise SystemExit(0)
-
-    for auth in users:
-        name = getattr(auth, "name", None)
-        broker = getattr(auth, "broker", None)
-        is_revoked = getattr(auth, "is_revoked", None)
-        auth_token = getattr(auth, "auth", None)
-        feed_token = getattr(auth, "feed_token", None)
-        name_blank = name is None or str(name).strip() == ""
-        auth_blank = auth_token is None or str(auth_token).strip() in ("", "None", "null", "nil", "false", "0", "{}", "[]")
-        revoked = bool(is_revoked) if is_revoked is not None else False
-
-        if name_blank:
-            out("not_setup", broker=broker)
-            raise SystemExit(0)
-        if revoked:
-            out("revoked", broker=broker, name=name)
-            raise SystemExit(0)
-        if auth_blank:
-            out("missing_token", broker=broker, name=name)
-            raise SystemExit(0)
-        out("ok", broker=broker, name=name)
-        raise SystemExit(0)
-
-    out("not_setup")
-except SystemExit:
-    raise
-except Exception as e:
-    out("error", detail=str(e))
-PY
-"""
         try:
-            proc = subprocess.run(
-                ["bash", "-lc", script],
-                cwd=inst_path,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            output = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
-            broker = None
-            name = None
-            status = None
-            for line in output.splitlines():
-                if line.startswith("AUTH_STATUS="):
-                    status = line
-                    break
-            if status:
-                parts = status.split(";")
-                status_value = parts[0].split("=", 1)[1].strip()
-                for part in parts[1:]:
-                    if part.startswith("BROKER="):
-                        broker = part.split("=", 1)[1].strip() or None
-                    elif part.startswith("NAME="):
-                        name = part.split("=", 1)[1].strip() or None
-                if status_value == "ok":
-                    return True, "User Authenticated", broker, name
-                if status_value == "revoked":
-                    return False, "User Not Authenticated: Token Revoked", broker, name
-                if status_value == "missing_token":
-                    return False, "User Not Authenticated: Auth Token Not Updated", broker, name
-                if status_value == "error":
-                    detail = ""
-                    for part in parts[1:]:
-                        if part.startswith("DETAIL="):
-                            detail = part.split("=", 1)[1].strip()
-                            break
-                    return False, f"Auth check failed: {detail or 'error'}", broker, name
-                return False, "User Not Setup", broker, name
-            return False, "Auth check failed: invalid status", None, None
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            cur.execute("SELECT is_revoked, broker, name FROM auth LIMIT 1")
+            row = cur.fetchone()
+            conn.close()
+            if not row:
+                return False, "User Not Setup", None, None
+            is_revoked, broker, name = row
+            if is_revoked in (1, "1", True):
+                return False, "User Not Authenticated: Token Revoked", broker, name
+            return True, "User Authenticated", broker, name
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
     def _service_name(self, instance):
