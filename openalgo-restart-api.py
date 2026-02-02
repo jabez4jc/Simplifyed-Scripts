@@ -959,6 +959,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             deleted = 0
+            deleted_dirs = 0
             cleared_paths = []
             today = datetime.now().strftime("%Y-%m-%d")
             today_date = datetime.now().date()
@@ -974,6 +975,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                             if entry.name == today:
                                 continue
                             shutil.rmtree(entry.path, ignore_errors=True)
+                            deleted_dirs += 1
                             continue
                         if entry.is_file(follow_symlinks=False):
                             mtime_date = datetime.fromtimestamp(entry.stat().st_mtime).date()
@@ -1001,8 +1003,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({
                 "instance": instance,
                 "deleted": deleted,
+                "deleted_dirs": deleted_dirs,
                 "cleared_paths": cleared_paths,
-                "message": "Instance log files cleared (kept today's logs)",
+                "message": f"Instance logs cleared (kept {today}; files removed: {deleted}, folders removed: {deleted_dirs})",
                 "timestamp": str(datetime.now())
             })
         except Exception as e:
@@ -1574,7 +1577,14 @@ let resolvedInstance=null;
 let logsLoaded=false;
 const monitorApiBase='/monitor/api';
 async function fetchJson(url, options){
-const r=await fetch(url,options);
+const opts=options||{};
+const headers=new Headers(opts.headers||{});
+if(url.startsWith(monitorApiBase)){
+const inst=resolvedInstance||monitorInstance;
+if(inst){headers.set('X-OpenAlgo-Instance',inst);}
+}
+opts.headers=headers;
+const r=await fetch(url,opts);
 const text=await r.text();
 const contentType=(r.headers.get('content-type')||'').toLowerCase();
 try{
@@ -1740,7 +1750,18 @@ setTimeout(loadInstance,1000);
 async function clearLogs(){
 if(!confirm('Clear all log files for this instance?'))return;
 showAlert('Clearing logs...','info');
-await post('/monitor/api/clear-logs');
+try{
+const res=await post('/monitor/api/clear-logs');
+if(res&&res.error){
+showAlert(res.error,'error');
+return;
+}
+const msg=res&&res.message?res.message:'Logs cleared';
+showAlert(msg,'success');
+}catch(e){
+showAlert('Error: '+e.message,'error');
+return;
+}
 logsLoaded=false;
 setTimeout(loadInstance,1000);
 }

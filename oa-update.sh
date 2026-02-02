@@ -144,6 +144,16 @@ backup_before_update() {
     
     # Set readable permissions
     sudo chown -R $(whoami) "$backup_dir"
+
+    # Keep only the most recent pre-update backup for this instance
+    local backup_glob="/tmp/openalgo_backup_${instance_name}_*"
+    local old_backups=()
+    while IFS= read -r line; do
+        old_backups+=("$line")
+    done < <(ls -dt $backup_glob 2>/dev/null | tail -n +2)
+    if [ ${#old_backups[@]} -gt 0 ]; then
+        sudo rm -rf "${old_backups[@]}" 2>/dev/null || true
+    fi
     
     echo "$backup_dir"
 }
