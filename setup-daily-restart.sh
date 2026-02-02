@@ -66,6 +66,7 @@ cat > "$RESTART_SCRIPT" << 'EOF'
 
 BASE_DIR="/var/python/openalgo-flask"
 LOG_FILE="/var/log/openalgo-daily-restart.log"
+CLEAR_LOGS_SCRIPT="/usr/local/bin/oa-clear-logs.sh"
 
 # Function to log messages
 log_to_file() {
@@ -89,32 +90,22 @@ get_service_name() {
     fi
 }
 
-clean_instance_logs() {
-    local instance_name="$1"
-    local total_deleted=0
-    local log_dir
-
-    for log_dir in "$BASE_DIR/$instance_name/log" "$BASE_DIR/$instance_name/logs"; do
-        if [ -d "$log_dir" ]; then
-            local count
-            count=$(find "$log_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$count" -gt 0 ]; then
-                find "$log_dir" -type f -delete 2>/dev/null
-                log_to_file "🧹 Cleared $count log file(s) in $log_dir"
-                total_deleted=$((total_deleted + count))
-            fi
-        fi
-    done
-
-    if [ "$total_deleted" -eq 0 ]; then
-        log_to_file "No instance log files to clean for $instance_name"
-    fi
-}
-
 log_to_file "Starting daily restart of all OpenAlgo instances"
 
+# Clear logs + error logs automatically before restart
+if [ -x "$CLEAR_LOGS_SCRIPT" ]; then
+    log_to_file "Running log cleanup via $CLEAR_LOGS_SCRIPT..."
+    if "$CLEAR_LOGS_SCRIPT" --yes >> "$LOG_FILE" 2>&1; then
+        log_to_file "Log cleanup completed."
+    else
+        log_to_file "Log cleanup failed. Continuing with restart."
+    fi
+else
+    log_to_file "Log cleanup script not found at $CLEAR_LOGS_SCRIPT"
+fi
+
 # Get list of instances (exclude symlinks)
-INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     log_to_file "No OpenAlgo instances found"
@@ -126,9 +117,6 @@ restart_count=0
 for instance in "${INSTANCES[@]}"; do
     SERVICE_NAME=$(get_service_name "$BASE_DIR/$instance" "$instance")
 
-    log_to_file "Cleaning logs for $SERVICE_NAME..."
-    clean_instance_logs "$instance"
-    
     log_to_file "Restarting $SERVICE_NAME..."
     
     if systemctl restart "$SERVICE_NAME" 2>&1 | tee -a "$LOG_FILE"; then

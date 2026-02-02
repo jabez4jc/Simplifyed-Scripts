@@ -1323,10 +1323,28 @@ PY
     def handle_restart_instance(self, instance):
         """Restart specific instance"""
         invalidate_result = None
+        clear_logs_result = None
         try:
             invalidate_result = self._invalidate_session(instance)
         except Exception:
             invalidate_result = None
+        try:
+            clear_script = self._find_script("oa-clear-logs.sh")
+            if clear_script:
+                proc = subprocess.run(
+                    ["sudo", "bash", clear_script, "--yes", "--instance", instance],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                clear_logs_result = {
+                    "exit_code": proc.returncode,
+                    "output": (proc.stdout or "").strip(),
+                }
+            else:
+                clear_logs_result = {"error": "oa-clear-logs.sh not found"}
+        except Exception as e:
+            clear_logs_result = {"error": str(e)}
         service_name = self._service_name(instance)
         Thread(target=lambda: subprocess.run(
             f"sudo systemctl restart {service_name}",
@@ -1338,6 +1356,7 @@ PY
             "message": f"Restart triggered for {instance}",
             "instance": instance,
             "session_invalidated": invalidate_result,
+            "logs_cleared": clear_logs_result,
             "timestamp": str(datetime.now())
         })
     
