@@ -3,6 +3,7 @@
 # === CONFIG ===
 BASE_DIR="/var/python/openalgo-flask"
 DAILY_RESTART_LOG="/var/log/openalgo-daily-restart.log"
+TODAY="$(date +%F)"
 
 echo "🧹 OpenAlgo Log Cleanup"
 
@@ -17,13 +18,13 @@ if [ ! -d "$BASE_DIR" ]; then
     exit 1
 fi
 
-read -p "This will delete all per-instance log files. Continue? (y/N): " confirm
+read -p "This will delete per-instance log files older than today. Continue? (y/N): " confirm
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     echo "❌ Cancelled."
     exit 0
 fi
 
-INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     echo "❌ No OpenAlgo instances installed."
     exit 1
@@ -33,10 +34,11 @@ total_deleted=0
 for inst in "${INSTANCES[@]}"; do
     for log_dir in "$BASE_DIR/$inst/log" "$BASE_DIR/$inst/logs"; do
         if [ -d "$log_dir" ]; then
-            count=$(find "$log_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+            count=$(find "$log_dir" -type f ! -newermt "$TODAY 00:00:00" 2>/dev/null | wc -l | tr -d ' ')
             if [ "$count" -gt 0 ]; then
-                find "$log_dir" -type f -delete 2>/dev/null
-                echo "✅ Cleared $count log file(s) in $log_dir"
+                find "$log_dir" -type f ! -newermt "$TODAY 00:00:00" -delete 2>/dev/null
+                find "$log_dir" -mindepth 1 -maxdepth 1 -type d ! -name "$TODAY" -exec rm -rf {} + 2>/dev/null
+                echo "✅ Cleared $count log file(s) in $log_dir (kept $TODAY)"
                 total_deleted=$((total_deleted + count))
             fi
         fi

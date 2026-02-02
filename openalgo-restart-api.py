@@ -37,6 +37,13 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
         return ansi_re.sub("", text)
 
+    def _truncate_output(self, text, limit=20000):
+        if text is None:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[:limit] + "\n...\n(Output truncated)"
+
     def _find_script(self, script_name):
         env_dirs = [
             os.environ.get("OPENALGO_SCRIPTS_DIR"),
@@ -154,6 +161,31 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "ahead": ahead,
             "behind": behind,
         }
+
+    def _list_db_files(self, instance):
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        db_dir = f"{inst_path}/db"
+        files = []
+        if os.path.isdir(db_dir):
+            for entry in os.scandir(db_dir):
+                if entry.is_file() and entry.name.endswith(".db"):
+                    files.append(entry.name)
+        return sorted(files)
+
+    def _is_safe_select(self, query):
+        if not query:
+            return False
+        if len(query) > 1000:
+            return False
+        q = query.strip()
+        if not q.lower().startswith("select"):
+            return False
+        if ";" in q.rstrip(";"):
+            return False
+        lowered = q.lower()
+        if re.search(r"\b(insert|update|delete|drop|alter|create|pragma|attach|detach|vacuum|reindex)\b", lowered):
+            return False
+        return True
 
     def _prune_jobs_locked(self):
         if len(self.JOBS) <= self.JOB_LIMIT:
@@ -545,18 +577,24 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         db_file = self._get_auth_db_file(instance)
 
         if not db_file:
-            return False, "Not Authenticated - User not Setup", None, None
+            return False, "User Not Setup", None, None
 
         try:
             conn = sqlite3.connect(db_file)
             cur = conn.cursor()
             row = None
+            row_count = None
             for query in (
+                "SELECT COUNT(*) FROM auth",
                 "SELECT is_revoked, auth, feed_token, broker, name FROM auth LIMIT 1",
             ):
                 try:
                     cur.execute(query)
-                    row = cur.fetchone()
+                    result = cur.fetchone()
+                    if query.startswith("SELECT COUNT"):
+                        row_count = result[0] if result else None
+                        continue
+                    row = result
                     break
                 except Exception:
                     continue
@@ -564,10 +602,26 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
             if not row:
                 return False, "User Not Setup", None, None
+            if row_count is not None and row_count > 1:
+                return False, "User Not Authenticated: Multiple Auth Records", None, None
 
             is_revoked, auth, feed_token, broker, name = row
-            auth_blank = auth is None or str(auth).strip() == ""
-            feed_blank = feed_token is None or str(feed_token).strip() == ""
+
+            def _is_blank(value):
+                if value is None:
+                    return True
+                text = str(value).strip()
+                if text == "":
+                    return True
+                lowered = text.lower()
+                if lowered in ("none", "null", "nil", "false", "0"):
+                    return True
+                if text in ("{}", "[]"):
+                    return True
+                return False
+
+            auth_blank = _is_blank(auth)
+            feed_blank = _is_blank(feed_token)
             broker_blank = broker is None or str(broker).strip() == ""
             name_blank = name is None or str(name).strip() == ""
 
@@ -598,7 +652,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if not instance:
             return None
         instance = instance.strip()
-        if instance.startswith("openalgo") and instance[8:].isdigit():
+        import re
+        if re.match(r"^openalgo\\d+$", instance):
+            return instance
+        if re.match(r"^openalgo-[A-Za-z0-9-]+$", instance):
             return instance
         return None
 
@@ -677,6 +734,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/scripts-status':
             self.handle_scripts_status()
+        elif self.path.startswith('/api/terminal/dbs'):
+            self.handle_terminal_dbs()
         elif self.path.startswith('/api/jobs/'):
             job_id = self.path.split('/api/jobs/')[1].strip('/')
             if job_id:
@@ -758,6 +817,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.handle_update(data)
         elif self.path == '/api/scripts-status':
             self.handle_scripts_status()
+        elif self.path == '/api/terminal/run':
+            self.handle_terminal_run(data)
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -770,7 +831,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 for entry in os.scandir(base_dir):
                     if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
                         suffix = entry.name[8:]
-                        if suffix.isdigit():
+                        if suffix.isdigit() or (suffix.startswith("-") and suffix[1:] and all(ch.isalnum() or ch == "-" for ch in suffix[1:])):
                             instances.append(entry.name)
             self.send_json(sorted(instances))
         except Exception as e:
@@ -785,7 +846,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 for entry in os.scandir(base_dir):
                     if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
                         suffix = entry.name[8:]
-                        if suffix.isdigit():
+                        if suffix.isdigit() or (suffix.startswith("-") and suffix[1:] and all(ch.isalnum() or ch == "-" for ch in suffix[1:])):
                             instances.append(entry.name)
             
             status = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
@@ -814,7 +875,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                 for entry in os.scandir(base_dir):
                     if entry.is_dir(follow_symlinks=False) and entry.name.startswith("openalgo"):
                         suffix = entry.name[8:]
-                        if suffix.isdigit():
+                        if suffix.isdigit() or (suffix.startswith("-") and suffix[1:] and all(ch.isalnum() or ch == "-" for ch in suffix[1:])):
                             instances.append(entry.name)
             
             health = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
@@ -896,23 +957,49 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
             deleted = 0
             cleared_paths = []
+            today = datetime.now().strftime("%Y-%m-%d")
+            today_date = datetime.now().date()
+
             for log_dir in (f"{inst_path}/log", f"{inst_path}/logs"):
-                if os.path.isdir(log_dir):
-                    for root, _, files in os.walk(log_dir):
-                        for name in files:
-                            file_path = os.path.join(root, name)
-                            try:
-                                os.remove(file_path)
-                                deleted += 1
-                            except Exception:
+                if not os.path.isdir(log_dir):
+                    continue
+                cleared_paths.append(log_dir)
+
+                for entry in os.scandir(log_dir):
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name == today:
                                 continue
-                    cleared_paths.append(log_dir)
+                            shutil.rmtree(entry.path, ignore_errors=True)
+                            continue
+                        if entry.is_file(follow_symlinks=False):
+                            mtime_date = datetime.fromtimestamp(entry.stat().st_mtime).date()
+                            if mtime_date == today_date:
+                                continue
+                            os.remove(entry.path)
+                            deleted += 1
+                    except Exception:
+                        continue
+
+                for root, dirs, files in os.walk(log_dir):
+                    if root.startswith(os.path.join(log_dir, today)):
+                        continue
+                    for name in files:
+                        file_path = os.path.join(root, name)
+                        try:
+                            mtime_date = datetime.fromtimestamp(os.path.getmtime(file_path)).date()
+                            if mtime_date == today_date:
+                                continue
+                            os.remove(file_path)
+                            deleted += 1
+                        except Exception:
+                            continue
 
             self.send_json({
                 "instance": instance,
                 "deleted": deleted,
                 "cleared_paths": cleared_paths,
-                "message": "Instance log files cleared",
+                "message": "Instance log files cleared (kept today's logs)",
                 "timestamp": str(datetime.now())
             })
         except Exception as e:
@@ -1071,6 +1158,97 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "suggested_fix": suggested_fix,
             "timestamp": self._now_iso()
         })
+
+    def handle_terminal_dbs(self):
+        params = parse_qs(urlparse(self.path).query)
+        instance = self._sanitize_instance(params.get("instance", [None])[0])
+        if not instance:
+            self.send_json({"error": "Invalid or missing instance"}, 400)
+            return
+        dbs = self._list_db_files(instance)
+        self.send_json({"instance": instance, "dbs": dbs, "timestamp": self._now_iso()})
+
+    def handle_terminal_run(self, data):
+        action = (data.get("action") or "").strip()
+        instance = self._sanitize_instance(data.get("instance"))
+        lines = data.get("lines", 100)
+        db_name = data.get("db")
+        query = data.get("query")
+
+        allowed = {"systemctl_status", "journalctl_tail", "df", "free", "uptime", "sqlite_select"}
+        if action not in allowed:
+            self.send_json({"error": "Action not allowed"}, 400)
+            return
+
+        try:
+            lines = int(lines)
+        except Exception:
+            lines = 100
+        if lines < 10:
+            lines = 10
+        if lines > 500:
+            lines = 500
+
+        cmd = None
+        if action in ("systemctl_status", "journalctl_tail"):
+            if not instance:
+                self.send_json({"error": "Instance required for this action"}, 400)
+                return
+            service_name = self._service_name(instance)
+            if action == "systemctl_status":
+                cmd = ["systemctl", "status", service_name, "--no-pager"]
+            else:
+                cmd = ["journalctl", "-u", service_name, "-n", str(lines), "--no-pager"]
+        elif action == "df":
+            cmd = ["df", "-h"]
+        elif action == "free":
+            cmd = ["free", "-h"]
+        elif action == "uptime":
+            cmd = ["uptime"]
+        elif action == "sqlite_select":
+            if not instance:
+                self.send_json({"error": "Instance required for sqlite query"}, 400)
+                return
+            if not query or not self._is_safe_select(query):
+                self.send_json({"error": "Only single SELECT statements are allowed"}, 400)
+                return
+            if not db_name or not str(db_name).endswith(".db"):
+                self.send_json({"error": "DB name required"}, 400)
+                return
+            dbs = self._list_db_files(instance)
+            if db_name not in dbs:
+                self.send_json({"error": "DB not allowed"}, 400)
+                return
+            db_path = f"/var/python/openalgo-flask/{instance}/db/{db_name}"
+            if not shutil.which("sqlite3"):
+                self.send_json({"error": "sqlite3 not installed"}, 400)
+                return
+            cmd = ["sqlite3", db_path, "-header", "-column", query]
+
+        if not cmd:
+            self.send_json({"error": "Command not available"}, 400)
+            return
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+            output = self._strip_ansi(output)
+            output = self._truncate_output(output)
+            self.send_json({
+                "status": "success" if result.returncode == 0 else "error",
+                "exit_code": result.returncode,
+                "output": output.strip(),
+                "timestamp": self._now_iso()
+            })
+        except subprocess.TimeoutExpired:
+            self.send_json({"error": "Command timed out"}, 504)
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
@@ -1336,12 +1514,11 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .system-label{color:#666;font-weight:500}
 .system-value{color:#333;font-weight:600;margin-top:2px}
 .maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
-.maintenance-actions{display:flex;gap:8px;flex-wrap:nowrap;margin:10px 0}
-.maintenance-actions .btn{flex:1 1 0;width:auto !important;min-width:0;margin:0}
-.maintenance-actions .btn-primary{width:auto !important}
-.manager-toolbar{display:flex;gap:8px;flex-wrap:nowrap;margin-bottom:10px}
-.manager-toolbar .btn{flex:1 1 0;width:auto !important;min-width:0;margin:0}
-.manager-toolbar .btn-primary{width:auto !important}
+.maintenance-actions{margin:10px 0}
+.manager-toolbar{margin-bottom:10px}
+.button-row{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:8px 0}
+.button-row td{width:33%;vertical-align:top}
+.button-row .btn{width:100%;margin:0}
 .scripts-status{display:flex;gap:12px;flex-wrap:wrap}
 .maintenance-actions .btn{flex:1 1 0;min-width:180px;width:auto}
 .manager-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
@@ -1737,6 +1914,10 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .btn-update:hover{background:#138496}
 .btn-health{background:#20c997;color:white}
 .btn-health:hover{background:#18a17a}
+.terminal{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #6f42c1}
+.terminal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
+.terminal-output{margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
+.terminal-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
 .master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
 .master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
@@ -1766,18 +1947,62 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div class="maintenance">
 <h3>Maintenance</h3>
 <div id="scripts-status" class="maintenance-status scripts-status"></div>
-<div class="maintenance-actions" style="display:flex;gap:8px;flex-wrap:nowrap">
-<button id="btn-health-all" class="btn btn-primary btn-health" style="flex:1 1 0;width:auto;margin:0" onclick="runHealthCheck('all')">🩺 Health Check (All)</button>
-<button id="btn-health-system" class="btn btn-primary btn-health" style="flex:1 1 0;width:auto;margin:0" onclick="runHealthCheck('system')">🧩 Health Check (System)</button>
-<button id="btn-update-all" class="btn btn-primary btn-update" style="flex:1 1 0;width:auto;margin:0" onclick="updateAll()">⬆️ Update All Instances</button>
+<div class="maintenance-actions">
+<table class="button-row">
+<tr>
+<td><button id="btn-health-all" class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button></td>
+<td><button id="btn-health-system" class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button></td>
+<td><button id="btn-update-all" class="btn btn-primary btn-update" onclick="updateAll()">⬆️ Update All Instances</button></td>
+</tr>
+</table>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
 </div>
-<div class="manager-toolbar" style="display:flex;gap:8px;flex-wrap:nowrap;margin-bottom:10px">
-<button class="btn btn-primary" style="flex:1 1 0;width:auto;margin:0" onclick="restartAll()">🔄 Restart All Instances</button>
-<button class="btn btn-primary" style="background:#28a745;flex:1 1 0;width:auto;margin:0" onclick="loadInstances()">🔄 Refresh</button>
-<button class="btn btn-primary btn-reboot" style="flex:1 1 0;width:auto;margin:0" onclick="rebootServer()">⚡ Reboot Server</button>
+<div class="terminal">
+<h3>Terminal (Safe)</h3>
+<div class="terminal-grid">
+<div>
+<div class="detail-label">Action</div>
+<select id="term-action" class="btn" style="width:100%">
+<option value="systemctl_status">Systemctl Status</option>
+<option value="journalctl_tail">Journalctl Tail</option>
+<option value="df">Disk Usage (df -h)</option>
+<option value="free">Memory (free -h)</option>
+<option value="uptime">Uptime</option>
+<option value="sqlite_select">sqlite3 SELECT</option>
+</select>
+</div>
+<div>
+<div class="detail-label">Instance</div>
+<select id="term-instance" class="btn" style="width:100%"></select>
+</div>
+<div>
+<div class="detail-label">Lines</div>
+<input id="term-lines" class="btn" style="width:100%" type="number" min="10" max="500" value="100"/>
+</div>
+<div>
+<div class="detail-label">DB</div>
+<select id="term-db" class="btn" style="width:100%"></select>
+</div>
+</div>
+<div style="margin-top:10px">
+<div class="detail-label">Query (SELECT only)</div>
+<textarea id="term-query" class="btn" style="width:100%;min-height:70px"></textarea>
+</div>
+<div style="margin-top:10px">
+<button class="btn btn-primary" style="width:auto" onclick="runTerminal()">▶ Run Command</button>
+</div>
+<div class="terminal-output"><pre id="term-output">Ready.</pre></div>
+</div>
+<div class="manager-toolbar">
+<table class="button-row">
+<tr>
+<td><button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button></td>
+<td><button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button></td>
+<td><button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button></td>
+</tr>
+</table>
 </div>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instances...</p></div>
 <div id="instances"></div>
@@ -1839,8 +2064,76 @@ const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurre
 return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
+populateTerminalInstances(instances);
 }catch(e){
 showAlert('Error: '+e.message,'error');
+}
+}
+function populateTerminalInstances(instances){
+const select=document.getElementById('term-instance');
+if(!select)return;
+select.innerHTML=instances.map(i=>`<option value="${i}">${i}</option>`).join('');
+loadTerminalDbs();
+}
+async function loadTerminalDbs(){
+const action=document.getElementById('term-action')?.value;
+const inst=document.getElementById('term-instance')?.value;
+const dbSelect=document.getElementById('term-db');
+if(!dbSelect)return;
+if(!inst){
+dbSelect.innerHTML='';
+return;
+}
+if(action!=='sqlite_select'){
+dbSelect.innerHTML='';
+return;
+}
+try{
+const data=await fetchJson(`/api/terminal/dbs?instance=${encodeURIComponent(inst)}`);
+dbSelect.innerHTML=(data.dbs||[]).map(d=>`<option value="${d}">${d}</option>`).join('');
+}catch(e){
+dbSelect.innerHTML='';
+}
+}
+document.getElementById('term-action')?.addEventListener('change',()=>{
+const action=document.getElementById('term-action').value;
+const query=document.getElementById('term-query');
+const db=document.getElementById('term-db');
+const lines=document.getElementById('term-lines');
+if(action==='sqlite_select'){
+query.style.display='block';
+db.style.display='block';
+}else{
+query.style.display='none';
+db.style.display='none';
+}
+if(action==='journalctl_tail'){
+lines.style.display='block';
+}else{
+lines.style.display='none';
+}
+loadTerminalDbs();
+});
+document.getElementById('term-instance')?.addEventListener('change',loadTerminalDbs);
+document.getElementById('term-action')?.dispatchEvent(new Event('change'));
+async function runTerminal(){
+const action=document.getElementById('term-action').value;
+const instance=document.getElementById('term-instance').value;
+const lines=document.getElementById('term-lines').value;
+const db=document.getElementById('term-db').value;
+const query=document.getElementById('term-query').value;
+const output=document.getElementById('term-output');
+if(output){output.textContent='Running...';}
+const payload={action,instance,lines,db,query};
+try{
+const data=await fetchJson('/api/terminal/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+if(data.error){
+if(output){output.textContent=data.error;}
+return;
+}
+if(output){output.textContent=data.output||'';}
+}catch(e){
+if(output){output.textContent=e.message;}
 }
 }
 function renderScriptsStatus(data){

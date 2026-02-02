@@ -7,6 +7,8 @@
 set -e
 
 SWAPFILE="/swapfile"
+MAX_SWAP_GB=""
+RECOMMENDED_SWAP_GB=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -38,13 +40,34 @@ validate_swap_size() {
         return 1
     fi
     
-    # Check if size is within reasonable limits (1GB to 512GB)
-    if [ "$size" -lt 1 ] || [ "$size" -gt 512 ]; then
-        log_message "❌ Error: Swap size must be between 1 and 512 GB" "$RED"
+    # Check if size is within reasonable limits (1GB to max RAM)
+    if [ "$size" -lt 1 ] || [ "$size" -gt "$MAX_SWAP_GB" ]; then
+        log_message "❌ Error: Swap size must be between 1 and ${MAX_SWAP_GB} GB" "$RED"
         return 1
     fi
     
     return 0
+}
+
+# Calculate RAM-based limits and recommendations
+calculate_ram_limits() {
+    local mem_kb
+    mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+    if [ -z "$mem_kb" ]; then
+        MAX_SWAP_GB=512
+        RECOMMENDED_SWAP_GB=4
+        return
+    fi
+    local mem_gb
+    mem_gb=$(awk -v kb="$mem_kb" 'BEGIN{printf "%.2f", kb/1024/1024}')
+    MAX_SWAP_GB=$(awk -v gb="$mem_gb" 'BEGIN{printf "%d", (gb==int(gb)?gb:int(gb)+1)}')
+    RECOMMENDED_SWAP_GB=$(awk -v gb="$mem_gb" 'BEGIN{printf "%d", ((gb*0.5)==int(gb*0.5)?(gb*0.5):int(gb*0.5)+1)}')
+    if [ "$RECOMMENDED_SWAP_GB" -lt 1 ]; then
+        RECOMMENDED_SWAP_GB=1
+    fi
+    if [ "$RECOMMENDED_SWAP_GB" -gt "$MAX_SWAP_GB" ]; then
+        RECOMMENDED_SWAP_GB="$MAX_SWAP_GB"
+    fi
 }
 
 # Function to check available disk space
@@ -114,15 +137,10 @@ get_disk_space_info() {
             }
         }')
 
-    # Show recommended swap sizes
-    log_message "\n📋 Recommended Swap Sizes:" "$YELLOW"
-    log_message "   Based on available space ($available):" "$YELLOW"
-    if [ -n "$available_gb" ]; then
-        local conservative=$(awk -v gb="$available_gb" 'BEGIN{printf "%.1f", gb*0.5}')
-        local moderate=$(awk -v gb="$available_gb" 'BEGIN{printf "%.1f", gb*0.25}')
-        log_message "   • Conservative (50% of available): ~${conservative}GB" "$YELLOW"
-        log_message "   • Moderate (25% of available): ~${moderate}GB" "$YELLOW"
-    fi
+    # Show recommended swap sizes (RAM-based)
+    log_message "\n📋 Recommended Swap Sizes (RAM-based):" "$YELLOW"
+    log_message "   Max swap (<= RAM): ${MAX_SWAP_GB}GB" "$YELLOW"
+    log_message "   Recommended (50% of RAM): ${RECOMMENDED_SWAP_GB}GB" "$YELLOW"
 }
 
 # Main execution
@@ -141,6 +159,7 @@ main() {
     get_current_swap_info
     
     # Show disk space info
+    calculate_ram_limits
     get_disk_space_info
     
     # Get swap size from arguments or prompt user
@@ -149,12 +168,12 @@ main() {
     if [ $# -eq 0 ]; then
         # Interactive mode
         log_message "\n📝 Enter desired swap size (in GB)" "$BLUE"
-        read -p "Enter swap size in GB [default: 4]: " swap_size_gb
+        read -p "Enter swap size in GB [default: ${RECOMMENDED_SWAP_GB}]: " swap_size_gb
         
         # Use default if empty
         if [ -z "$swap_size_gb" ]; then
-            swap_size_gb=4
-            log_message "Using default: 4 GB" "$YELLOW"
+            swap_size_gb="$RECOMMENDED_SWAP_GB"
+            log_message "Using default: ${RECOMMENDED_SWAP_GB} GB" "$YELLOW"
         fi
     else
         swap_size_gb="$1"
@@ -256,9 +275,9 @@ main() {
     log_message "💾 Persisting swap configuration..." "$BLUE"
     echo "$SWAPFILE none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null
 
-    log_message "⚙️  Setting swappiness to 15..." "$BLUE"
+    log_message "⚙️  Setting swappiness to 10..." "$BLUE"
     sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null <<'EOF'
-vm.swappiness=15
+vm.swappiness=10
 EOF
     sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
 
