@@ -61,6 +61,13 @@ if [ "$tmp_deleted" -gt 0 ]; then
     echo "✅ Cleared $tmp_deleted /tmp log file(s) (kept $(basename "$latest_update_log" 2>/dev/null))"
 fi
 
+# Run safe system cleanup if available
+if [ -x "$(dirname "$0")/openalgo-clear-safe.sh" ]; then
+    sudo bash "$(dirname "$0")/openalgo-clear-safe.sh" --apply || true
+elif command -v openalgo-clear-safe.sh >/dev/null 2>&1; then
+    sudo bash "$(command -v openalgo-clear-safe.sh)" --apply || true
+fi
+
 if [ -f "$DAILY_RESTART_LOG" ]; then
     rm -f "$DAILY_RESTART_LOG"
     echo "✅ Removed daily restart log: $DAILY_RESTART_LOG"

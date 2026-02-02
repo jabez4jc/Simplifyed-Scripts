@@ -1021,6 +1021,22 @@ PY
             except Exception:
                 tmp_deleted = tmp_deleted
 
+            clear_safe = {"ran": False, "path": None, "exit_code": None}
+            try:
+                clear_script = self._find_script("openalgo-clear-safe.sh")
+                if clear_script:
+                    clear_safe["ran"] = True
+                    clear_safe["path"] = clear_script
+                    proc = subprocess.run(
+                        ["sudo", "bash", clear_script, "--apply"],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                    clear_safe["exit_code"] = proc.returncode
+            except Exception:
+                clear_safe["exit_code"] = -1
+
             self.send_json({
                 "instance": instance,
                 "deleted": deleted,
@@ -1028,6 +1044,7 @@ PY
                 "cleared_paths": cleared_paths,
                 "tmp_deleted": tmp_deleted,
                 "tmp_kept": tmp_kept,
+                "clear_safe": clear_safe,
                 "message": f"Instance logs cleared (kept {today}; files removed: {deleted}, folders removed: {deleted_dirs})",
                 "timestamp": str(datetime.now())
             })
@@ -1150,7 +1167,7 @@ PY
         })
 
     def handle_scripts_status(self):
-        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh"]
+        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "openalgo-clear-safe.sh"]
         scripts = {}
         for name in script_names:
             path = self._find_script(name)
