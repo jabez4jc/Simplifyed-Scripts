@@ -34,12 +34,13 @@ total_deleted=0
 for inst in "${INSTANCES[@]}"; do
     for log_dir in "$BASE_DIR/$inst/log" "$BASE_DIR/$inst/logs"; do
         if [ -d "$log_dir" ]; then
-            count=$(find "$log_dir" -type f -daystart -mtime +0 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$count" -gt 0 ]; then
+            file_count=$(find "$log_dir" -type f -daystart -mtime +0 2>/dev/null | wc -l | tr -d ' ')
+            dir_count=$(find "$log_dir" -mindepth 1 -maxdepth 1 -type d ! -name "$TODAY" 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$file_count" -gt 0 ] || [ "$dir_count" -gt 0 ]; then
                 find "$log_dir" -type f -daystart -mtime +0 -delete 2>/dev/null
                 find "$log_dir" -mindepth 1 -maxdepth 1 -type d ! -name "$TODAY" -exec rm -rf {} + 2>/dev/null
-                echo "✅ Cleared $count log file(s) in $log_dir (kept $TODAY)"
-                total_deleted=$((total_deleted + count))
+                echo "✅ Cleared $file_count log file(s) and $dir_count log folder(s) in $log_dir (kept $TODAY)"
+                total_deleted=$((total_deleted + file_count + dir_count))
             fi
         fi
     done
