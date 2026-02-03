@@ -27,6 +27,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     GIT_FETCH_CACHE = {}
     GIT_LOCK = Lock()
     GIT_FETCH_TTL = 300
+    HEALTH_CACHE = {}
+    HEALTH_CACHE_TTL = 10
 
     def _now_iso(self):
         return datetime.now().isoformat(sep=' ', timespec='seconds')
@@ -823,6 +825,14 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def handle_instances_health(self):
         """Get detailed health status of all instances"""
         try:
+            params = parse_qs(urlparse(self.path).query)
+            fast = params.get("fast", ["0"])[0] in ("1", "true", "yes")
+            cache_key = "fast" if fast else "full"
+            now = time.time()
+            cached = self.HEALTH_CACHE.get(cache_key)
+            if cached and (now - cached["ts"]) < self.HEALTH_CACHE_TTL:
+                self.send_json(cached["data"])
+                return
             base_dir = "/var/python/openalgo-flask"
             instances = []
             if os.path.isdir(base_dir):
@@ -835,13 +845,14 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             health = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
             
             for inst in instances:
-                health["instances"][inst] = self._get_instance_health(inst)
+                health["instances"][inst] = self._get_instance_health(inst, fast=fast)
 
             try:
                 health["system"] = self._get_system_stats()
             except Exception:
                 health["system"] = None
 
+            self.HEALTH_CACHE[cache_key] = {"ts": now, "data": health}
             self.send_json(health)
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -1192,8 +1203,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
 
-    def _get_instance_health(self, instance):
-        """Get detailed health info for a single instance"""
+    def _get_instance_health(self, instance, fast=False):
+        """Get health info for a single instance. fast=True skips heavy checks."""
         health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None}
 
         try:
@@ -1233,29 +1244,30 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except:
             pass
 
-        try:
-            authenticated, last_error, broker_db, name_db = self._read_auth_status(instance)
-            health["session_valid"] = authenticated
-            if broker_db:
-                health["broker"] = broker_db
-            if name_db:
-                health["auth_name"] = name_db
-            if last_error:
-                health["auth_status"] = last_error
-            elif authenticated:
-                health["auth_status"] = "User Authenticated"
-        except:
-            pass
+        if not fast:
+            try:
+                authenticated, last_error, broker_db, name_db = self._read_auth_status(instance)
+                health["session_valid"] = authenticated
+                if broker_db:
+                    health["broker"] = broker_db
+                if name_db:
+                    health["auth_name"] = name_db
+                if last_error:
+                    health["auth_status"] = last_error
+                elif authenticated:
+                    health["auth_status"] = "User Authenticated"
+            except:
+                pass
 
-        try:
-            health["master_contract"] = self._get_master_contract_status(instance)
-        except:
-            pass
+            try:
+                health["master_contract"] = self._get_master_contract_status(instance)
+            except:
+                pass
 
-        try:
-            health["git"] = self._get_git_info(instance)
-        except Exception:
-            pass
+            try:
+                health["git"] = self._get_git_info(instance)
+            except Exception:
+                pass
 
         return health
     
@@ -1992,6 +2004,8 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 let brokerStatusCache={};
 let logsCache={};
 let terminalInstances=[];
+let terminalInitialized=false;
+let snapshotTimer=null;
 async function fetchJson(url, options){
 const r=await fetch(url,options);
 const text=await r.text();
@@ -2003,21 +2017,34 @@ const preview=text.replace(/\\s+/g,' ').slice(0,160);
 throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
 }
 }
-async function loadInstances(){
+async function loadInstances(skipFull){
 try{
 document.getElementById('loading').style.display='block';
-const instances=await fetchJson('/api/instances');
-const health=await fetchJson('/api/health');
-const scriptsStatus=await fetchJson('/api/scripts-status');
+const [instances, scriptsStatus, healthFast]=await Promise.all([
+fetchJson('/api/instances'),
+fetchJson('/api/scripts-status'),
+fetchJson('/api/health?fast=1')
+]);
 document.getElementById('loading').style.display='none';
 if(!instances||instances.length===0){
 document.getElementById('instances').innerHTML='<p>No instances found</p>';
 return;
 }
+renderScriptsStatus(scriptsStatus);
+renderInstances(instances, healthFast, true);
+if(!skipFull){
+fetchJson('/api/health').then(fullHealth=>{
+renderInstances(instances, fullHealth, false);
+}).catch(()=>{});
+}
+}catch(e){
+showAlert('Error: '+e.message,'error');
+}
+}
+function renderInstances(instances, health, initTerminal){
 const running=Object.values(health.instances||{}).filter(i=>i.status==='active').length;
 document.getElementById('summary').innerHTML=`<p><strong>Total Instances:</strong> ${instances.length} | <strong>Running:</strong> <span class="active">${running}</span> | <strong>Stopped:</strong> <span class="inactive">${instances.length-running}</span></p>`;
 renderSystem(health.system);
-renderScriptsStatus(scriptsStatus);
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
 const active=h.status==='active';
@@ -2044,9 +2071,9 @@ const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurre
 return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
+if(initTerminal && !terminalInitialized){
 populateTerminalInstances(instances);
-}catch(e){
-showAlert('Error: '+e.message,'error');
+terminalInitialized=true;
 }
 }
 function populateTerminalInstances(instances){
@@ -2131,6 +2158,13 @@ updateTerminalFields();
 });
 document.getElementById('term-instance')?.addEventListener('change',loadTerminalDbs);
 document.getElementById('term-action')?.dispatchEvent(new Event('change'));
+
+function scheduleSnapshotRefresh(){
+if(snapshotTimer){clearInterval(snapshotTimer);}
+snapshotTimer=setInterval(()=>{
+loadInstances(true);
+},60000);
+}
 async function runTerminal(){
 const action=document.getElementById('term-action').value;
 const instance=resolveInstance();
@@ -2356,7 +2390,7 @@ a.className=`alert alert-${type} show`;
 if(type!=='error')setTimeout(()=>a.classList.remove('show'),4000);
 }
 window.addEventListener('load',loadInstances);
-setInterval(loadInstances,30000);
+scheduleSnapshotRefresh();
 </script>
 </body>
 </html>"""
