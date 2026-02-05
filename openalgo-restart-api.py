@@ -27,8 +27,6 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     GIT_FETCH_CACHE = {}
     GIT_LOCK = Lock()
     GIT_FETCH_TTL = 300
-    HEALTH_CACHE = {}
-    HEALTH_CACHE_TTL = 10
 
     def _now_iso(self):
         return datetime.now().isoformat(sep=' ', timespec='seconds')
@@ -825,14 +823,6 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def handle_instances_health(self):
         """Get detailed health status of all instances"""
         try:
-            params = parse_qs(urlparse(self.path).query)
-            fast = params.get("fast", ["0"])[0] in ("1", "true", "yes")
-            cache_key = "fast" if fast else "full"
-            now = time.time()
-            cached = self.HEALTH_CACHE.get(cache_key)
-            if cached and (now - cached["ts"]) < self.HEALTH_CACHE_TTL:
-                self.send_json(cached["data"])
-                return
             base_dir = "/var/python/openalgo-flask"
             instances = []
             if os.path.isdir(base_dir):
@@ -845,14 +835,13 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             health = {"total": len(instances), "instances": {}, "timestamp": str(datetime.now())}
             
             for inst in instances:
-                health["instances"][inst] = self._get_instance_health(inst, fast=fast)
+                health["instances"][inst] = self._get_instance_health(inst)
 
             try:
                 health["system"] = self._get_system_stats()
             except Exception:
                 health["system"] = None
 
-            self.HEALTH_CACHE[cache_key] = {"ts": now, "data": health}
             self.send_json(health)
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -1203,8 +1192,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
 
-    def _get_instance_health(self, instance, fast=False):
-        """Get health info for a single instance. fast=True skips heavy checks."""
+    def _get_instance_health(self, instance):
+        """Get detailed health info for a single instance"""
         health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None}
 
         try:
@@ -1244,30 +1233,29 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except:
             pass
 
-        if not fast:
-            try:
-                authenticated, last_error, broker_db, name_db = self._read_auth_status(instance)
-                health["session_valid"] = authenticated
-                if broker_db:
-                    health["broker"] = broker_db
-                if name_db:
-                    health["auth_name"] = name_db
-                if last_error:
-                    health["auth_status"] = last_error
-                elif authenticated:
-                    health["auth_status"] = "User Authenticated"
-            except:
-                pass
+        try:
+            authenticated, last_error, broker_db, name_db = self._read_auth_status(instance)
+            health["session_valid"] = authenticated
+            if broker_db:
+                health["broker"] = broker_db
+            if name_db:
+                health["auth_name"] = name_db
+            if last_error:
+                health["auth_status"] = last_error
+            elif authenticated:
+                health["auth_status"] = "User Authenticated"
+        except:
+            pass
 
-            try:
-                health["master_contract"] = self._get_master_contract_status(instance)
-            except:
-                pass
+        try:
+            health["master_contract"] = self._get_master_contract_status(instance)
+        except:
+            pass
 
-            try:
-                health["git"] = self._get_git_info(instance)
-            except Exception:
-                pass
+        try:
+            health["git"] = self._get_git_info(instance)
+        except Exception:
+            pass
 
         return health
     
@@ -2005,7 +1993,6 @@ let brokerStatusCache={};
 let logsCache={};
 let terminalInstances=[];
 let terminalInitialized=false;
-let snapshotTimer=null;
 async function fetchJson(url, options){
 const r=await fetch(url,options);
 const text=await r.text();
@@ -2017,13 +2004,13 @@ const preview=text.replace(/\\s+/g,' ').slice(0,160);
 throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
 }
 }
-async function loadInstances(skipFull){
+async function loadInstances(){
 try{
 document.getElementById('loading').style.display='block';
-const [instances, scriptsStatus, healthFast]=await Promise.all([
+const [instances, scriptsStatus, health]=await Promise.all([
 fetchJson('/api/instances'),
 fetchJson('/api/scripts-status'),
-fetchJson('/api/health?fast=1')
+fetchJson('/api/health')
 ]);
 document.getElementById('loading').style.display='none';
 if(!instances||instances.length===0){
@@ -2031,12 +2018,7 @@ document.getElementById('instances').innerHTML='<p>No instances found</p>';
 return;
 }
 renderScriptsStatus(scriptsStatus);
-renderInstances(instances, healthFast, true);
-if(!skipFull){
-fetchJson('/api/health').then(fullHealth=>{
-renderInstances(instances, fullHealth, false);
-}).catch(()=>{});
-}
+renderInstances(instances, health, true);
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
@@ -2159,12 +2141,6 @@ updateTerminalFields();
 document.getElementById('term-instance')?.addEventListener('change',loadTerminalDbs);
 document.getElementById('term-action')?.dispatchEvent(new Event('change'));
 
-function scheduleSnapshotRefresh(){
-if(snapshotTimer){clearInterval(snapshotTimer);}
-snapshotTimer=setInterval(()=>{
-loadInstances(true);
-},60000);
-}
 async function runTerminal(){
 const action=document.getElementById('term-action').value;
 const instance=resolveInstance();
@@ -2390,7 +2366,7 @@ a.className=`alert alert-${type} show`;
 if(type!=='error')setTimeout(()=>a.classList.remove('show'),4000);
 }
 window.addEventListener('load',loadInstances);
-scheduleSnapshotRefresh();
+setInterval(loadInstances,30000);
 </script>
 </body>
 </html>"""
