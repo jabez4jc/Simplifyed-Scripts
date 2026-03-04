@@ -78,6 +78,22 @@ check_status() {
     return 0
 }
 
+get_requirements_file() {
+    local instance_dir="$1"
+
+    if [ -f "$instance_dir/requirements-nginx.txt" ]; then
+        echo "$instance_dir/requirements-nginx.txt"
+        return 0
+    fi
+
+    if [ -f "$instance_dir/requirements.txt" ]; then
+        echo "$instance_dir/requirements.txt"
+        return 0
+    fi
+
+    return 1
+}
+
 ensure_uv() {
     if command -v uv >/dev/null 2>&1; then
         return 0
@@ -172,6 +188,14 @@ refresh_env_from_sample() {
     fi
 
     if [ ! -f "$old_env" ]; then
+        if [ ! -f "$env_file" ]; then
+            sudo cp "$sample_env" "$env_file"
+            sudo chown www-data:www-data "$env_file"
+            sudo chmod 600 "$env_file"
+            log_message "    ✓ .env created from .sample.env" "$GREEN"
+            return 0
+        fi
+
         log_message "⚠ Previous .env backup not found, keeping current .env" "$YELLOW"
         return 0
     fi
@@ -260,6 +284,45 @@ ensure_historify_db() {
     fi
     sudo chown www-data:www-data "$file_path"
     sudo chmod 644 "$file_path"
+}
+
+ensure_instance_runtime_layout() {
+    local instance_dir="$1"
+
+    sudo mkdir -p \
+        "$instance_dir/db" \
+        "$instance_dir/tmp" \
+        "$instance_dir/tmp/numba_cache" \
+        "$instance_dir/tmp/matplotlib" \
+        "$instance_dir/strategies/scripts" \
+        "$instance_dir/strategies/examples" \
+        "$instance_dir/log/strategies" \
+        "$instance_dir/keys" || return 1
+
+    sudo chown -R www-data:www-data \
+        "$instance_dir/db" \
+        "$instance_dir/tmp" \
+        "$instance_dir/strategies" \
+        "$instance_dir/log" \
+        "$instance_dir/keys" || return 1
+
+    if [ -f "$instance_dir/.env" ]; then
+        sudo chown www-data:www-data "$instance_dir/.env" || return 1
+        sudo chmod 600 "$instance_dir/.env" || return 1
+    fi
+
+    sudo chmod 755 \
+        "$instance_dir/db" \
+        "$instance_dir/tmp" \
+        "$instance_dir/tmp/numba_cache" \
+        "$instance_dir/tmp/matplotlib" \
+        "$instance_dir/strategies" \
+        "$instance_dir/strategies/scripts" \
+        "$instance_dir/strategies/examples" \
+        "$instance_dir/log" \
+        "$instance_dir/log/strategies" || return 1
+
+    sudo chmod 700 "$instance_dir/keys" || return 1
 }
 
 # Function to update single instance
@@ -397,18 +460,27 @@ update_instance() {
     log_message "  Installing/updating dependencies with uv..." "$BLUE"
     
     local venv_path="$instance_dir/venv"
+    local requirements_file
+    requirements_file=$(get_requirements_file "$instance_dir" 2>/dev/null || true)
     if [ -d "$venv_path" ]; then
-        if [ -f "$instance_dir/requirements.txt" ]; then
-            local activate="source $venv_path/bin/activate"
-            sudo bash -c "$activate && uv pip install -r $instance_dir/requirements.txt" 2>&1 | tee -a "$UPDATE_LOG"
-            
-            if [ $? -eq 0 ]; then
-                log_message "✓ Dependencies updated (uv)" "$GREEN"
+        if [ -n "$requirements_file" ]; then
+            sudo uv pip install --python "$venv_path/bin/python" -r "$requirements_file" 2>&1 | tee -a "$UPDATE_LOG"
+            local deps_status=${PIPESTATUS[0]}
+
+            if [ $deps_status -eq 0 ]; then
+                sudo uv pip install --python "$venv_path/bin/python" gunicorn eventlet 2>&1 | tee -a "$UPDATE_LOG"
+                local runtime_status=${PIPESTATUS[0]}
+
+                if [ $runtime_status -eq 0 ]; then
+                    log_message "✓ Dependencies updated ($(basename "$requirements_file"))" "$GREEN"
+                else
+                    log_message "⚠ Dependency update completed, but gunicorn/eventlet install had issues" "$YELLOW"
+                fi
             else
                 log_message "⚠ Dependency update had issues (non-critical)" "$YELLOW"
             fi
         else
-            log_message "⚠ requirements.txt not found, skipping dependency update" "$YELLOW"
+            log_message "⚠ No requirements file found, skipping dependency update" "$YELLOW"
         fi
     else
         log_message "⚠ Virtual environment not found, skipping dependency update" "$YELLOW"
@@ -418,6 +490,13 @@ update_instance() {
     log_message "  Refreshing .env configuration..." "$BLUE"
     refresh_env_from_sample "$instance_dir" "$backup_dir"
     ensure_historify_db "$instance_dir"
+
+    log_message "  Ensuring runtime directories and permissions..." "$BLUE"
+    if ensure_instance_runtime_layout "$instance_dir"; then
+        log_message "✓ Runtime directories refreshed" "$GREEN"
+    else
+        log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
+    fi
     
     # Run migration script (UV-only flow)
     if [ -d "$instance_dir/upgrade" ] && [ -f "$instance_dir/upgrade/migrate_all.py" ]; then

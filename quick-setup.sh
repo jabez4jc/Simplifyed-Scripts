@@ -12,6 +12,8 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+VALID_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,compositedge,definedge,deltaexchange,dhan,dhan_sandbox,firstock,flattrade,fyers,groww,ibulls,iifl,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
+XTS_BROKERS="fivepaisaxts,compositedge,ibulls,iifl,jainamxts,wisdom"
 
 # Function to log messages
 log_message() {
@@ -26,6 +28,26 @@ check_status() {
         log_message "Error: $1" "$RED"
         exit 1
     fi
+}
+
+validate_broker() {
+    local broker="$1"
+
+    if [[ ",$VALID_BROKERS," == *",$broker,"* ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+is_xts_broker() {
+    local broker="$1"
+
+    if [[ ",$XTS_BROKERS," == *",$broker,"* ]]; then
+        return 0
+    fi
+
+    return 1
 }
 
 # Banner
@@ -147,15 +169,16 @@ while true; do
     break
 done
 
-log_message "\n   ℹ️  Valid brokers: fivepaisa, aliceblue, angel, compositedge, definedge, dhan," "$BLUE"
-log_message "      dhan_sandbox, firstock, flattrade, fyers, groww, ibulls, iifl," "$BLUE"
-log_message "      indmoney, jainamxts, kotak, motilal, mstock, paytm, pocketful," "$BLUE"
-log_message "      samco, shoonya, tradejini, upstox, wisdom, zebu, zerodha" "$BLUE"
+log_message "\n   ℹ️  Valid brokers: ${VALID_BROKERS//,/, }" "$BLUE"
 
 while true; do
     read -p "   Broker name: " BROKER
     if [ -z "$BROKER" ]; then
         log_message "   ❌ Broker name is required" "$RED"
+        continue
+    fi
+    if ! validate_broker "$BROKER"; then
+        log_message "   ❌ Invalid broker. Use one of the supported broker ids shown above" "$RED"
         continue
     fi
     break
@@ -176,8 +199,7 @@ if [ -z "$API_SECRET" ]; then
 fi
 
 # Check for XTS brokers
-XTS_BROKERS="fivepaisaxts,compositedge,ibulls,iifl,jainamxts,wisdom"
-if [[ ",$XTS_BROKERS," == *",$BROKER,"* ]]; then
+if is_xts_broker "$BROKER"; then
     log_message "\n   ℹ️  This broker requires market data credentials" "$YELLOW"
     read -p "   Market Data API Key: " API_KEY_MARKET
     read -p "   Market Data API Secret: " API_SECRET_MARKET
