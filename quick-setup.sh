@@ -295,6 +295,11 @@ API_KEY_PEPPER=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
 # Update .env file
 sudo sed -i "s|<broker>|$BROKER|g" "$ENV_FILE"
+if sudo grep -q -E "^VALID_BROKERS[[:space:]]*=" "$ENV_FILE"; then
+    sudo sed -i -E "s|^VALID_BROKERS[[:space:]]*=.*|VALID_BROKERS = '$VALID_BROKERS'|g" "$ENV_FILE"
+else
+    echo "VALID_BROKERS = '$VALID_BROKERS'" | sudo tee -a "$ENV_FILE" > /dev/null
+fi
 sudo sed -i "s|http://127.0.0.1:5000|https://$DOMAIN|g" "$ENV_FILE"
 sudo sed -i "s|CORS_ALLOWED_ORIGINS = '.*'|CORS_ALLOWED_ORIGINS = 'https://$DOMAIN'|g" "$ENV_FILE"
 sudo sed -i "s|FLASK_PORT='[0-9]*'|FLASK_PORT='5000'|g" "$ENV_FILE"

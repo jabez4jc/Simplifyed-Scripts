@@ -11,6 +11,7 @@ NC='\033[0m' # No Color
 BASE_DIR="/var/python/openalgo-flask"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 UPDATE_LOG="/tmp/update_${TIMESTAMP}.log"
+SUPPORTED_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,compositedge,definedge,deltaexchange,dhan,dhan_sandbox,firstock,flattrade,fyers,groww,ibulls,iifl,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
 
 # Function to log messages
 log_message() {
@@ -286,6 +287,20 @@ ensure_historify_db() {
     sudo chmod 644 "$file_path"
 }
 
+sync_supported_brokers() {
+    local env_file="$1"
+
+    if [ ! -f "$env_file" ]; then
+        return 0
+    fi
+
+    if sudo grep -q -E "^VALID_BROKERS[[:space:]]*=" "$env_file"; then
+        sudo sed -i -E "s|^VALID_BROKERS[[:space:]]*=.*|VALID_BROKERS = '$SUPPORTED_BROKERS'|g" "$env_file"
+    else
+        echo "VALID_BROKERS = '$SUPPORTED_BROKERS'" | sudo tee -a "$env_file" > /dev/null
+    fi
+}
+
 ensure_instance_runtime_layout() {
     local instance_dir="$1"
 
@@ -358,6 +373,7 @@ update_instance() {
     # Create backup
     local backup_dir=$(backup_before_update "$instance_name")
     check_status "Failed to create backup" || return 1
+    local env_file="$instance_dir/.env"
 
     # Ensure uv is available
     ensure_uv || return 1
@@ -416,7 +432,17 @@ update_instance() {
         if ! git diff --quiet || ! git diff --cached --quiet; then
             dirty=" (local changes present)"
         fi
-        log_message "✓ Already up to date at $current_hash$dirty — skipping update steps" "$GREEN"
+        log_message "✓ Already up to date at $current_hash$dirty — refreshing environment only" "$GREEN"
+        log_message "  Refreshing .env configuration..." "$BLUE"
+        refresh_env_from_sample "$instance_dir" "$backup_dir"
+        sync_supported_brokers "$env_file"
+        ensure_historify_db "$instance_dir"
+        log_message "  Ensuring runtime directories and permissions..." "$BLUE"
+        if ensure_instance_runtime_layout "$instance_dir"; then
+            log_message "✓ Runtime directories refreshed" "$GREEN"
+        else
+            log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
+        fi
         if [ "$was_running" = true ]; then
             log_message "  Starting service: $service_name" "$BLUE"
             sudo systemctl start "$service_name"
@@ -489,6 +515,7 @@ update_instance() {
     # Merge .env file changes
     log_message "  Refreshing .env configuration..." "$BLUE"
     refresh_env_from_sample "$instance_dir" "$backup_dir"
+    sync_supported_brokers "$env_file"
     ensure_historify_db "$instance_dir"
 
     log_message "  Ensuring runtime directories and permissions..." "$BLUE"

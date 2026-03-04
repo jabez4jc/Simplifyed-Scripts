@@ -392,6 +392,11 @@ for ((n=1; n<=INSTANCES; n++)); do
 
     # 1. Replace broker placeholder first
     sudo sed -i "s|<broker>|$BROKER|g" "$ENV_FILE"
+    if sudo grep -q -E "^VALID_BROKERS[[:space:]]*=" "$ENV_FILE"; then
+        sudo sed -i -E "s|^VALID_BROKERS[[:space:]]*=.*|VALID_BROKERS = '$VALID_BROKERS'|g" "$ENV_FILE"
+    else
+        echo "VALID_BROKERS = '$VALID_BROKERS'" | sudo tee -a "$ENV_FILE" > /dev/null
+    fi
 
     # 2. Replace domain URLs (before port changes)
     sudo sed -i "s|http://127.0.0.1:5000|https://$DOMAIN|g" "$ENV_FILE"
