@@ -267,7 +267,7 @@ sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/ven
 check_status "Failed to sync Python dependencies"
 
 # Install gunicorn and eventlet
-sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/venv\" uv pip install gunicorn eventlet" > /dev/null 2>&1
+sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$INSTANCE_DIR/venv/bin/python\" gunicorn eventlet" > /dev/null 2>&1
 check_status "Failed to install gunicorn and eventlet"
 
 # Fix permissions for venv

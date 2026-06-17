@@ -491,7 +491,7 @@ update_instance() {
         local deps_status=${PIPESTATUS[0]}
 
         if [ $deps_status -eq 0 ]; then
-            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv pip install gunicorn eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+            sudo bash -c "cd $instance_dir && uv pip install --python \"$venv_path/bin/python\" gunicorn eventlet" 2>&1 | tee -a "$UPDATE_LOG"
             local runtime_status=${PIPESTATUS[0]}
 
             if [ $runtime_status -eq 0 ]; then
