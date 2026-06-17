@@ -148,9 +148,8 @@ for inst in "${INSTANCES[@]}"; do
                         file_count=$((file_count + 1))
                     fi
                 else
-                    if find "$file_path" -daystart -mtime +0 >/dev/null 2>&1; then
-                        :
-                    else
+                    # No date in filename: delete if not modified today
+                    if ! find "$file_path" -daystart -mtime 0 -print -quit 2>/dev/null | grep -q .; then
                         file_count=$((file_count + 1))
                     fi
                 fi
@@ -168,9 +167,8 @@ for inst in "${INSTANCES[@]}"; do
                                 fi
                             fi
                         else
-                            if find "$file_path" -daystart -mtime +0 >/dev/null 2>&1; then
-                                :
-                            else
+                            # No date in filename: delete if not modified today
+                            if ! find "$file_path" -daystart -mtime 0 -print -quit 2>/dev/null | grep -q .; then
                                 if ! is_open "$file_path"; then
                                     rm -f "$file_path" 2>/dev/null || true
                                 fi

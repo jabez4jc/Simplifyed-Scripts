@@ -9,7 +9,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 BASE_DIR="/var/python/openalgo-flask"
-BACKUP_DIR="${1:-.}"
+BACKUP_DIR="${1:-/var/backups/openalgo}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_LOG="$BACKUP_DIR/backup_${TIMESTAMP}.log"
 
@@ -207,7 +207,7 @@ restore_env_file() {
     
     check_status "Failed to restore .env" || return 1
     sudo chown www-data:www-data "$env_file"
-    sudo chmod 644 "$env_file"
+    sudo chmod 600 "$env_file"
     
     log_message "✓ Restored .env: $instance_name" "$GREEN"
     return 0
@@ -270,7 +270,7 @@ cleanup_old_backups() {
     
     find "$BACKUP_DIR" -maxdepth 1 -name "*_*_*.tar.gz" -o -name "*_*_*.enc" -o -name "*_*_*.env" | \
     while read -r file; do
-        local file_age=$(($(date +%s) - $(stat -f%m "$file" 2>/dev/null || stat -c%Y "$file")))
+        local file_age=$(($(date +%s) - $(stat -c%Y "$file" 2>/dev/null || stat -f%m "$file")))
         local file_days=$((file_age / 86400))
         
         if [ $file_days -gt $retention_days ]; then

@@ -45,36 +45,54 @@ if [[ ! -d "$ROOT" ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "$ROOT/.env"
-set +a
+# .env uses KEY = 'value' format (spaces around =, quoted values) — not valid
+# for bash source. Export each variable by parsing manually.
+while IFS= read -r line; do
+  # Skip comments and blank lines
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
+  [[ -z "${line// /}" ]] && continue
+  # Match KEY = 'value' or KEY = value
+  if [[ "$line" =~ ^([A-Z_][A-Z_0-9]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    # Strip surrounding single or double quotes
+    value="${value#\'}" ; value="${value%\'}"
+    value="${value#\"}" ; value="${value%\"}"
+    export "$key"="$value"
+  fi
+done < "$ROOT/.env"
 
-python3 - <<'PY'
-import sys
-sys.path.insert(0, "openalgo")
+sudo -u www-data bash -c "cd '$ROOT' && '$ROOT/venv/bin/python3'" - <<'PY'
+import sys, os
 
-from database.auth_db import Auth, upsert_auth, db
-from database.master_contract_status_db import update_status
+# Must run from the instance root so openalgo package is importable
+sys.path.insert(0, os.getcwd())
 
-users = Auth.query.all()
-if not users:
-    print("No auth users found.")
-    raise SystemExit(0)
+from openalgo import create_app
+app = create_app()
 
-for auth in users:
-    upsert_auth(auth.name, "", "", revoke=True)
-    print(f"Revoked: {auth.name}")
-    try:
-        Auth.query.filter_by(name=auth.name).update(
-            {"is_revoked": 1, "auth": "", "feed_token": ""}
-        )
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        print(f"Failed to mark revoked for {auth.name}: {e}")
+with app.app_context():
+    from database.auth_db import Auth, upsert_auth, db
+    from database.master_contract_status_db import update_status
 
-    if auth.broker:
-        update_status(auth.broker, "pending", "Invalidated by admin script")
-        print(f"Reset master contract status: {auth.broker}")
+    users = Auth.query.all()
+    if not users:
+        print("No auth users found.")
+        raise SystemExit(0)
+
+    for auth in users:
+        upsert_auth(auth.name, "", "", revoke=True)
+        print(f"Revoked: {auth.name}")
+        try:
+            Auth.query.filter_by(name=auth.name).update(
+                {"is_revoked": 1, "auth": "", "feed_token": ""}
+            )
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"Failed to mark revoked for {auth.name}: {e}")
+
+        if auth.broker:
+            update_status(auth.broker, "pending", "Invalidated by admin script")
+            print(f"Reset master contract status: {auth.broker}")
 PY

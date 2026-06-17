@@ -264,11 +264,11 @@ check_http_endpoint() {
     fi
     
     if [ -n "$domain" ]; then
-        if timeout 5 curl -s -k "https://$domain" > /dev/null 2>&1; then
+        if timeout 5 curl -s -k --fail "https://$domain" > /dev/null 2>&1; then
             print_ok "HTTPS endpoint responding: https://$domain"
             return 0
         else
-            print_warning "HTTPS endpoint not responding: https://$domain"
+            print_warning "HTTPS endpoint not responding or returned error: https://$domain"
             return 1
         fi
     else
