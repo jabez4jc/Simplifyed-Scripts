@@ -558,7 +558,7 @@ Smart update system that intelligently handles `.env` file changes:
 - **Version-aware merging** - Uses `ENV_CONFIG_VERSION` to detect configuration changes
 - **Selective merge** - Only updates `.env` when the version changes
 - **Pre-update backup** - Automatic backup before any update
-- **Dependency updates** - Installs/upgrades Python packages from requirements files
+- **Dependency updates** - Installs/upgrades Python packages via `uv sync`
 - **Service management** - Stops service during update, restarts after completion
 - **Dry-run mode** - Preview available updates before applying
 - **Rollback support** - Restore from pre-update backup if needed

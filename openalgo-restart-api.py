@@ -1278,43 +1278,72 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     
     def handle_restart_instance(self, instance):
         """Restart specific instance"""
-        invalidate_result = None
-        clear_logs_result = None
-        try:
-            invalidate_result = self._invalidate_session(instance)
-        except Exception:
-            invalidate_result = None
-        try:
-            clear_script = self._find_script("oa-clear-logs.sh")
-            if clear_script:
-                proc = subprocess.run(
-                    ["sudo", "bash", clear_script, "--yes", "--instance", instance],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                )
-                clear_logs_result = {
-                    "exit_code": proc.returncode,
-                    "output": (proc.stdout or "").strip(),
-                }
-            else:
-                clear_logs_result = {"error": "oa-clear-logs.sh not found"}
-        except Exception as e:
-            clear_logs_result = {"error": str(e)}
         service_name = self._service_name(instance)
-        Thread(target=lambda: subprocess.run(
-            f"sudo systemctl restart {service_name}",
-            shell=True, capture_output=True, timeout=60
-        )).start()
-        
+        Thread(
+            target=self._restart_instance_background,
+            args=(instance, service_name),
+            daemon=True,
+        ).start()
+
         self.send_json({
             "status": "success",
-            "message": f"Restart triggered for {instance}",
+            "message": f"Restart queued for {instance}",
             "instance": instance,
-            "session_invalidated": invalidate_result,
-            "logs_cleared": clear_logs_result,
+            "service": service_name,
             "timestamp": str(datetime.now())
         })
+
+    def _clear_instance_logs_quick(self, instance):
+        """Delete per-instance log files without running full system cleanup."""
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        deleted = 0
+
+        for log_dir_name in ("log", "logs"):
+            log_dir = os.path.join(inst_path, log_dir_name)
+            if not os.path.isdir(log_dir):
+                continue
+
+            for root, dirs, files in os.walk(log_dir, topdown=False):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    try:
+                        os.remove(file_path)
+                        deleted += 1
+                    except FileNotFoundError:
+                        continue
+                    except Exception:
+                        continue
+
+                for dirname in dirs:
+                    dir_path = os.path.join(root, dirname)
+                    try:
+                        os.rmdir(dir_path)
+                    except OSError:
+                        continue
+
+        return deleted
+
+    def _restart_instance_background(self, instance, service_name):
+        """Run restart-related work without blocking the monitor HTTP server."""
+        try:
+            self._invalidate_session(instance)
+        except Exception:
+            pass
+
+        try:
+            self._clear_instance_logs_quick(instance)
+        except Exception:
+            pass
+
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "restart", service_name],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except Exception:
+            pass
     
     def handle_stop_instance(self, instance):
         """Stop specific instance"""
@@ -2401,8 +2430,9 @@ setInterval(loadInstances,30000);
 if __name__ == '__main__':
     PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8888
 
-    class ReusableTCPServer(socketserver.TCPServer):
+    class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         allow_reuse_address = True
+        daemon_threads = True
 
     server = ReusableTCPServer(("0.0.0.0", PORT), RestartHandler)
     

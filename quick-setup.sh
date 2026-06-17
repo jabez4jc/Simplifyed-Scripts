@@ -232,6 +232,10 @@ check_status "Failed to install system packages"
 if ! command -v uv &> /dev/null; then
     log_message "   Installing uv package manager..." "$BLUE"
     sudo snap install astral-uv --classic > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log_message "   Snap failed, falling back to Astral standalone installer..." "$YELLOW"
+        curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR="/usr/local/bin" sh > /dev/null 2>&1
+    fi
     check_status "Failed to install uv"
 fi
 
@@ -258,13 +262,16 @@ sudo uv venv "$INSTANCE_DIR/venv" > /dev/null 2>&1
 check_status "Failed to create virtual environment"
 
 # Install dependencies
-log_message "   Installing Python dependencies..." "$BLUE"
-ACTIVATE_CMD="source $INSTANCE_DIR/venv/bin/activate"
-sudo bash -c "$ACTIVATE_CMD && uv pip install -r $INSTANCE_DIR/requirements-nginx.txt" > /dev/null 2>&1
-check_status "Failed to install Python dependencies"
+log_message "   Syncing Python dependencies with uv..." "$BLUE"
+sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/venv\" uv sync" > /dev/null 2>&1
+check_status "Failed to sync Python dependencies"
 
 # Install gunicorn and eventlet
-sudo bash -c "$ACTIVATE_CMD && uv pip install gunicorn eventlet" > /dev/null 2>&1
+sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/venv\" uv pip install gunicorn eventlet" > /dev/null 2>&1
+check_status "Failed to install gunicorn and eventlet"
+
+# Fix permissions for venv
+sudo chown -R www-data:www-data "$INSTANCE_DIR/venv"
 
 log_message "✅ OpenAlgo installed successfully" "$GREEN"
 

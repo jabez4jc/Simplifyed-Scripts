@@ -67,7 +67,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Version-aware .env merging using `ENV_CONFIG_VERSION` field
    - Selective updates (only merge .env when version changes)
    - Pre-update automatic backup
-   - Dependency updates from requirements files
+   - Dependency updates via `uv sync`
    - Dry-run mode to preview updates
    - Rollback capability to pre-update backup
 
@@ -169,7 +169,7 @@ Update the port calculation formulas in the instance loop (lines 272-274 in mult
 ## External Dependencies
 
 - **OpenAlgo repository**: Cloned from https://github.com/marketcalls/openalgo.git
-- **Python packages**: uv (installed via snap), gunicorn, eventlet, requirements from OpenAlgo
+- **Python packages**: uv (installed via snap), gunicorn, eventlet, synced via `uv sync`
 - **System tools**: nginx, certbot, systemd, timedatectl, sed, awk, grep, curl, ss, df, du
 - **Optional tools**: gpg (for backup encryption), git (for updates)
 

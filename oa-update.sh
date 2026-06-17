@@ -483,33 +483,30 @@ update_instance() {
     log_message "✓ Updated to commit: $new_commit" "$GREEN"
     
     # Update dependencies (UV-only flow)
-    log_message "  Installing/updating dependencies with uv..." "$BLUE"
+    log_message "  Syncing dependencies with uv..." "$BLUE"
     
     local venv_path="$instance_dir/venv"
-    local requirements_file
-    requirements_file=$(get_requirements_file "$instance_dir" 2>/dev/null || true)
     if [ -d "$venv_path" ]; then
-        if [ -n "$requirements_file" ]; then
-            sudo uv pip install --python "$venv_path/bin/python" -r "$requirements_file" 2>&1 | tee -a "$UPDATE_LOG"
-            local deps_status=${PIPESTATUS[0]}
+        sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv sync" 2>&1 | tee -a "$UPDATE_LOG"
+        local deps_status=${PIPESTATUS[0]}
 
-            if [ $deps_status -eq 0 ]; then
-                sudo uv pip install --python "$venv_path/bin/python" gunicorn eventlet 2>&1 | tee -a "$UPDATE_LOG"
-                local runtime_status=${PIPESTATUS[0]}
+        if [ $deps_status -eq 0 ]; then
+            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv pip install gunicorn eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+            local runtime_status=${PIPESTATUS[0]}
 
-                if [ $runtime_status -eq 0 ]; then
-                    log_message "✓ Dependencies updated ($(basename "$requirements_file"))" "$GREEN"
-                else
-                    log_message "⚠ Dependency update completed, but gunicorn/eventlet install had issues" "$YELLOW"
-                fi
+            if [ $runtime_status -eq 0 ]; then
+                log_message "✓ Dependencies and runtime packages updated" "$GREEN"
             else
-                log_message "⚠ Dependency update had issues (non-critical)" "$YELLOW"
+                log_message "⚠ Dependency sync completed, but gunicorn/eventlet install had issues" "$YELLOW"
             fi
         else
-            log_message "⚠ No requirements file found, skipping dependency update" "$YELLOW"
+            log_message "⚠ Dependency sync had issues (non-critical)" "$YELLOW"
         fi
+        
+        # Fix permissions
+        sudo chown -R www-data:www-data "$venv_path"
     else
-        log_message "⚠ Virtual environment not found, skipping dependency update" "$YELLOW"
+        log_message "⚠ Virtual environment not found, skipping dependency sync" "$YELLOW"
     fi
     
     # Merge .env file changes
@@ -528,7 +525,7 @@ update_instance() {
     # Run migration script (UV-only flow)
     if [ -d "$instance_dir/upgrade" ] && [ -f "$instance_dir/upgrade/migrate_all.py" ]; then
         log_message "  Running migrations with uv..." "$BLUE"
-        sudo bash -c "cd $instance_dir/upgrade && uv run migrate_all.py" 2>&1 | tee -a "$UPDATE_LOG"
+        sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv run upgrade/migrate_all.py" 2>&1 | tee -a "$UPDATE_LOG"
         if [ $? -eq 0 ]; then
             log_message "✓ Migrations completed" "$GREEN"
         else
