@@ -239,18 +239,6 @@ with open(path, 'w') as f:
         fi
     done
 
-    # Sync ENV_CONFIG_VERSION from .sample.env — safe because we already merged all new keys above
-    local sample_version
-    sample_version=$(sudo grep -E "^ENV_CONFIG_VERSION *=" "$sample_env" | head -1 | cut -d'=' -f2- | tr -d "' \"\\r")
-    if [ -n "$sample_version" ]; then
-        if sudo grep -qE "^ENV_CONFIG_VERSION *=" "$temp_env"; then
-            sudo sed -i -E "s|^ENV_CONFIG_VERSION *=.*|ENV_CONFIG_VERSION = '${sample_version}'|g" "$temp_env"
-        else
-            echo "ENV_CONFIG_VERSION = '${sample_version}'" | sudo tee -a "$temp_env" > /dev/null
-        fi
-        log_message "    ✓ ENV_CONFIG_VERSION updated to $sample_version" "$GREEN"
-    fi
-
     sudo cp "$temp_env" "$env_file"
     sudo chown www-data:www-data "$env_file"
     sudo chmod 600 "$env_file"
@@ -258,6 +246,40 @@ with open(path, 'w') as f:
 
     log_message "    ✓ .env refreshed from .sample.env and updated from backup" "$GREEN"
     return 0
+}
+
+# Sync ENV_CONFIG_VERSION from .sample.env directly into .env.
+# Called as a standalone step so it always runs regardless of refresh_env_from_sample outcome.
+sync_env_version() {
+    local instance_dir="$1"
+    local sample_env="$instance_dir/.sample.env"
+    local env_file="$instance_dir/.env"
+
+    if ! sudo test -f "$sample_env" || ! sudo test -f "$env_file"; then
+        return 0
+    fi
+
+    local sample_ver
+    sample_ver=$(sudo grep -E "^ENV_CONFIG_VERSION *=" "$sample_env" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+    if [ -z "$sample_ver" ]; then
+        log_message "  ⚠ ENV_CONFIG_VERSION not found in .sample.env" "$YELLOW"
+        return 0
+    fi
+
+    local current_ver
+    current_ver=$(sudo grep -E "^ENV_CONFIG_VERSION *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+
+    if [ "$current_ver" = "$sample_ver" ]; then
+        log_message "  ✓ ENV_CONFIG_VERSION already at $sample_ver" "$GREEN"
+        return 0
+    fi
+
+    if sudo grep -qE "^ENV_CONFIG_VERSION *=" "$env_file"; then
+        sudo sed -i -E "s|^ENV_CONFIG_VERSION *=.*|ENV_CONFIG_VERSION = '${sample_ver}'|" "$env_file"
+    else
+        echo "ENV_CONFIG_VERSION = '${sample_ver}'" | sudo tee -a "$env_file" > /dev/null
+    fi
+    log_message "  ✓ ENV_CONFIG_VERSION updated: ${current_ver:-missing} → $sample_ver" "$GREEN"
 }
 
 ensure_historify_db() {
@@ -458,6 +480,7 @@ update_instance() {
         log_message "✓ Already up to date at $current_hash$dirty — refreshing environment and runtime" "$GREEN"
         log_message "  Refreshing .env configuration..." "$BLUE"
         refresh_env_from_sample "$instance_dir" "$backup_dir"
+        sync_env_version "$instance_dir"
         sync_supported_brokers "$env_file"
         ensure_historify_db "$instance_dir"
         log_message "  Ensuring runtime directories and permissions..." "$BLUE"
@@ -583,6 +606,7 @@ update_instance() {
     # Merge .env file changes
     log_message "  Refreshing .env configuration..." "$BLUE"
     refresh_env_from_sample "$instance_dir" "$backup_dir"
+    sync_env_version "$instance_dir"
     sync_supported_brokers "$env_file"
     ensure_historify_db "$instance_dir"
 
