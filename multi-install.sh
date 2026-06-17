@@ -26,8 +26,8 @@ mkdir -p "$LOGS_DIR"
 # Generate unique log file
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$LOGS_DIR/install_multi_${TIMESTAMP}.log"
-VALID_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,compositedge,definedge,deltaexchange,dhan,dhan_sandbox,firstock,flattrade,fyers,groww,ibulls,iifl,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
-XTS_BROKERS="fivepaisaxts,compositedge,ibulls,iifl,jainamxts,wisdom"
+VALID_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,arrow,compositedge,dhan,dhan_sandbox,definedge,deltaexchange,firstock,flattrade,fyers,groww,ibulls,iifl,iiflcapital,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,rmoney,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
+XTS_BROKERS="fivepaisaxts,compositedge,ibulls,iifl,jainamxts,rmoney,wisdom"
 
 # Function to log messages
 log_message() {
@@ -410,6 +410,8 @@ for ((n=1; n<=INSTANCES; n++)); do
     # 2. Replace domain URLs (before port changes)
     sudo sed -i "s|http://127.0.0.1:5000|https://$DOMAIN|g" "$ENV_FILE"
     sudo sed -i "s|CORS_ALLOWED_ORIGINS = '.*'|CORS_ALLOWED_ORIGINS = 'https://$DOMAIN'|g" "$ENV_FILE"
+    sudo sed -i '/^CSP_CONNECT_SRC/d' "$ENV_FILE"
+    echo "CSP_CONNECT_SRC = \"'self' wss://$DOMAIN https://$DOMAIN wss: ws: https://cdn.socket.io\"" | sudo tee -a "$ENV_FILE" > /dev/null
 
     # 3. Update ports (these stay as localhost for internal communication)
     sudo sed -i "s|FLASK_PORT='[0-9]*'|FLASK_PORT='$FLASK_PORT'|g" "$ENV_FILE"
@@ -625,15 +627,26 @@ After=network.target
 User=www-data
 Group=www-data
 WorkingDirectory=$INSTANCE_DIR
+Environment="HOME=$INSTANCE_DIR/tmp"
+Environment="TMPDIR=$INSTANCE_DIR/tmp"
+Environment="NUMBA_CACHE_DIR=$INSTANCE_DIR/tmp/numba_cache"
+Environment="LLVMLITE_TMPDIR=$INSTANCE_DIR/tmp"
+Environment="MPLCONFIGDIR=$INSTANCE_DIR/tmp/matplotlib"
+Environment="OPENBLAS_NUM_THREADS=2"
+Environment="OMP_NUM_THREADS=2"
+Environment="MKL_NUM_THREADS=2"
+Environment="NUMEXPR_NUM_THREADS=2"
+Environment="NUMBA_NUM_THREADS=2"
 ExecStart=/bin/bash -c 'source $VENV_PATH/bin/activate && $VENV_PATH/bin/gunicorn \\
     --worker-class eventlet \\
     -w 1 \\
     --bind unix:$SOCKET_FILE \\
+    --timeout 300 \\
     --log-level info \\
     app:app'
 Restart=always
 RestartSec=5
-TimeoutSec=60
+TimeoutSec=300
 
 [Install]
 WantedBy=multi-user.target

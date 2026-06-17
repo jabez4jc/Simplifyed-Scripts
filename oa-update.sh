@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 BASE_DIR="/var/python/openalgo-flask"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 UPDATE_LOG="/tmp/update_${TIMESTAMP}.log"
-SUPPORTED_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,compositedge,definedge,deltaexchange,dhan,dhan_sandbox,firstock,flattrade,fyers,groww,ibulls,iifl,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
+SUPPORTED_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,arrow,compositedge,dhan,dhan_sandbox,definedge,deltaexchange,firstock,flattrade,fyers,groww,ibulls,iifl,iiflcapital,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,rmoney,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
 
 # Function to log messages
 log_message() {
@@ -215,16 +215,16 @@ refresh_env_from_sample() {
         "HISTORIFY_DUCKDB_PATH"
     )
 
-    sudo grep "^[A-Z_]*=" "$old_env" | while IFS='=' read -r key value; do
+    sudo grep -E "^[A-Z_][A-Z_0-9]* *=" "$old_env" | while IFS='=' read -r key value; do
         for skip_key in "${skip_keys[@]}"; do
             if [ "$key" = "$skip_key" ]; then
                 continue 2
             fi
         done
-        if sudo grep -q "^${key}=" "$temp_env"; then
-            sudo sed -i "s|^${key}=.*|${key}=${value}|g" "$temp_env"
+        if sudo grep -qE "^${key} *=" "$temp_env"; then
+            sudo sed -i -E "s|^${key} *=.*|${key} =${value}|g" "$temp_env"
         else
-            echo "${key}=${value}" | sudo tee -a "$temp_env" > /dev/null
+            echo "${key} =${value}" | sudo tee -a "$temp_env" > /dev/null
         fi
     done
 
