@@ -592,8 +592,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if os.path.exists(env_file):
             with open(env_file, 'r') as f:
                 for line in f:
-                    if line.startswith('DOMAIN='):
-                        domain = line.split('=', 1)[1].strip().strip("'\"")
+                    m = re.match(r"^DOMAIN\s*=\s*['"]?([^'"\s]+)", line)
+                    if m:
+                        domain = m.group(1).strip().strip("'"")
                         break
         if domain:
             return f"openalgo-{domain.replace('.', '-')}"
@@ -1192,6 +1193,21 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
 
+    def _check_domain_http(self, domain):
+        """Check if the main app domain responds over HTTPS."""
+        import urllib.request
+        import ssl
+        url = f"https://{domain}/"
+        try:
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(url, headers={"User-Agent": "OpenAlgo-Monitor/1.0"})
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                return {"reachable": True, "status_code": resp.status, "url": url}
+        except urllib.error.HTTPError as e:
+            return {"reachable": True, "status_code": e.code, "url": url}
+        except Exception as e:
+            return {"reachable": False, "status_code": None, "error": str(e)[:120], "url": url}
+
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
         health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None}
@@ -1219,14 +1235,16 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if os.path.exists(env_file):
                 with open(env_file, 'r') as f:
                     for line in f:
-                        if line.startswith('DOMAIN=') and '=' in line:
-                            health["domain"] = line.split('=', 1)[1].strip().strip("'\"")
-                        elif line.startswith('FLASK_PORT') and '=' in line:
-                            health["port"] = line.split('=')[1].strip().strip("'\"")
-                        elif 'REDIRECT_URL' in line and '=' in line:
+                        m = re.match(r"^DOMAIN\s*=\s*['"]?([^'"\s]+)", line)
+                        if m:
+                            health["domain"] = m.group(1).strip().strip("'\"")
+                            continue
+                        m = re.match(r"^FLASK_PORT\s*=\s*['"]?([^'"\s]+)", line)
+                        if m:
+                            health["port"] = m.group(1).strip().strip("'\"")
+                            continue
+                        if 'REDIRECT_URL' in line and '=' in line:
                             redirect_url = line.split('=', 1)[1].strip().strip("'\"")
-                            # Extract broker from URL
-                            import re
                             match = re.search(r'/([^/]+)/callback', redirect_url)
                             if match:
                                 health["broker"] = match.group(1)
@@ -1251,6 +1269,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             health["master_contract"] = self._get_master_contract_status(instance)
         except:
             pass
+
+        if health.get("domain"):
+            try:
+                health["domain_check"] = self._check_domain_http(health["domain"])
+            except Exception:
+                health["domain_check"] = {"reachable": False, "error": "check failed", "url": ""}
 
         try:
             health["git"] = self._get_git_info(instance)
@@ -1522,6 +1546,9 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .btn-update:hover{background:#138496}
 .btn-health{background:#20c997;color:white}
 .btn-health:hover{background:#18a17a}
+.domain-check{margin-top:10px;padding:10px;background:#fff;border-radius:4px;font-size:13px}
+.domain-check a{color:inherit;text-decoration:none}
+.domain-check a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -1649,10 +1676,16 @@ const gitLatest=git.latest_commit||'N/A';
 const gitBehind=(git.behind!==null&&git.behind!==undefined)?`${git.behind} behind`:'';
 const gitUpdated=git.current_date||'Unknown';
 const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurrent} → ${gitLatest} ${gitBehind}`.trim();
+const dc=h.domain_check||{};
+const dcOk=dc.reachable===true&&dc.status_code>=200&&dc.status_code<400;
+const dcColor=dcOk?'#28a745':(dc.reachable?'#f0ad4e':'#dc3545');
+const dcBadge=dcOk?`<span class="badge badge-authenticated">✓ ${dc.status_code} OK</span>`:`<span class="badge badge-unauthenticated">✗ ${dc.reachable?dc.status_code:'Unreachable'}</span>`;
+const dcExtra=dc.error?`<div style="color:#dc3545;font-size:11px;margin-top:3px">${escapeHtml(dc.error)}</div>`:'';
+const dcHtml=domain!=='Unknown'&&h.domain_check!==undefined?`<div class="domain-check" style="border-left:3px solid ${dcColor}"><strong>App Reachability</strong> | <a href="https://${domain}" target="_blank" rel="noopener">${domain}</a> | ${dcBadge}${dcExtra}</div>`:'';
 const actions=active
 ?`<button class="btn btn-small btn-stop" onclick="stopInstance()">⏹ Stop</button>`
 :`<button class="btn btn-small btn-start" onclick="startInstance()">▶ Start</button>`;
-document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restartInstance()">🔄 Restart</button>${actions}</div></div>`;
+document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div>${dcHtml}<div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restartInstance()">🔄 Restart</button>${actions}</div></div>`;
 }
 function toggleLogs(){
 const logsSection=document.getElementById('logs');

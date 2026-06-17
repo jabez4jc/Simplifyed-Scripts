@@ -40,7 +40,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then
@@ -90,7 +90,7 @@ get_env_value() {
     fi
 
     local value
-    value=$(grep -E "^${key}=" "$env_file" | head -1 | cut -d'=' -f2-)
+    value=$(grep -E "^${key} *=" "$env_file" | head -1 | cut -d'=' -f2- | sed -E 's/^ *//;s/ *$//' | tr -d "\r")
     value="${value%\"}"
     value="${value#\"}"
     value="${value%\'}"
@@ -255,7 +255,7 @@ check_http_endpoint() {
     
     # Try to extract domain from .env
     if [ -f "$instance_dir/.env" ]; then
-        domain=$(grep "DOMAIN=" "$instance_dir/.env" | cut -d'=' -f2 | tr -d "'" | head -1)
+        domain=$(grep -E "^DOMAIN *=" "$instance_dir/.env" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
     
     # If domain not found, try nginx config lookup

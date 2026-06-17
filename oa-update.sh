@@ -27,7 +27,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then
@@ -216,6 +216,7 @@ refresh_env_from_sample() {
     )
 
     sudo grep -E "^[A-Z_][A-Z_0-9]* *=" "$old_env" | while IFS='=' read -r key value; do
+        key="${key// /}"   # strip spaces (env format is KEY = 'value')
         for skip_key in "${skip_keys[@]}"; do
             if [ "$key" = "$skip_key" ]; then
                 continue 2
