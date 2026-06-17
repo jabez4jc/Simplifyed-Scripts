@@ -27,7 +27,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+        domain=$(sudo grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then
@@ -241,7 +241,7 @@ with open(path, 'w') as f:
 
     # Sync ENV_CONFIG_VERSION from .sample.env — safe because we already merged all new keys above
     local sample_version
-    sample_version=$(grep -E "^ENV_CONFIG_VERSION *=" "$sample_env" | head -1 | cut -d'=' -f2- | tr -d "' \"\\r")
+    sample_version=$(sudo grep -E "^ENV_CONFIG_VERSION *=" "$sample_env" | head -1 | cut -d'=' -f2- | tr -d "' \"\\r")
     if [ -n "$sample_version" ]; then
         if sudo grep -qE "^ENV_CONFIG_VERSION *=" "$temp_env"; then
             sudo sed -i -E "s|^ENV_CONFIG_VERSION *=.*|ENV_CONFIG_VERSION = '${sample_version}'|g" "$temp_env"
@@ -267,7 +267,7 @@ ensure_historify_db() {
     local value=""
 
     for candidate in HISTORIFY_DATABASE_URL HISTORICAL_DATABASE_URL HISTORIFY_DB_URL HISTORIFY_DB_PATH HISTORIFY_DUCKDB_PATH; do
-        value=$(grep -E "^${candidate}=" "$env_file" | head -1 | cut -d'=' -f2-)
+        value=$(sudo grep -E "^${candidate} *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\\r")
         if [ -n "$value" ]; then
             key="$candidate"
             break

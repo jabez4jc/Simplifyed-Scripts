@@ -9,7 +9,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+        domain=$(sudo grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then

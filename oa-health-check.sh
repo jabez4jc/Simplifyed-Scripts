@@ -40,7 +40,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+        domain=$(sudo grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then
@@ -90,7 +90,7 @@ get_env_value() {
     fi
 
     local value
-    value=$(grep -E "^${key} *=" "$env_file" | head -1 | cut -d'=' -f2- | sed -E 's/^ *//;s/ *$//' | tr -d "\r")
+    value=$(sudo grep -E "^${key} *=" "$env_file" | head -1 | cut -d'=' -f2- | sed -E 's/^ *//;s/ *$//' | tr -d "\r")
     value="${value%\"}"
     value="${value#\"}"
     value="${value%\'}"
@@ -131,7 +131,7 @@ check_env_file() {
     # Check for critical variables (handle spaces around =)
     local required_vars=("DATABASE_URL" "FLASK_PORT" "WEBSOCKET_PORT" "ZMQ_PORT")
     for var in "${required_vars[@]}"; do
-        if grep -q "^[[:space:]]*$var[[:space:]]*=" "$env_file"; then
+        if sudo grep -q "^[[:space:]]*$var[[:space:]]*=" "$env_file"; then
             print_ok ".env contains $var"
         else
             print_warning ".env missing $var"
@@ -139,11 +139,11 @@ check_env_file() {
     done
 
     # Check for BROKER - either as direct variable or extract from REDIRECT_URL
-    if grep -q "^[[:space:]]*BROKER[[:space:]]*=" "$env_file"; then
+    if sudo grep -q "^[[:space:]]*BROKER[[:space:]]*=" "$env_file"; then
         print_ok ".env contains BROKER"
-    elif grep -q "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file"; then
+    elif sudo grep -q "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file"; then
         # Extract broker from REDIRECT_URL (e.g., https://domain.com/kotak/callback -> kotak)
-        local redirect_url=$(grep "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"' | xargs)
+        local redirect_url=$(sudo grep "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"' | xargs)
         local broker=$(echo "$redirect_url" | sed 's|.*/\([^/]*\)/callback.*|\1|')
         if [ -n "$broker" ] && [ "$broker" != "$redirect_url" ]; then
             print_ok ".env contains BROKER (detected from REDIRECT_URL: $broker)"
@@ -255,7 +255,7 @@ check_http_endpoint() {
     
     # Try to extract domain from .env
     if [ -f "$instance_dir/.env" ]; then
-        domain=$(grep -E "^DOMAIN *=" "$instance_dir/.env" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+        domain=$(sudo grep -E "^DOMAIN *=" "$instance_dir/.env" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
     
     # If domain not found, try nginx config lookup
