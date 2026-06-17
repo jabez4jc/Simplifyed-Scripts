@@ -239,6 +239,18 @@ with open(path, 'w') as f:
         fi
     done
 
+    # Sync ENV_CONFIG_VERSION from .sample.env — safe because we already merged all new keys above
+    local sample_version
+    sample_version=$(grep -E "^ENV_CONFIG_VERSION *=" "$sample_env" | head -1 | cut -d'=' -f2- | tr -d "' \"\\r")
+    if [ -n "$sample_version" ]; then
+        if sudo grep -qE "^ENV_CONFIG_VERSION *=" "$temp_env"; then
+            sudo sed -i -E "s|^ENV_CONFIG_VERSION *=.*|ENV_CONFIG_VERSION = '${sample_version}'|g" "$temp_env"
+        else
+            echo "ENV_CONFIG_VERSION = '${sample_version}'" | sudo tee -a "$temp_env" > /dev/null
+        fi
+        log_message "    ✓ ENV_CONFIG_VERSION updated to $sample_version" "$GREEN"
+    fi
+
     sudo cp "$temp_env" "$env_file"
     sudo chown www-data:www-data "$env_file"
     sudo chmod 600 "$env_file"
@@ -455,19 +467,18 @@ update_instance() {
             log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
         fi
 
-        # Re-pin gunicorn<23 even when code is unchanged (venv may have drifted)
+        # Check gunicorn version and downgrade only if needed (avoid breaking pinned deps)
         local venv_path="$instance_dir/venv"
         if [ -d "$venv_path" ]; then
-            log_message "  Re-pinning gunicorn<23 and eventlet..." "$BLUE"
-            sudo bash -c "$venv_path/bin/pip install -q \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
             local gunicorn_ver
             gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             if [ -n "$gunicorn_ver" ]; then
                 local gmajor
                 gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
                 if [ "$gmajor" -ge 23 ]; then
-                    log_message "❌ gunicorn $gunicorn_ver >=23 detected. Force-reinstalling <23..." "$RED"
-                    sudo bash -c "$venv_path/bin/pip install -q --force-reinstall \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+                    log_message "⚠ gunicorn $gunicorn_ver >=23 detected. Downgrading (no-deps)..." "$YELLOW"
+                    sudo bash -c "$venv_path/bin/pip install -q --no-deps \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
+                    log_message "✓ gunicorn downgraded" "$GREEN"
                 else
                     log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
                 fi
@@ -544,20 +555,23 @@ update_instance() {
             log_message "⚠ Dependency sync had issues (non-critical)" "$YELLOW"
         fi
 
-        # Always ensure gunicorn<23 and eventlet are installed (use venv pip to bypass uv resolver)
-        log_message "  Ensuring gunicorn<23 and eventlet..." "$BLUE"
-        sudo bash -c "$venv_path/bin/pip install -q \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+        # Ensure gunicorn<23 — only install/downgrade if actually needed to avoid breaking pinned deps
         local gunicorn_ver
         gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         if [ -n "$gunicorn_ver" ]; then
             local gmajor
             gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
             if [ "$gmajor" -ge 23 ]; then
-                log_message "❌ gunicorn $gunicorn_ver still installed (>=23). Forcing downgrade..." "$RED"
-                sudo bash -c "$venv_path/bin/pip install -q --force-reinstall \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+                log_message "⚠ gunicorn $gunicorn_ver >=23 detected. Downgrading (no-deps)..." "$YELLOW"
+                sudo bash -c "$venv_path/bin/pip install -q --no-deps \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
+                log_message "✓ gunicorn downgraded" "$GREEN"
             else
-                log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
+                log_message "✓ gunicorn $gunicorn_ver (OK — no change needed)" "$GREEN"
             fi
+        fi
+        # Ensure eventlet is present (needed for gunicorn -k eventlet worker)
+        if ! "$venv_path/bin/python" -c "import eventlet" 2>/dev/null; then
+            sudo bash -c "$venv_path/bin/pip install -q --no-deps eventlet" 2>&1 | tee -a "$UPDATE_LOG"
         fi
 
         # Fix permissions
