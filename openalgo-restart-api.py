@@ -605,7 +605,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             return None
         instance = instance.strip()
         import re
-        if re.match(r"^openalgo\\d+$", instance):
+        if re.match(r"^openalgo\d+$", instance):
             return instance
         if re.match(r"^openalgo-[A-Za-z0-9-]+$", instance):
             return instance
