@@ -361,7 +361,7 @@ for ((n=1; n<=INSTANCES; n++)); do
     check_status "Failed to sync dependencies"
 
     # Ensure gunicorn and eventlet
-    sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$VENV_PATH/bin/python\" gunicorn eventlet"
+    sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$VENV_PATH/bin/python\" \"gunicorn<23\" eventlet"
     check_status "Failed to install gunicorn/eventlet"
     
     # Fix permissions for venv
