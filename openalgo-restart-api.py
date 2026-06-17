@@ -592,9 +592,9 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if os.path.exists(env_file):
             with open(env_file, 'r') as f:
                 for line in f:
-                    m = re.match(r"^DOMAIN\s*=\s*['"]?([^'"\s]+)", line)
+                    m = re.match(r"^DOMAIN\s*=\s*(.+)", line)
                     if m:
-                        domain = m.group(1).strip().strip("'"")
+                        domain = m.group(1).strip().strip("'\"")
                         break
         if domain:
             return f"openalgo-{domain.replace('.', '-')}"
@@ -1235,11 +1235,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             if os.path.exists(env_file):
                 with open(env_file, 'r') as f:
                     for line in f:
-                        m = re.match(r"^DOMAIN\s*=\s*['"]?([^'"\s]+)", line)
+                        m = re.match(r"^DOMAIN\s*=\s*(.+)", line)
                         if m:
                             health["domain"] = m.group(1).strip().strip("'\"")
                             continue
-                        m = re.match(r"^FLASK_PORT\s*=\s*['"]?([^'"\s]+)", line)
+                        m = re.match(r"^FLASK_PORT\s*=\s*(.+)", line)
                         if m:
                             health["port"] = m.group(1).strip().strip("'\"")
                             continue
