@@ -223,7 +223,17 @@ refresh_env_from_sample() {
             fi
         done
         if sudo grep -qE "^${key} *=" "$temp_env"; then
-            sudo sed -i -E "s|^${key} *=.*|${key} =${value}|g" "$temp_env"
+            # Use python3 to safely replace the line (avoids sed special-char issues in value)
+            sudo python3 -c "
+import sys, re
+key, value, path = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, 'r') as f:
+    content = f.read()
+replacement = key + ' =' + value
+content = re.sub(r'^' + re.escape(key) + r' *=.*', replacement, content, flags=re.MULTILINE)
+with open(path, 'w') as f:
+    f.write(content)
+" "$key" "$value" "$temp_env"
         else
             echo "${key} =${value}" | sudo tee -a "$temp_env" > /dev/null
         fi
@@ -433,7 +443,7 @@ update_instance() {
         if ! git diff --quiet || ! git diff --cached --quiet; then
             dirty=" (local changes present)"
         fi
-        log_message "✓ Already up to date at $current_hash$dirty — refreshing environment only" "$GREEN"
+        log_message "✓ Already up to date at $current_hash$dirty — refreshing environment and runtime" "$GREEN"
         log_message "  Refreshing .env configuration..." "$BLUE"
         refresh_env_from_sample "$instance_dir" "$backup_dir"
         sync_supported_brokers "$env_file"
@@ -444,9 +454,36 @@ update_instance() {
         else
             log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
         fi
+
+        # Re-pin gunicorn<23 even when code is unchanged (venv may have drifted)
+        local venv_path="$instance_dir/venv"
+        if [ -d "$venv_path" ]; then
+            log_message "  Re-pinning gunicorn<23 and eventlet..." "$BLUE"
+            sudo bash -c "$venv_path/bin/pip install -q \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+            local gunicorn_ver
+            gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [ -n "$gunicorn_ver" ]; then
+                local gmajor
+                gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
+                if [ "$gmajor" -ge 23 ]; then
+                    log_message "❌ gunicorn $gunicorn_ver >=23 detected. Force-reinstalling <23..." "$RED"
+                    sudo bash -c "$venv_path/bin/pip install -q --force-reinstall \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+                else
+                    log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
+                fi
+            fi
+            sudo chown -R www-data:www-data "$venv_path"
+        fi
+
         if [ "$was_running" = true ]; then
-            log_message "  Starting service: $service_name" "$BLUE"
-            sudo systemctl start "$service_name"
+            log_message "  Restarting service: $service_name" "$BLUE"
+            sudo systemctl restart "$service_name"
+            sleep 3
+            if systemctl is-active --quiet "$service_name"; then
+                log_message "✓ Service restarted successfully" "$GREEN"
+            else
+                log_message "❌ Service failed to restart" "$RED"
+            fi
         fi
         return 0
     fi
@@ -483,27 +520,46 @@ update_instance() {
     local new_commit=$(git rev-parse --short HEAD 2>/dev/null)
     log_message "✓ Updated to commit: $new_commit" "$GREEN"
     
-    # Update dependencies (UV-only flow)
+    # Update dependencies
     log_message "  Syncing dependencies with uv..." "$BLUE"
-    
+
     local venv_path="$instance_dir/venv"
     if [ -d "$venv_path" ]; then
-        sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv sync" 2>&1 | tee -a "$UPDATE_LOG"
-        local deps_status=${PIPESTATUS[0]}
+        local req_file
+        req_file=$(get_requirements_file "$instance_dir")
+
+        if [ -n "$req_file" ]; then
+            # Install from requirements file, resolving gunicorn<23 together in one pass
+            sudo bash -c "uv pip install --python \"$venv_path/bin/python\" -r \"$req_file\" \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+            local deps_status=${PIPESTATUS[0]}
+        else
+            # pyproject.toml-only project: sync first, then pin gunicorn
+            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv sync" 2>&1 | tee -a "$UPDATE_LOG"
+            local deps_status=${PIPESTATUS[0]}
+        fi
 
         if [ $deps_status -eq 0 ]; then
-            sudo bash -c "cd $instance_dir && uv pip install --python \"$venv_path/bin/python\" \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
-            local runtime_status=${PIPESTATUS[0]}
-
-            if [ $runtime_status -eq 0 ]; then
-                log_message "✓ Dependencies and runtime packages updated" "$GREEN"
-            else
-                log_message "⚠ Dependency sync completed, but gunicorn/eventlet install had issues" "$YELLOW"
-            fi
+            log_message "✓ Dependencies updated" "$GREEN"
         else
             log_message "⚠ Dependency sync had issues (non-critical)" "$YELLOW"
         fi
-        
+
+        # Always ensure gunicorn<23 and eventlet are installed (use venv pip to bypass uv resolver)
+        log_message "  Ensuring gunicorn<23 and eventlet..." "$BLUE"
+        sudo bash -c "$venv_path/bin/pip install -q \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+        local gunicorn_ver
+        gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [ -n "$gunicorn_ver" ]; then
+            local gmajor
+            gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
+            if [ "$gmajor" -ge 23 ]; then
+                log_message "❌ gunicorn $gunicorn_ver still installed (>=23). Forcing downgrade..." "$RED"
+                sudo bash -c "$venv_path/bin/pip install -q --force-reinstall \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+            else
+                log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
+            fi
+        fi
+
         # Fix permissions
         sudo chown -R www-data:www-data "$venv_path"
     else
