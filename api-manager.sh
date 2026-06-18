@@ -183,15 +183,31 @@ setup_update() {
     fi
     echo ""
 
-    if [ -x "/usr/local/bin/oa-clear-logs.sh" ]; then
-        echo -e "${YELLOW}Installing daily cleanup timer...${NC}"
-        /usr/local/bin/oa-clear-logs.sh --install-timer --yes >/dev/null 2>&1 || true
-        echo -e "${GREEN}✅ Cleanup timer installed${NC}"
-        echo ""
-    else
-        echo -e "${YELLOW}⚠️  oa-clear-logs.sh not found; skipping timer install${NC}"
-        echo ""
-    fi
+    echo -e "${YELLOW}Installing daily cleanup timer...${NC}"
+    local script_path="/usr/local/bin/oa-clear-logs.sh"
+    cat > /etc/systemd/system/openalgo-clear-safe.service << 'EOF'
+[Unit]
+Description=OpenAlgo safe disk cleanup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oa-clear-logs.sh --yes
+EOF
+    cat > /etc/systemd/system/openalgo-clear-safe.timer << 'EOF'
+[Unit]
+Description=Run OpenAlgo safe disk cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 03:10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable --now openalgo-clear-safe.timer >/dev/null 2>&1 || true
+    echo -e "${GREEN}✅ Cleanup timer installed${NC}"
+    echo ""
 
     install_api || { read -p "Press Enter to continue..."; menu_main; }
     echo ""

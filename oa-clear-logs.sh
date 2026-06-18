@@ -354,16 +354,11 @@ for inst in "${INSTANCES[@]}"; do
   # __pycache__ directories (compiled .pyc files - safe to delete, rebuilt on next start)
   run "find '$inst_dir' -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true"
 
-  # Stale SQLite WAL/SHM files left over from crashes (only if db exists and is healthy)
+  # Stale SQLite WAL/SHM files left over from crashes
   for wal in "$inst_dir/db/"*.db-wal "$inst_dir/db/"*.db-shm "$inst_dir/"*.db-wal "$inst_dir/"*.db-shm; do
     [[ -f "$wal" ]] || continue
     run "rm -f '$wal' 2>/dev/null || true"
   done
-
-  # Old git objects (pack files) - run git gc to compress
-  if [[ -d "$inst_dir/.git" ]]; then
-    run "git -C '$inst_dir' gc --prune=now --aggressive 2>/dev/null || true"
-  fi
 done
 
 # Old update log files (keep only the 2 most recent)
