@@ -200,6 +200,15 @@ fi
 log "===== START openalgo-clear-safe (APPLY=${APPLY}) ====="
 run "df -hT /"
 
+# Show top space consumers to help diagnose what's filling disk
+say ""
+say "=== Top disk consumers ==="
+run "du -sh /var/log/* 2>/dev/null | sort -rh | head -15 || true"
+run "du -sh /root/.cache/* 2>/dev/null | sort -rh | head -10 || true"
+run "du -sh /var/python/openalgo-flask/*/.git 2>/dev/null | sort -rh | head -10 || true"
+run "du -sh /tmp/* 2>/dev/null | sort -rh | head -10 || true"
+say ""
+
 ########################################
 # 1) Journald vacuum + persistent caps
 ########################################
@@ -317,16 +326,59 @@ else
 fi
 
 ########################################
-# 7) Python/pip caches
+# 7) Python/pip/uv caches
 ########################################
-run "rm -rf /root/.cache/pip 2>/dev/null || true"
+# Root pip/uv cache
+[[ -d /root/.cache/pip ]] && { say "  Clearing /root/.cache/pip..."; rm -rf /root/.cache/pip; }
+[[ -d /root/.cache/uv  ]] && { say "  Clearing /root/.cache/uv ($(du -sh /root/.cache/uv 2>/dev/null | cut -f1))..."; rm -rf /root/.cache/uv; }
 
 if [[ -d /home ]]; then
   for u in /home/*; do
     [[ -d "$u" ]] || continue
-    run "rm -rf '$u/.cache/pip' 2>/dev/null || true"
+    [[ -d "$u/.cache/pip" ]] && rm -rf "$u/.cache/pip"
+    [[ -d "$u/.cache/uv"  ]] && rm -rf "$u/.cache/uv"
   done
 fi
+
+# www-data pip/uv cache
+[[ -d /var/www/.cache/pip ]] && rm -rf /var/www/.cache/pip
+[[ -d /var/www/.cache/uv  ]] && rm -rf /var/www/.cache/uv
+
+########################################
+# 7b) Per-instance cleanup
+########################################
+for inst in "${INSTANCES[@]}"; do
+  inst_dir="$BASE_DIR/$inst"
+  [[ -d "$inst_dir" ]] || continue
+
+  # __pycache__ directories (compiled .pyc files - safe to delete, rebuilt on next start)
+  run "find '$inst_dir' -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true"
+
+  # Stale SQLite WAL/SHM files left over from crashes (only if db exists and is healthy)
+  for wal in "$inst_dir/db/"*.db-wal "$inst_dir/db/"*.db-shm "$inst_dir/"*.db-wal "$inst_dir/"*.db-shm; do
+    [[ -f "$wal" ]] || continue
+    run "rm -f '$wal' 2>/dev/null || true"
+  done
+
+  # Old git objects (pack files) - run git gc to compress
+  if [[ -d "$inst_dir/.git" ]]; then
+    run "git -C '$inst_dir' gc --prune=now --aggressive 2>/dev/null || true"
+  fi
+done
+
+# Old update log files (keep only the 2 most recent)
+if ls /tmp/update_*.log 2>/dev/null | wc -l | grep -qv '^[012]$'; then
+  run "ls -t /tmp/update_*.log 2>/dev/null | tail -n +3 | xargs rm -f 2>/dev/null || true"
+fi
+
+# Pre-update safety backups in /tmp: keep only the most recent per instance, delete older ones
+for inst_bk in $(find /tmp -maxdepth 1 -type d -name "openalgo_backup_openalgo*" 2>/dev/null | sed 's/_[0-9]*_[0-9]*$//' | sort -u); do
+  prefix=$(basename "$inst_bk")
+  old_bks=$(ls -dt /tmp/${prefix}_* 2>/dev/null | tail -n +2)
+  if [[ -n "$old_bks" ]]; then
+    run "rm -rf $old_bks"
+  fi
+done
 
 ########################################
 # 8) Docker prune
