@@ -567,6 +567,46 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
         return result
 
+    def _reset_admin_user(self, instance):
+        """Delete all rows from the users table via oa-reset-admin.sh, forcing
+        the instance back into first-time admin setup. Use when a user forgot
+        their password and has no TOTP/QR reset or working SMTP configured."""
+        inst_path = f"/var/python/openalgo-flask/{instance}"
+        result = {
+            "instance": instance,
+            "reset": False,
+            "error": None,
+            "output": "",
+            "exit_code": None,
+        }
+
+        if not os.path.isdir(inst_path):
+            result["error"] = "Instance not found"
+            return result
+        script_path = self._find_script("oa-reset-admin.sh")
+        if not script_path:
+            result["error"] = "oa-reset-admin.sh not found"
+            return result
+
+        try:
+            proc = subprocess.run(
+                ["sudo", "bash", script_path, "--instance", instance, "--force"],
+                cwd=inst_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            result["exit_code"] = proc.returncode
+            result["output"] = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+            if proc.returncode == 0:
+                result["reset"] = True
+            else:
+                result["error"] = f"Script failed (exit {proc.returncode})"
+        except Exception as e:
+            result["error"] = str(e)
+
+        return result
+
     def _read_auth_status(self, instance):
         db_file = self._get_auth_db_file(instance)
         if not db_file:
@@ -732,6 +772,10 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             instance = self._require_monitor_instance()
             if instance:
                 self.handle_invalidate_session(instance)
+        elif path == '/monitor/api/reset-admin-user':
+            instance = self._require_monitor_instance()
+            if instance:
+                self.handle_reset_admin_user(instance)
         elif path == '/monitor/api/reboot-server':
             self.handle_reboot_server()
         elif path == '/monitor/api/health-check':
@@ -742,6 +786,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             instance = data.get('instance', '')
             if instance:
                 self.handle_invalidate_session(instance)
+            else:
+                self.send_json({"error": "Missing instance parameter"}, 400)
+        elif path == '/api/reset-admin-user':
+            instance = data.get('instance', '')
+            if instance:
+                self.handle_reset_admin_user(instance)
             else:
                 self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/restart-all':
@@ -1055,7 +1105,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         })
 
     def handle_scripts_status(self):
-        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "oa-clear-logs.sh", "oa-invalidate-session.sh"]
+        script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "oa-clear-logs.sh", "oa-invalidate-session.sh", "oa-reset-admin.sh"]
         scripts = {}
         for name in script_names:
             path = self._find_script(name)
@@ -1414,6 +1464,17 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "timestamp": str(datetime.now())
         })
 
+    def handle_reset_admin_user(self, instance):
+        """Delete all users for a specific instance, forcing first-time setup"""
+        result = self._reset_admin_user(instance)
+        self.send_json({
+            "status": "success" if result.get("reset") else "error",
+            "message": f"Admin user reset for {instance}" if result.get("reset") else (result.get("error") or "Reset failed"),
+            "instance": instance,
+            "details": result,
+            "timestamp": str(datetime.now())
+        })
+
     def handle_reboot_server(self):
         """Reboot the server with fallback"""
         def _reboot():
@@ -1569,6 +1630,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
 <button class="btn btn-primary btn-clear" onclick="clearLogs()">🧹 Clear Logs</button>
 <button class="btn btn-primary btn-clear" style="background:#6c757d" onclick="invalidateSession()">🚫 Invalidate Session</button>
+<button class="btn btn-primary btn-clear" style="background:#dc3545" onclick="resetAdminUser()">🗑️ Reset Admin User</button>
 </div>
 <div id="system" class="system-card"></div>
 <div class="maintenance">
@@ -1790,6 +1852,20 @@ async function invalidateSession(){
 if(!confirm('Invalidate the session for this instance? This will clear auth tokens and revoke the session.'))return;
 showAlert('Invalidating session...','info');
 await post('/monitor/api/invalidate-session');
+setTimeout(loadInstance,1000);
+}
+async function resetAdminUser(){
+if(!confirm('⚠️ Reset the admin user for this instance? This deletes ALL users and forces first-time setup on next login. Use this only when the user has no TOTP/QR reset and no working SMTP.'))return;
+if(!confirm('⚠️ FINAL CONFIRMATION: All users for this instance will be deleted. Continue?'))return;
+showAlert('Resetting admin user...','info');
+try{
+const res=await post('/monitor/api/reset-admin-user');
+const msg=res&&res.message?res.message:'Admin user reset';
+showAlert(msg,res&&res.status==='error'?'error':'success');
+}catch(e){
+showAlert('Error: '+e.message,'error');
+return;
+}
 setTimeout(loadInstance,1000);
 }
 async function rebootServer(){
@@ -2116,7 +2192,7 @@ const gitLatest=git.latest_commit||'N/A';
 const gitBehind=(git.behind!==null&&git.behind!==undefined)?`${git.behind} behind`:'';
 const gitUpdated=git.current_date||'Unknown';
 const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurrent} → ${gitLatest} ${gitBehind}`.trim();
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener" style="color:inherit">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener" style="color:inherit">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button><button class="btn btn-small btn-invalidate" style="background:#dc3545" onclick="resetAdminUser('${inst}')">🗑️ Reset Admin</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 if(initTerminal && !terminalInitialized){
@@ -2400,6 +2476,19 @@ async function invalidate(inst){
 if(!confirm(`Invalidate session for ${inst}? This will clear auth tokens and revoke the session.`))return;
 await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Invalidating session for ${inst}`,'info');
+setTimeout(loadInstances,1000);
+}
+async function resetAdminUser(inst){
+if(!confirm(`⚠️ Reset the admin user for ${inst}? This deletes ALL users and forces first-time setup on next login. Use this only when the user has no TOTP/QR reset and no working SMTP.`))return;
+if(!confirm(`⚠️ FINAL CONFIRMATION: All users for ${inst} will be deleted. Continue?`))return;
+showAlert(`Resetting admin user for ${inst}...`,'info');
+try{
+const res=await fetchJson('/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+showAlert(res&&res.message?res.message:`Admin user reset for ${inst}`,res&&res.status==='error'?'error':'success');
+}catch(e){
+showAlert('Error: '+e.message,'error');
+return;
+}
 setTimeout(loadInstances,1000);
 }
 async function stop(inst){
