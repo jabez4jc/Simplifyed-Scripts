@@ -567,10 +567,16 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
         return result
 
-    def _reset_admin_user(self, instance):
-        """Delete all rows from the users table via oa-reset-admin.sh, forcing
-        the instance back into first-time admin setup. Use when a user forgot
-        their password and has no TOTP/QR reset or working SMTP configured."""
+    def _reset_admin_user(self, instance, broker_creds=None):
+        """Delete all rows from the users and auth tables via oa-reset-admin.sh,
+        forcing the instance back into first-time admin setup and requiring a
+        fresh broker login. Use when a user forgot their password and has no
+        TOTP/QR reset or working SMTP configured.
+
+        broker_creds, if given, is a dict that may contain broker (the new
+        broker short name, used to update REDIRECT_URL), broker_api_key,
+        broker_api_secret, broker_api_key_market, broker_api_secret_market —
+        these are also written into the instance's .env file."""
         inst_path = f"/var/python/openalgo-flask/{instance}"
         result = {
             "instance": instance,
@@ -588,9 +594,22 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             result["error"] = "oa-reset-admin.sh not found"
             return result
 
+        command = ["sudo", "bash", script_path, "--instance", instance, "--force"]
+        cred_flags = {
+            "broker": "--broker",
+            "broker_api_key": "--broker-api-key",
+            "broker_api_secret": "--broker-api-secret",
+            "broker_api_key_market": "--broker-api-key-market",
+            "broker_api_secret_market": "--broker-api-secret-market",
+        }
+        for key, flag in cred_flags.items():
+            value = (broker_creds or {}).get(key, "")
+            if isinstance(value, str) and value.strip():
+                command.extend([flag, value.strip()])
+
         try:
             proc = subprocess.run(
-                ["sudo", "bash", script_path, "--instance", instance, "--force"],
+                command,
                 cwd=inst_path,
                 capture_output=True,
                 text=True,
@@ -775,7 +794,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         elif path == '/monitor/api/reset-admin-user':
             instance = self._require_monitor_instance()
             if instance:
-                self.handle_reset_admin_user(instance)
+                self.handle_reset_admin_user(instance, data)
         elif path == '/monitor/api/reboot-server':
             self.handle_reboot_server()
         elif path == '/monitor/api/health-check':
@@ -791,7 +810,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         elif path == '/api/reset-admin-user':
             instance = data.get('instance', '')
             if instance:
-                self.handle_reset_admin_user(instance)
+                self.handle_reset_admin_user(instance, data)
             else:
                 self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/restart-all':
@@ -1464,9 +1483,20 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             "timestamp": str(datetime.now())
         })
 
-    def handle_reset_admin_user(self, instance):
-        """Delete all users for a specific instance, forcing first-time setup"""
-        result = self._reset_admin_user(instance)
+    def handle_reset_admin_user(self, instance, data=None):
+        """Delete all users for a specific instance, forcing first-time setup.
+        Optionally also switches the active broker (data['broker'], which
+        updates REDIRECT_URL) and/or rotates broker API credentials in .env
+        when data includes broker_api_key / broker_api_secret / *_market
+        fields."""
+        broker_creds = {
+            "broker": (data or {}).get("broker", ""),
+            "broker_api_key": (data or {}).get("broker_api_key", ""),
+            "broker_api_secret": (data or {}).get("broker_api_secret", ""),
+            "broker_api_key_market": (data or {}).get("broker_api_key_market", ""),
+            "broker_api_secret_market": (data or {}).get("broker_api_secret_market", ""),
+        }
+        result = self._reset_admin_user(instance, broker_creds)
         self.send_json({
             "status": "success" if result.get("reset") else "error",
             "message": f"Admin user reset for {instance}" if result.get("reset") else (result.get("error") or "Reset failed"),
@@ -1854,12 +1884,36 @@ showAlert('Invalidating session...','info');
 await post('/monitor/api/invalidate-session');
 setTimeout(loadInstance,1000);
 }
+function collectBrokerCredentials(){
+const broker=(prompt("Switch to a different broker? Enter the new broker short name (e.g. zerodha, angel, fyers, upstox) exactly as it appears in VALID_BROKERS, or leave blank to keep the current broker:",'')||'').trim().toLowerCase();
+if(!confirm('Also rotate broker API credentials in .env? Click OK to enter new values, Cancel to skip.')){
+if(!broker)return null;
+return{broker:broker};
+}
+const apiKey=(prompt('New BROKER_API_KEY (leave blank to skip):','')||'').trim();
+const apiSecret=(prompt('New BROKER_API_SECRET (leave blank to skip):','')||'').trim();
+let keyMarket='',secretMarket='';
+if(confirm('Is this an XTS-based broker requiring separate market data credentials?')){
+keyMarket=(prompt('New BROKER_API_KEY_MARKET (leave blank to skip):','')||'').trim();
+secretMarket=(prompt('New BROKER_API_SECRET_MARKET (leave blank to skip):','')||'').trim();
+}
+if(!broker&&!apiKey&&!apiSecret&&!keyMarket&&!secretMarket)return null;
+return{broker:broker,broker_api_key:apiKey,broker_api_secret:apiSecret,broker_api_key_market:keyMarket,broker_api_secret_market:secretMarket};
+}
+function describeBrokerCreds(creds){
+if(!creds)return '';
+const parts=[];
+if(creds.broker)parts.push(`the broker will be switched to '${creds.broker}'`);
+if(creds.broker_api_key||creds.broker_api_secret||creds.broker_api_key_market||creds.broker_api_secret_market)parts.push('broker API credentials will be overwritten');
+return parts.length?(' and '+parts.join(', and ')):'';
+}
 async function resetAdminUser(){
-if(!confirm('⚠️ Reset the admin user for this instance? This deletes ALL users and forces first-time setup on next login. Use this only when the user has no TOTP/QR reset and no working SMTP.'))return;
-if(!confirm('⚠️ FINAL CONFIRMATION: All users for this instance will be deleted. Continue?'))return;
+if(!confirm('⚠️ Reset the admin user for this instance? This deletes ALL users AND broker auth/login tokens, forcing first-time setup and a fresh broker login on next visit. Use this only when the user has no TOTP/QR reset and no working SMTP.'))return;
+const creds=collectBrokerCredentials();
+if(!confirm('⚠️ FINAL CONFIRMATION: All users for this instance will be deleted'+describeBrokerCreds(creds)+'. Continue?'))return;
 showAlert('Resetting admin user...','info');
 try{
-const res=await post('/monitor/api/reset-admin-user');
+const res=await fetchJson('/monitor/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(creds||{})});
 const msg=res&&res.message?res.message:'Admin user reset';
 showAlert(msg,res&&res.status==='error'?'error':'success');
 }catch(e){
@@ -2478,12 +2532,36 @@ await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type'
 showAlert(`Invalidating session for ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
+function collectBrokerCredentials(){
+const broker=(prompt("Switch to a different broker? Enter the new broker short name (e.g. zerodha, angel, fyers, upstox) exactly as it appears in VALID_BROKERS, or leave blank to keep the current broker:",'')||'').trim().toLowerCase();
+if(!confirm('Also rotate broker API credentials in .env? Click OK to enter new values, Cancel to skip.')){
+if(!broker)return null;
+return{broker:broker};
+}
+const apiKey=(prompt('New BROKER_API_KEY (leave blank to skip):','')||'').trim();
+const apiSecret=(prompt('New BROKER_API_SECRET (leave blank to skip):','')||'').trim();
+let keyMarket='',secretMarket='';
+if(confirm('Is this an XTS-based broker requiring separate market data credentials?')){
+keyMarket=(prompt('New BROKER_API_KEY_MARKET (leave blank to skip):','')||'').trim();
+secretMarket=(prompt('New BROKER_API_SECRET_MARKET (leave blank to skip):','')||'').trim();
+}
+if(!broker&&!apiKey&&!apiSecret&&!keyMarket&&!secretMarket)return null;
+return{broker:broker,broker_api_key:apiKey,broker_api_secret:apiSecret,broker_api_key_market:keyMarket,broker_api_secret_market:secretMarket};
+}
+function describeBrokerCreds(creds){
+if(!creds)return '';
+const parts=[];
+if(creds.broker)parts.push(`the broker will be switched to '${creds.broker}'`);
+if(creds.broker_api_key||creds.broker_api_secret||creds.broker_api_key_market||creds.broker_api_secret_market)parts.push('broker API credentials will be overwritten');
+return parts.length?(' and '+parts.join(', and ')):'';
+}
 async function resetAdminUser(inst){
-if(!confirm(`⚠️ Reset the admin user for ${inst}? This deletes ALL users and forces first-time setup on next login. Use this only when the user has no TOTP/QR reset and no working SMTP.`))return;
-if(!confirm(`⚠️ FINAL CONFIRMATION: All users for ${inst} will be deleted. Continue?`))return;
+if(!confirm(`⚠️ Reset the admin user for ${inst}? This deletes ALL users AND broker auth/login tokens, forcing first-time setup and a fresh broker login on next visit. Use this only when the user has no TOTP/QR reset and no working SMTP.`))return;
+const creds=collectBrokerCredentials();
+if(!confirm(`⚠️ FINAL CONFIRMATION: All users for ${inst} will be deleted`+describeBrokerCreds(creds)+`. Continue?`))return;
 showAlert(`Resetting admin user for ${inst}...`,'info');
 try{
-const res=await fetchJson('/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+const res=await fetchJson('/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({instance:inst},creds||{}))});
 showAlert(res&&res.message?res.message:`Admin user reset for ${inst}`,res&&res.status==='error'?'error':'success');
 }catch(e){
 showAlert('Error: '+e.message,'error');
