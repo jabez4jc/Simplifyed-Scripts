@@ -120,6 +120,19 @@ def destroy_session(token):
         _SESSIONS.pop(token, None)
 
 
+def get_access_info():
+    domain = os.environ.get('MANAGER_DOMAIN', '').strip()
+    bind = os.environ.get('OPENALGO_BIND', '0.0.0.0')
+    info = {
+        "domain": domain or None,
+        "bind": bind,
+        "locked_down": bool(domain) and bind != '0.0.0.0',
+    }
+    if not domain:
+        info["ip"] = get_server_ip()
+    return info
+
+
 def _esc_attr(s):
     return (s or '').replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
 
@@ -156,7 +169,7 @@ a{color:var(--accent)}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-2);color:var(--text-dim);cursor:pointer;transition:.15s ease}
 .icon-btn:hover{color:var(--text);border-color:#324063;background:#1c2740}
 .icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-main{max-width:1360px;margin:0 auto;padding:24px 20px 64px;display:flex;flex-direction:column;gap:18px}
+main{max-width:min(1920px,96vw);margin:0 auto;padding:24px 20px 64px;display:flex;flex-direction:column;gap:18px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 20px;border-bottom:1px solid var(--border-soft)}
 .card-head h2{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
@@ -261,7 +274,7 @@ dialog.reset-admin-dialog::backdrop{background:rgba(4,6,12,.65);backdrop-filter:
 .kpi-value{font-weight:700;font-size:22px;font-variant-numeric:tabular-nums}
 .kpi-value.success{color:var(--success)}
 .kpi-value.danger{color:var(--danger)}
-#instances{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:16px}
+#instances{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
 .field{font-size:12.5px}
 .field-label{color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px;display:block}
 .field select,.field input,.field textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit}
@@ -282,6 +295,203 @@ dialog.reset-admin-dialog::backdrop{background:rgba(4,6,12,.65);backdrop-filter:
 *{animation-duration:.001ms!important;transition-duration:.001ms!important}
 }
 """
+
+DASHBOARD_JS_COMMON = """const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
+const ICON_X='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+const TOAST_ICONS={
+info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+success:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>',
+error:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>'
+};
+const ICON_LOGS='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
+const ICON_CHEVRON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+function escapeHtml(text){
+const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+return text.replace(/[&<>"']/g,m=>map[m]);
+}
+function formatBytes(bytes){
+if(bytes===null||bytes===undefined)return 'N/A';
+const gb=bytes/1024/1024/1024;
+return gb.toFixed(1)+' GB';
+}
+function formatPercent(p){
+if(p===null||p===undefined)return 'N/A';
+return p.toFixed(1)+'%';
+}
+function meter(p){
+if(p===null||p===undefined)return '';
+return `<div class="meter"><div class="meter-fill ${meterClass(p)}" style="width:${Math.min(p,100)}%"></div></div>`;
+}
+function meterClass(p){
+if(p===null||p===undefined)return '';
+if(p>=90)return 'crit';
+if(p>=70)return 'warn';
+return '';
+}
+function renderAccessLine(access){
+if(!access)return '';
+if(access.domain){
+return `<div class="card-sub" style="padding:0 20px 14px">Access: <a href="https://${access.domain}/" target="_blank" rel="noopener">https://${access.domain}/</a>${access.locked_down?' · port 8888 closed':' · port 8888 still public (close it via api-manager.sh option 5)'}</div>`;
+}
+return `<div class="card-sub" style="padding:0 20px 14px">Access: http://${access.ip||'this-server'}:8888/ — set up a domain via <code>sudo api-manager.sh</code> (option 5) to make this memorable and lock down the port</div>`;
+}
+function renderSystem(sys,access){
+const el=document.getElementById('system');
+if(!sys){
+el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
+return;
+}
+el.innerHTML=`<div class="card-head"><h2>System</h2></div>
+<div class="stat-grid">
+<div class="stat"><div class="stat-label">CPU</div><div class="stat-value">${formatPercent(sys.cpu_percent)}</div>${meter(sys.cpu_percent)}</div>
+<div class="stat"><div class="stat-label">Load Avg</div><div class="stat-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
+<div class="stat"><div class="stat-label">RAM Used</div><div class="stat-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div>${meter(sys.mem_percent)}</div>
+<div class="stat"><div class="stat-label">Swap Used</div><div class="stat-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div>${meter(sys.swap_percent)}</div>
+<div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div>${meter(sys.disk_percent)}</div>
+</div>${renderAccessLine(access)}`;
+}
+function renderScriptsStatus(data){
+const el=document.getElementById('scripts-status');
+if(!el||!data||!data.scripts){
+return;
+}
+const items=Object.entries(data.scripts).map(([name,info])=>{
+const ok=info&&info.found;
+return `<span class="script-chip ${ok?'ok':'missing'}">${ok?ICON_CHECK:ICON_X} ${name}</span>`;
+}).join('');
+let extra='';
+if(data.missing&&data.missing.length){
+const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
+extra=`<div style="margin-top:6px;width:100%"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
+}
+el.innerHTML=(items||'')+extra;
+applyScriptsAvailability(data.scripts);
+}
+function showAlert(msg,type){
+const list=document.getElementById('toasts');
+if(!list)return;
+const t=document.createElement('div');
+t.className=`toast ${type}`;
+t.innerHTML=`${TOAST_ICONS[type]||TOAST_ICONS.info}<div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss" onclick="this.parentElement.remove()">×</button>`;
+t.querySelector('.toast-msg').textContent=msg;
+list.appendChild(t);
+if(type!=='error')setTimeout(()=>t.remove(),4000);
+}
+function openChangePasswordDialog(){
+const dlg=document.getElementById('changePasswordDialog');
+document.getElementById('changePasswordForm').reset();
+return new Promise(resolve=>{
+dlg.returnValue='';
+dlg.showModal();
+dlg.onclose=function(){
+if(dlg.returnValue!=='confirm'){resolve(null);return;}
+resolve({
+current_password:document.getElementById('cpCurrent').value,
+new_password:document.getElementById('cpNew').value,
+confirm_password:document.getElementById('cpConfirm').value
+});
+};
+});
+}
+async function changePassword(){
+const data=await openChangePasswordDialog();
+if(data===null)return;
+if(!data.new_password){showAlert('New password cannot be empty','error');return;}
+if(data.new_password!==data.confirm_password){showAlert('New passwords do not match','error');return;}
+try{
+const res=await fetchJson(`${apiBase}/change-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+showAlert(res&&res.message?res.message:'Password changed','success');
+}catch(e){
+showAlert('Error: '+e.message,'error');
+}
+}
+function showMaintenanceStatus(text){
+const statusEl=document.getElementById('maintenance-status');
+if(statusEl){statusEl.textContent=text||'';}
+}
+function showMaintenanceOutput(title,status,exitCode,output){
+const outputEl=document.getElementById('maintenance-output');
+const preEl=document.getElementById('maintenance-output-pre');
+const statusText=exitCode!==null&&exitCode!==undefined?`${status} (exit ${exitCode})`:status;
+showMaintenanceStatus(`${title} - ${statusText}`);
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
+}
+async function pollJob(jobId,title){
+try{
+const job=await fetchJson(`${apiBase}/jobs/${jobId}`);
+if(job.error){
+showAlert(job.error,'error');
+showMaintenanceOutput(title,'error',null,job.error);
+return;
+}
+if(job.status==='running'||job.status==='queued'){
+showMaintenanceStatus(`${title} - ${job.status}...`);
+const preEl=document.getElementById('maintenance-output-pre');
+const outputEl=document.getElementById('maintenance-output');
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML=escapeHtml(job.output||'Running...');}
+setTimeout(()=>pollJob(jobId,title),2000);
+return;
+}
+const message=job.output||job.error||'No output';
+showMaintenanceOutput(title,job.status,job.exit_code,message);
+}catch(e){
+showAlert('Error: '+e.message,'error');
+showMaintenanceOutput(title,'error',null,e.message);
+}
+}
+async function startJob(endpoint,payload,title){
+showMaintenanceStatus(`${title} - starting...`);
+const outputEl=document.getElementById('maintenance-output');
+const preEl=document.getElementById('maintenance-output-pre');
+if(outputEl){outputEl.style.display='block';}
+if(preEl){preEl.innerHTML='Starting...';}
+const data=await fetchJson(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
+if(data.error){
+showAlert(data.error,'error');
+showMaintenanceOutput(title,'error',null,data.error);
+return;
+}
+pollJob(data.job_id,title);
+}
+async function rebootServer(){
+if(!confirm('Reboot the server? This will disconnect all instances!'))return;
+if(!confirm('FINAL CONFIRMATION: The server will restart now. Continue?'))return;
+showAlert('Rebooting server... Connection will be lost shortly.','info');
+try{
+const d=await fetchJson(`${apiBase}/reboot-server`,{method:'POST'});
+showAlert(d.message,'success');
+}catch(e){
+showAlert('Reboot initiated (API connection lost as expected)','success');
+}
+}
+function populateBrokerSelect(){
+const sel=document.getElementById('resetBroker');
+const h=resetDialogHealth||{};
+const current=h.broker||'';
+sel.innerHTML='';
+const keepOpt=document.createElement('option');
+keepOpt.value='';
+keepOpt.textContent=current?`Keep current broker (${current})`:'Keep current broker';
+sel.appendChild(keepOpt);
+(h.valid_brokers||[]).forEach(b=>{
+const opt=document.createElement('option');
+opt.value=b;
+opt.textContent=b;
+sel.appendChild(opt);
+});
+updateCallbackPreview();
+}
+function updateCallbackPreview(){
+const h=resetDialogHealth||{};
+const sel=document.getElementById('resetBroker');
+const chosen=(sel&&sel.value)||h.broker||'';
+const preview=document.getElementById('resetCallbackPreview');
+if(preview)preview.textContent=(h.domain&&chosen)?`Callback URL: https://${h.domain}/${chosen}/callback`:'';
+}
+"""
+
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
     JOBS = {}
@@ -1202,6 +1412,10 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_health_check(data)
         elif path == '/monitor/api/update':
             self.handle_update(data)
+        elif path == '/monitor/api/change-password':
+            self.handle_change_password(data)
+        elif path == '/api/change-password':
+            self.handle_change_password(data)
         elif path == '/api/invalidate-session':
             instance = data.get('instance', '')
             if instance:
@@ -1312,6 +1526,7 @@ body{display:flex;align-items:center;justify-content:center}
                 health["system"] = self._get_system_stats()
             except Exception:
                 health["system"] = None
+            health["access"] = get_access_info()
 
             self.send_json(health)
         except Exception as e:
@@ -1327,6 +1542,7 @@ body{display:flex;align-items:center;justify-content:center}
             health["system"] = self._get_system_stats()
         except Exception:
             health["system"] = None
+        health["access"] = get_access_info()
         health["timestamp"] = str(datetime.now())
         self.send_json(health)
 
@@ -1769,6 +1985,23 @@ body{display:flex;align-items:center;justify-content:center}
             "service": "OpenAlgo Restart API",
             "timestamp": str(datetime.now())
         })
+
+    def handle_change_password(self, data):
+        """Change the admin password (requires the current one)"""
+        creds = load_credentials()
+        if not creds:
+            self.send_json({"error": "No admin account configured"}, 400)
+            return
+        current_password = data.get('current_password', '')
+        new_password = data.get('new_password', '')
+        if not verify_password(current_password, creds.get('hash', '')):
+            self.send_json({"error": "Current password is incorrect"}, 401)
+            return
+        if not new_password:
+            self.send_json({"error": "New password cannot be empty"}, 400)
+            return
+        save_credentials(creds.get('username'), new_password)
+        self.send_json({"status": "success", "message": "Password changed successfully"})
     
     def handle_restart_all(self):
         """Restart all instances"""
@@ -1987,6 +2220,7 @@ body{display:flex;align-items:center;justify-content:center}
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
 <a class="icon-btn" href="__MANAGER_URL__" title="All Instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></a>
 <button class="icon-btn" title="Refresh" onclick="loadInstance()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+<button class="icon-btn" title="Change Password" onclick="changePassword()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></button>
 <a class="icon-btn" href="/monitor/logout" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
 </div>
 </div>
@@ -2053,20 +2287,28 @@ body{display:flex;align-items:center;justify-content:center}
 </form>
 </dialog>
 
-<script>
-const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
-const ICON_X='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>';
-const TOAST_ICONS={
-info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
-success:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>',
-error:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>'
-};
-const ICON_LOGS='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
-const ICON_CHEVRON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+<dialog id="changePasswordDialog" class="reset-admin-dialog">
+<form method="dialog" id="changePasswordForm">
+<h3 style="margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Change Admin Password</h3>
+<label class="reset-field-label">Current Password</label>
+<input type="password" id="cpCurrent" class="reset-input" autocomplete="current-password" required>
+<label class="reset-field-label">New Password</label>
+<input type="password" id="cpNew" class="reset-input" autocomplete="new-password" required>
+<label class="reset-field-label">Confirm New Password</label>
+<input type="password" id="cpConfirm" class="reset-input" autocomplete="new-password" required>
+<div class="reset-dialog-actions">
+<button type="button" class="btn btn-ghost" onclick="document.getElementById('changePasswordDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn btn-accent">Change Password</button>
+</div>
+</form>
+</dialog>
+
+<script>""" + DASHBOARD_JS_COMMON + """
 const monitorInstance="__INSTANCE__";
 let resolvedInstance=null;
 let logsLoaded=false;
 const monitorApiBase='/monitor/api';
+const apiBase=monitorApiBase;
 async function fetchJson(url, options){
 const opts=options||{};
 const headers=new Headers(opts.headers||{});
@@ -2106,7 +2348,7 @@ showAlert(h.error,'error');
 return;
 }
 lastHealth=h;
-renderSystem(h.system);
+renderSystem(h.system,h.access);
 renderScriptsStatus(scriptsStatus);
 renderInstance(h);
 const lu=document.getElementById('last-updated');
@@ -2114,23 +2356,6 @@ if(lu){lu.textContent='Live · updated '+new Date().toLocaleTimeString();}
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
-}
-function renderScriptsStatus(data){
-const el=document.getElementById('scripts-status');
-if(!el||!data||!data.scripts){
-return;
-}
-const items=Object.entries(data.scripts).map(([name,info])=>{
-const ok=info&&info.found;
-return `<span class="script-chip ${ok?'ok':'missing'}">${ok?ICON_CHECK:ICON_X} ${name}</span>`;
-}).join('');
-let extra='';
-if(data.missing&&data.missing.length){
-const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
-extra=`<div style="margin-top:6px;width:100%"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
-}
-el.innerHTML=(items||'')+extra;
-applyScriptsAvailability(data.scripts);
 }
 function applyScriptsAvailability(scripts){
 const healthOk=!!(scripts&&scripts['oa-health-check.sh']&&scripts['oa-health-check.sh'].found);
@@ -2204,44 +2429,6 @@ logsContent.innerHTML='<p style="color:var(--text-faint)">No logs available</p>'
 document.getElementById('logs-content').innerHTML=`<p style="color:var(--danger)">Error loading logs: ${e.message}</p>`;
 }
 }
-function escapeHtml(text){
-const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
-return text.replace(/[&<>"']/g,m=>map[m]);
-}
-function formatBytes(bytes){
-if(bytes===null||bytes===undefined)return 'N/A';
-const gb=bytes/1024/1024/1024;
-return gb.toFixed(1)+' GB';
-}
-function formatPercent(p){
-if(p===null||p===undefined)return 'N/A';
-return p.toFixed(1)+'%';
-}
-function meterClass(p){
-if(p===null||p===undefined)return '';
-if(p>=90)return 'crit';
-if(p>=70)return 'warn';
-return '';
-}
-function meter(p){
-if(p===null||p===undefined)return '';
-return `<div class="meter"><div class="meter-fill ${meterClass(p)}" style="width:${Math.min(p,100)}%"></div></div>`;
-}
-function renderSystem(sys){
-const el=document.getElementById('system');
-if(!sys){
-el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
-return;
-}
-el.innerHTML=`<div class="card-head"><h2>System</h2></div>
-<div class="stat-grid">
-<div class="stat"><div class="stat-label">CPU</div><div class="stat-value">${formatPercent(sys.cpu_percent)}</div>${meter(sys.cpu_percent)}</div>
-<div class="stat"><div class="stat-label">Load Avg</div><div class="stat-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
-<div class="stat"><div class="stat-label">RAM Used</div><div class="stat-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div>${meter(sys.mem_percent)}</div>
-<div class="stat"><div class="stat-label">Swap Used</div><div class="stat-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div>${meter(sys.swap_percent)}</div>
-<div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div>${meter(sys.disk_percent)}</div>
-</div>`;
-}
 async function post(path){
 return fetchJson(path,{method:'POST'});
 }
@@ -2288,30 +2475,6 @@ await post('/monitor/api/invalidate-session');
 setTimeout(loadInstance,1000);
 }
 let resetDialogHealth=null;
-function populateBrokerSelect(){
-const sel=document.getElementById('resetBroker');
-const h=resetDialogHealth||{};
-const current=h.broker||'';
-sel.innerHTML='';
-const keepOpt=document.createElement('option');
-keepOpt.value='';
-keepOpt.textContent=current?`Keep current broker (${current})`:'Keep current broker';
-sel.appendChild(keepOpt);
-(h.valid_brokers||[]).forEach(b=>{
-const opt=document.createElement('option');
-opt.value=b;
-opt.textContent=b;
-sel.appendChild(opt);
-});
-updateCallbackPreview();
-}
-function updateCallbackPreview(){
-const h=resetDialogHealth||{};
-const sel=document.getElementById('resetBroker');
-const chosen=(sel&&sel.value)||h.broker||'';
-const preview=document.getElementById('resetCallbackPreview');
-if(preview)preview.textContent=(h.domain&&chosen)?`Callback URL: https://${h.domain}/${chosen}/callback`:'';
-}
 function openResetAdminDialog(health){
 resetDialogHealth=health||{};
 const dlg=document.getElementById('resetAdminDialog');
@@ -2351,68 +2514,6 @@ return;
 }
 setTimeout(loadInstance,1000);
 }
-async function rebootServer(){
-if(!confirm('Reboot the server? This will reboot all instances on this server.'))return;
-if(!confirm('FINAL CONFIRMATION: The server will restart now. Continue?'))return;
-showAlert('Rebooting server... Connection will be lost shortly.','info');
-try{
-const r=await fetch('/monitor/api/reboot-server',{method:'POST'});
-const d=await r.json();
-showAlert(d.message,'success');
-}catch(e){
-showAlert('Reboot initiated (API connection lost as expected)','success');
-}
-}
-function showMaintenanceStatus(text){
-const statusEl=document.getElementById('maintenance-status');
-if(statusEl){statusEl.textContent=text||'';}
-}
-function showMaintenanceOutput(title,status,exitCode,output){
-const outputEl=document.getElementById('maintenance-output');
-const preEl=document.getElementById('maintenance-output-pre');
-const statusText=exitCode!==null&&exitCode!==undefined?`${status} (exit ${exitCode})`:status;
-showMaintenanceStatus(`${title} - ${statusText}`);
-if(outputEl){outputEl.style.display='block';}
-if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
-}
-async function pollJob(jobId,title){
-try{
-const job=await fetchJson(`${monitorApiBase}/jobs/${jobId}`);
-if(job.error){
-showAlert(job.error,'error');
-showMaintenanceOutput(title,'error',null,job.error);
-return;
-}
-if(job.status==='running'||job.status==='queued'){
-showMaintenanceStatus(`${title} - ${job.status}...`);
-const preEl=document.getElementById('maintenance-output-pre');
-const outputEl=document.getElementById('maintenance-output');
-if(outputEl){outputEl.style.display='block';}
-if(preEl){preEl.innerHTML=escapeHtml(job.output||'Running...');}
-setTimeout(()=>pollJob(jobId,title),2000);
-return;
-}
-const message=job.output||job.error||'No output';
-showMaintenanceOutput(title,job.status,job.exit_code,message);
-}catch(e){
-showAlert('Error: '+e.message,'error');
-showMaintenanceOutput(title,'error',null,e.message);
-}
-}
-async function startJob(endpoint,payload,title){
-showMaintenanceStatus(`${title} - starting...`);
-const outputEl=document.getElementById('maintenance-output');
-const preEl=document.getElementById('maintenance-output-pre');
-if(outputEl){outputEl.style.display='block';}
-if(preEl){preEl.innerHTML='Starting...';}
-const data=await fetchJson(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
-if(data.error){
-showAlert(data.error,'error');
-showMaintenanceOutput(title,'error',null,data.error);
-return;
-}
-pollJob(data.job_id,title);
-}
 function runHealthCheck(){
 const target=resolvedInstance||monitorInstance;
 if(!target){
@@ -2429,16 +2530,6 @@ return;
 }
 if(!confirm(`Update ${target}? This can take several minutes.`))return;
 startJob(`${monitorApiBase}/update`,{scope:'instance',instance:target},`Update ${target}`);
-}
-function showAlert(msg,type){
-const list=document.getElementById('toasts');
-if(!list)return;
-const t=document.createElement('div');
-t.className=`toast ${type}`;
-t.innerHTML=`${TOAST_ICONS[type]||TOAST_ICONS.info}<div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss" onclick="this.parentElement.remove()">×</button>`;
-t.querySelector('.toast-msg').textContent=msg;
-list.appendChild(t);
-if(type!=='error')setTimeout(()=>t.remove(),4000);
 }
 window.addEventListener('load',loadInstance);
 setInterval(loadInstance,30000);
@@ -2476,6 +2567,7 @@ setInterval(loadInstance,30000);
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
 <button class="icon-btn" title="Refresh" onclick="loadInstances()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+<button class="icon-btn" title="Change Password" onclick="changePassword()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></button>
 <a class="icon-btn" href="/logout" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
 </div>
 </div>
@@ -2580,16 +2672,24 @@ setInterval(loadInstance,30000);
 </form>
 </dialog>
 
-<script>
-const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
-const ICON_X='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>';
-const TOAST_ICONS={
-info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
-success:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>',
-error:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>'
-};
-const ICON_LOGS='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
-const ICON_CHEVRON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+<dialog id="changePasswordDialog" class="reset-admin-dialog">
+<form method="dialog" id="changePasswordForm">
+<h3 style="margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Change Admin Password</h3>
+<label class="reset-field-label">Current Password</label>
+<input type="password" id="cpCurrent" class="reset-input" autocomplete="current-password" required>
+<label class="reset-field-label">New Password</label>
+<input type="password" id="cpNew" class="reset-input" autocomplete="new-password" required>
+<label class="reset-field-label">Confirm New Password</label>
+<input type="password" id="cpConfirm" class="reset-input" autocomplete="new-password" required>
+<div class="reset-dialog-actions">
+<button type="button" class="btn btn-ghost" onclick="document.getElementById('changePasswordDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn btn-accent">Change Password</button>
+</div>
+</form>
+</dialog>
+
+<script>""" + DASHBOARD_JS_COMMON + """
+const apiBase='/api';
 let brokerStatusCache={};
 let logsCache={};
 let terminalInstances=[];
@@ -2635,7 +2735,7 @@ showAlert('Error: '+e.message,'error');
 function renderInstances(instances, health, initTerminal){
 const running=Object.values(health.instances||{}).filter(i=>i.status==='active').length;
 document.getElementById('summary').innerHTML=`<div class="kpi"><div class="kpi-label">Total Instances</div><div class="kpi-value">${instances.length}</div></div><div class="kpi"><div class="kpi-label">Running</div><div class="kpi-value success">${running}</div></div><div class="kpi"><div class="kpi-label">Stopped</div><div class="kpi-value danger">${instances.length-running}</div></div>`;
-renderSystem(health.system);
+renderSystem(health.system,health.access);
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
 const active=h.status==='active';
@@ -2786,23 +2886,6 @@ if(output){output.textContent=data.output||'';}
 if(output){output.textContent=e.message;}
 }
 }
-function renderScriptsStatus(data){
-const el=document.getElementById('scripts-status');
-if(!el||!data||!data.scripts){
-return;
-}
-const items=Object.entries(data.scripts).map(([name,info])=>{
-const ok=info&&info.found;
-return `<span class="script-chip ${ok?'ok':'missing'}">${ok?ICON_CHECK:ICON_X} ${name}</span>`;
-}).join('');
-let extra='';
-if(data.missing&&data.missing.length){
-const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
-extra=`<div style="margin-top:6px;width:100%"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
-}
-el.innerHTML=(items||'')+extra;
-applyScriptsAvailability(data.scripts);
-}
 function applyScriptsAvailability(scripts){
 const healthOk=!!(scripts&&scripts['oa-health-check.sh']&&scripts['oa-health-check.sh'].found);
 const updateOk=!!(scripts&&scripts['oa-update.sh']&&scripts['oa-update.sh'].found);
@@ -2841,100 +2924,12 @@ logsContent.innerHTML='<p style="color:var(--text-faint)">No logs available</p>'
 document.getElementById(`logs-content-${inst}`).innerHTML=`<p style="color:var(--danger)">Error loading logs: ${e.message}</p>`;
 }
 }
-function escapeHtml(text){
-const map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
-return text.replace(/[&<>"']/g,m=>map[m]);
-}
-function formatBytes(bytes){
-if(bytes===null||bytes===undefined)return 'N/A';
-const gb=bytes/1024/1024/1024;
-return gb.toFixed(1)+' GB';
-}
-function formatPercent(p){
-if(p===null||p===undefined)return 'N/A';
-return p.toFixed(1)+'%';
-}
-function meterClass(p){
-if(p===null||p===undefined)return '';
-if(p>=90)return 'crit';
-if(p>=70)return 'warn';
-return '';
-}
-function meter(p){
-if(p===null||p===undefined)return '';
-return `<div class="meter"><div class="meter-fill ${meterClass(p)}" style="width:${Math.min(p,100)}%"></div></div>`;
-}
-function renderSystem(sys){
-const el=document.getElementById('system');
-if(!sys){
-el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
-return;
-}
-el.innerHTML=`<div class="card-head"><h2>System</h2></div>
-<div class="stat-grid">
-<div class="stat"><div class="stat-label">CPU</div><div class="stat-value">${formatPercent(sys.cpu_percent)}</div>${meter(sys.cpu_percent)}</div>
-<div class="stat"><div class="stat-label">Load Avg</div><div class="stat-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
-<div class="stat"><div class="stat-label">RAM Used</div><div class="stat-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div>${meter(sys.mem_percent)}</div>
-<div class="stat"><div class="stat-label">Swap Used</div><div class="stat-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div>${meter(sys.swap_percent)}</div>
-<div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div>${meter(sys.disk_percent)}</div>
-</div>`;
-}
 async function restartAll(){
 if(!confirm('Restart all instances?'))return;
 showAlert('Restarting all...','info');
 const d=await fetchJson('/api/restart-all',{method:'POST'});
 showAlert(d.message,'success');
 setTimeout(loadInstances,2000);
-}
-function showMaintenanceStatus(text){
-const statusEl=document.getElementById('maintenance-status');
-if(statusEl){statusEl.textContent=text||'';}
-}
-function showMaintenanceOutput(title,status,exitCode,output){
-const outputEl=document.getElementById('maintenance-output');
-const preEl=document.getElementById('maintenance-output-pre');
-const statusText=exitCode!==null&&exitCode!==undefined?`${status} (exit ${exitCode})`:status;
-showMaintenanceStatus(`${title} - ${statusText}`);
-if(outputEl){outputEl.style.display='block';}
-if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
-}
-async function pollJob(jobId,title){
-try{
-const job=await fetchJson(`/api/jobs/${jobId}`);
-if(job.error){
-showAlert(job.error,'error');
-showMaintenanceOutput(title,'error',null,job.error);
-return;
-}
-if(job.status==='running'||job.status==='queued'){
-showMaintenanceStatus(`${title} - ${job.status}...`);
-const preEl=document.getElementById('maintenance-output-pre');
-const outputEl=document.getElementById('maintenance-output');
-if(outputEl){outputEl.style.display='block';}
-if(preEl){preEl.innerHTML=escapeHtml(job.output||'Running...');}
-setTimeout(()=>pollJob(jobId,title),2000);
-return;
-}
-const message=job.output||job.error||'No output';
-showMaintenanceOutput(title,job.status,job.exit_code,message);
-}catch(e){
-showAlert('Error: '+e.message,'error');
-showMaintenanceOutput(title,'error',null,e.message);
-}
-}
-async function startJob(endpoint,payload,title){
-showMaintenanceStatus(`${title} - starting...`);
-const outputEl=document.getElementById('maintenance-output');
-const preEl=document.getElementById('maintenance-output-pre');
-if(outputEl){outputEl.style.display='block';}
-if(preEl){preEl.innerHTML='Starting...';}
-const data=await fetchJson(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
-if(data.error){
-showAlert(data.error,'error');
-showMaintenanceOutput(title,'error',null,data.error);
-return;
-}
-pollJob(data.job_id,title);
 }
 function runHealthCheck(scope,instance){
 const title=scope==='instance'?`Health Check (${instance})`:`Health Check (${scope})`;
@@ -2961,30 +2956,6 @@ showAlert(`Invalidating session for ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
 let resetDialogHealth=null;
-function populateBrokerSelect(){
-const sel=document.getElementById('resetBroker');
-const h=resetDialogHealth||{};
-const current=h.broker||'';
-sel.innerHTML='';
-const keepOpt=document.createElement('option');
-keepOpt.value='';
-keepOpt.textContent=current?`Keep current broker (${current})`:'Keep current broker';
-sel.appendChild(keepOpt);
-(h.valid_brokers||[]).forEach(b=>{
-const opt=document.createElement('option');
-opt.value=b;
-opt.textContent=b;
-sel.appendChild(opt);
-});
-updateCallbackPreview();
-}
-function updateCallbackPreview(){
-const h=resetDialogHealth||{};
-const sel=document.getElementById('resetBroker');
-const chosen=(sel&&sel.value)||h.broker||'';
-const preview=document.getElementById('resetCallbackPreview');
-if(preview)preview.textContent=(h.domain&&chosen)?`Callback URL: https://${h.domain}/${chosen}/callback`:'';
-}
 function openResetAdminDialog(inst){
 resetDialogHealth=(lastHealthAll&&lastHealthAll[inst])||{};
 const dlg=document.getElementById('resetAdminDialog');
@@ -3035,27 +3006,6 @@ if(!confirm(`Start ${inst}?`))return;
 await fetchJson('/api/start-instance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
 showAlert(`Starting ${inst}`,'info');
 setTimeout(loadInstances,1000);
-}
-async function rebootServer(){
-if(!confirm('Are you sure you want to reboot the server? This will disconnect all instances!'))return;
-if(!confirm('FINAL CONFIRMATION: The server will restart now. Continue?'))return;
-showAlert('Rebooting server... Connection will be lost shortly.','info');
-try{
-const d=await fetchJson('/api/reboot-server',{method:'POST'});
-showAlert(d.message,'success');
-}catch(e){
-showAlert('Reboot initiated (API connection lost as expected)','success');
-}
-}
-function showAlert(msg,type){
-const list=document.getElementById('toasts');
-if(!list)return;
-const t=document.createElement('div');
-t.className=`toast ${type}`;
-t.innerHTML=`${TOAST_ICONS[type]||TOAST_ICONS.info}<div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss" onclick="this.parentElement.remove()">×</button>`;
-t.querySelector('.toast-msg').textContent=msg;
-list.appendChild(t);
-if(type!=='error')setTimeout(()=>t.remove(),4000);
 }
 window.addEventListener('load',loadInstances);
 setInterval(loadInstances,30000);
