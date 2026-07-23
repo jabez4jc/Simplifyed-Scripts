@@ -2076,6 +2076,10 @@ if(inst){headers.set('X-OpenAlgo-Instance',inst);}
 }
 opts.headers=headers;
 const r=await fetch(url,opts);
+if(r.status===401){
+window.location.href=`/monitor/login?next=${encodeURIComponent(location.pathname+location.search)}`;
+return new Promise(()=>{});
+}
 const text=await r.text();
 const contentType=(r.headers.get('content-type')||'').toLowerCase();
 try{
@@ -2592,6 +2596,10 @@ let terminalInstances=[];
 let terminalInitialized=false;
 async function fetchJson(url, options){
 const r=await fetch(url,options);
+if(r.status===401){
+window.location.href=`/login?next=${encodeURIComponent(location.pathname+location.search)}`;
+return new Promise(()=>{});
+}
 const text=await r.text();
 const contentType=(r.headers.get('content-type')||'').toLowerCase();
 try{

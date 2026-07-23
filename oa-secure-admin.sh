@@ -22,6 +22,12 @@
 #   4. Optionally close public access to port 8888 and bind the API to
 #      127.0.0.1 once nginx is confirmed as the only way in.
 #
+# Usage:
+#   oa-secure-admin.sh                run all 4 steps (standalone use)
+#   oa-secure-admin.sh --domain-only  skip steps 1-2, run only 3-4
+#                                     (used by api-manager.sh, which has
+#                                     its own dedicated password menu item)
+#
 # Safe to re-run: an already-configured manager domain is detected and
 # left alone unless you choose to reconfigure it.
 
@@ -82,6 +88,11 @@ step_credentials() {
     if [ ! -f "$API_SCRIPT" ]; then
         log_message "$API_SCRIPT not found - install/update it via api-manager.sh first." "$RED"
         return 1
+    fi
+    if [ -f "/etc/openalgo/admin-auth.json" ]; then
+        log_message "Admin login already configured." "$GREEN"
+        read -p "Reset it? (y/N): " reset_choice
+        [[ "$reset_choice" =~ ^[Yy]$ ]] || return 0
     fi
     python3 "$API_SCRIPT" --set-admin-password
 }
@@ -241,8 +252,11 @@ step_close_port() {
 main() {
     need_root
     log_message "OpenAlgo Admin Security Setup" "$BLUE"
-    step_credentials
-    step_clean_vhost_auth
+
+    if [ "${1:-}" != "--domain-only" ]; then
+        step_credentials
+        step_clean_vhost_auth
+    fi
     step_manager_domain
     step_close_port
 

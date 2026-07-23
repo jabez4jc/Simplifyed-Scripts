@@ -49,7 +49,7 @@ menu_main() {
         2) show_status ;;
         3) show_logs ;;
         4) python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password; read -p "Press Enter to continue..."; menu_main ;;
-        5) run_secure_admin; read -p "Press Enter to continue..."; menu_main ;;
+        5) run_secure_admin_domain_only; read -p "Press Enter to continue..."; menu_main ;;
         6) exit 0 ;;
         *) echo "Invalid option"; sleep 2; menu_main ;;
     esac
@@ -157,7 +157,7 @@ SVCEOF
     fi
 }
 
-run_secure_admin() {
+run_secure_admin_domain_only() {
     local script=""
     if [ -f "/usr/local/bin/oa-secure-admin.sh" ]; then
         script="/usr/local/bin/oa-secure-admin.sh"
@@ -167,7 +167,7 @@ run_secure_admin() {
         echo -e "${RED}❌ oa-secure-admin.sh not found. Run 'Setup / Update' first to link it.${NC}"
         return 1
     fi
-    bash "$script"
+    bash "$script" --domain-only
 }
 
 setup_admin_login() {
@@ -246,6 +246,8 @@ EOF
     setup_service || { read -p "Press Enter to continue..."; menu_main; }
     echo ""
     setup_firewall
+    echo ""
+    run_secure_admin_domain_only
     echo ""
     show_status
 }
