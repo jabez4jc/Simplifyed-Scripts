@@ -1441,7 +1441,17 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             )
         except Exception:
             pass
-    
+
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "reload", "nginx"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception:
+            pass
+
     def handle_stop_instance(self, instance):
         """Stop specific instance"""
         service_name = self._service_name(instance)

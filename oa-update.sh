@@ -515,6 +515,7 @@ update_instance() {
             sleep 3
             if systemctl is-active --quiet "$service_name"; then
                 log_message "✓ Service restarted successfully" "$GREEN"
+                sudo systemctl reload nginx
             else
                 log_message "❌ Service failed to restart" "$RED"
             fi
@@ -642,6 +643,7 @@ update_instance() {
         # Verify service is running
         if systemctl is-active --quiet "$service_name"; then
             log_message "✓ Service restarted successfully" "$GREEN"
+            sudo systemctl reload nginx
         else
             log_message "❌ Service failed to restart!" "$RED"
             log_message "Backup available at: $backup_dir" "$YELLOW"
