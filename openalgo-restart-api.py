@@ -20,6 +20,21 @@ from datetime import datetime, timedelta, timezone
 
 PORT = 8888
 
+_SERVER_IP_CACHE = None
+
+
+def get_server_ip():
+    """Best-effort primary outbound IP, same convention as api-manager.sh's `hostname -I`."""
+    global _SERVER_IP_CACHE
+    if _SERVER_IP_CACHE is None:
+        try:
+            out = subprocess.check_output(['hostname', '-I'], text=True, timeout=2).strip()
+            _SERVER_IP_CACHE = out.split()[0] if out else ''
+        except Exception:
+            _SERVER_IP_CACHE = ''
+    return _SERVER_IP_CACHE
+
+
 DASHBOARD_CSS = """
 :root{
 --bg:#0a0e17;--bg-elev:#0e1420;--surface:#121a29;--surface-2:#182135;--border:#232e44;--border-soft:#1b2438;
@@ -1721,6 +1736,8 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def serve_monitor_ui(self):
         """Serve single-instance monitor UI"""
         instance = self._resolve_monitor_instance() or ""
+        server_ip = get_server_ip()
+        manager_url = f"http://{server_ip}:{PORT}/" if server_ip else "/"
         html = ("""<!DOCTYPE html>
 <html>
 <head>
@@ -1737,7 +1754,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 </div>
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
-<a class="icon-btn" href="/" title="All Instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></a>
+<a class="icon-btn" href="__MANAGER_URL__" title="All Instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></a>
 <button class="icon-btn" title="Refresh" onclick="loadInstance()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
 </div>
 </div>
@@ -2193,7 +2210,7 @@ setInterval(loadInstance,30000);
 </body>
 </html>""")
 
-        html = html.replace("__INSTANCE__", instance)
+        html = html.replace("__INSTANCE__", instance).replace("__MANAGER_URL__", manager_url)
         html_bytes = html.encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -2404,7 +2421,8 @@ const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurre
 const actions=active
 ?`<button class="btn btn-sm btn-danger" onclick="stop('${inst}')">Stop</button>`
 :`<button class="btn btn-sm btn-success" onclick="start('${inst}')">Start</button>`;
-return`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+' Inactive'}</span></div><a class="icon-btn" href="/monitor?instance=${inst}" target="_blank" rel="noopener" title="Open monitor page for ${inst}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg></a></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="runHealthCheck('instance','${inst}')">Health</button><button class="btn btn-sm" onclick="updateInstance('${inst}')">Update</button><button class="btn btn-sm" onclick="restart('${inst}')">Restart</button><div class="danger-group"><button class="btn btn-sm" onclick="invalidate('${inst}')">Invalidate</button><button class="btn btn-sm btn-danger" onclick="resetAdminUser('${inst}')">Factory Reset</button>${actions}</div></div></div>`;
+const monitorHref=domain!=='Unknown'?`https://${domain}/monitor`:`/monitor?instance=${inst}`;
+return`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+' Inactive'}</span></div><a class="icon-btn" href="${monitorHref}" target="_blank" rel="noopener" title="Open monitor page for ${inst}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg></a></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="runHealthCheck('instance','${inst}')">Health</button><button class="btn btn-sm" onclick="updateInstance('${inst}')">Update</button><button class="btn btn-sm" onclick="restart('${inst}')">Restart</button><div class="danger-group"><button class="btn btn-sm" onclick="invalidate('${inst}')">Invalidate</button><button class="btn btn-sm btn-danger" onclick="resetAdminUser('${inst}')">Factory Reset</button>${actions}</div></div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 if(initTerminal && !terminalInitialized){
