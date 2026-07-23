@@ -24,7 +24,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Generates unique configurations per instance (ports, domains, databases)
    - Creates systemd services and Nginx reverse proxy configs
    - Handles SSL certificate generation via Let's Encrypt
-   - Bootstraps a shared htpasswd file (`/etc/nginx/openalgo-admin.htpasswd`) once per server and protects each instance's `/monitor` location with `auth_basic`
+   - `/monitor` is a plain reverse proxy to the admin API - login is handled by openalgo-restart-api.py itself, not nginx
 
 3. **update_swap_4gb.sh** - Fixed swap utility
    - Creates or replaces fixed 4GB swap space to prevent OOM during broker authentication
@@ -80,11 +80,12 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Simplifies initial setup process
 
 11. **oa-secure-admin.sh** - Admin auth retrofit utility
-   - Adds HTTP Basic Auth (shared htpasswd) in front of every instance's `/monitor` page
+   - Sets/resets the admin login via `openalgo-restart-api.py --set-admin-password` (app-owned credential store, not nginx)
+   - Removes any leftover `auth_basic` directives from an earlier version of this script, so the app's own login page is the only gate
    - Optionally puts the all-instances manager page behind its own domain + TLS instead of raw `IP:8888`
    - Sets `MANAGER_DOMAIN` for openalgo-restart-api.py via a systemd drop-in so in-app links use the new domain
    - Optionally closes public access to port 8888 and binds the API to localhost once nginx is confirmed working
-   - Safe to re-run: detects existing credentials, already-patched vhosts, and an already-configured domain
+   - Safe to re-run: detects an already-configured domain and leaves it alone unless you choose to reconfigure
 
 ## Key Implementation Patterns
 
@@ -201,6 +202,7 @@ Update the port calculation formulas in the instance loop (lines 272-274 in mult
 - File permissions restrict instance directories to www-data user
 - Keys directory (700 permissions) holds sensitive authentication data
 - All scripts require sudo; no security bypass mechanisms
+- The admin dashboard (`openalgo-restart-api.py`, port 8888 - Factory Reset, Reboot Server, per-instance restart/stop/start, SQL terminal) requires login: a styled page + PBKDF2-hashed credentials in `/etc/openalgo/admin-auth.json` + an in-memory session cookie, gating both `/` (manager) and `/monitor` (per-instance). Set/change credentials with `sudo python3 openalgo-restart-api.py --set-admin-password` (also offered by `api-manager.sh` on first install and via its menu, and by `oa-secure-admin.sh`). This intentionally replaces nginx `auth_basic` so the login prompt is stylable rather than the browser's native dialog - don't reintroduce `auth_basic` alongside it, that stacks two logins.
 
 **Version Management:**
 - OpenAlgo devs increment `ENV_CONFIG_VERSION` ONLY when `.env` structure changes

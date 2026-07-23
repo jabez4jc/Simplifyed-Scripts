@@ -1,21 +1,29 @@
 #!/bin/bash
 # oa-secure-admin.sh
-# Retrofit HTTP Basic Auth in front of the OpenAlgo admin pages
+# Retrofit login protection in front of the OpenAlgo admin pages
 # (per-instance /monitor and the all-instances manager on :8888) on a
 # server that was already set up before this protection existed.
 #
-# What it does, in order (each step can be skipped):
-#   1. Create/reuse a shared htpasswd file for admin login.
-#   2. Add auth_basic to the /monitor location in every instance's nginx
-#      vhost that doesn't already have it.
-#   3. Optionally put the manager page (currently only reachable at
-#      http://<server-ip>:8888/) behind its own domain + TLS + the same
-#      login, via a new nginx vhost + certbot.
-#   4. Optionally close public access to port 8888 in ufw and bind the
-#      API to 127.0.0.1 once nginx is confirmed as the only way in.
+# Auth is handled by openalgo-restart-api.py itself (a styled login page +
+# session cookie), not nginx's auth_basic - that way the login prompt is
+# our own UI instead of the browser's native Basic Auth dialog. If an
+# earlier version of this script (or multi-install.sh) already added
+# auth_basic to your nginx vhosts, this run removes it, since leaving both
+# in place would mean two logins stacked on top of each other.
 #
-# Safe to re-run: existing credentials, already-patched vhosts, and an
-# already-configured manager domain are detected and left alone.
+# What it does, in order (each step can be skipped):
+#   1. Set/reset the admin login (delegates to openalgo-restart-api.py
+#      --set-admin-password, which owns the credential store).
+#   2. Remove any leftover nginx auth_basic directives from a previous
+#      run of this script, since the app now handles auth end-to-end.
+#   3. Optionally put the manager page (currently only reachable at
+#      http://<server-ip>:8888/) behind its own domain + TLS instead of
+#      raw IP:port.
+#   4. Optionally close public access to port 8888 and bind the API to
+#      127.0.0.1 once nginx is confirmed as the only way in.
+#
+# Safe to re-run: an already-configured manager domain is detected and
+# left alone unless you choose to reconfigure it.
 
 set -uo pipefail
 
@@ -38,7 +46,8 @@ need_root() {
     fi
 }
 
-ADMIN_HTPASSWD="/etc/nginx/openalgo-admin.htpasswd"
+API_SCRIPT="/usr/local/bin/openalgo-restart-api.py"
+LEGACY_HTPASSWD="/etc/nginx/openalgo-admin.htpasswd"
 SITES_AVAILABLE="/etc/nginx/sites-available"
 SERVICE_NAME="openalgo-restart-api"
 OVERRIDE_DIR="/etc/systemd/system/${SERVICE_NAME}.service.d"
@@ -70,77 +79,46 @@ write_override() {
 
 step_credentials() {
     log_message "\n=== STEP 1: Admin login ===" "$YELLOW"
-    if [ -f "$ADMIN_HTPASSWD" ]; then
-        log_message "Credentials already exist at $ADMIN_HTPASSWD." "$GREEN"
-        read -p "Reset them? (y/N): " reset_choice
-        [[ "$reset_choice" =~ ^[Yy]$ ]] || return 0
+    if [ ! -f "$API_SCRIPT" ]; then
+        log_message "$API_SCRIPT not found - install/update it via api-manager.sh first." "$RED"
+        return 1
     fi
-
-    read -p "Admin username [admin]: " admin_user
-    admin_user=${admin_user:-admin}
-    while true; do
-        read -s -p "Admin password: " admin_pass
-        echo
-        read -s -p "Confirm password: " admin_pass_confirm
-        echo
-        if [ -z "$admin_pass" ]; then
-            log_message "Password cannot be empty." "$RED"
-            continue
-        fi
-        if [ "$admin_pass" != "$admin_pass_confirm" ]; then
-            log_message "Passwords did not match, try again." "$RED"
-            continue
-        fi
-        break
-    done
-    local admin_hash
-    admin_hash=$(openssl passwd -apr1 "$admin_pass")
-    echo "${admin_user}:${admin_hash}" > "$ADMIN_HTPASSWD"
-    chmod 640 "$ADMIN_HTPASSWD"
-    chown root:www-data "$ADMIN_HTPASSWD"
-    unset admin_pass admin_pass_confirm admin_hash
-    log_message "✅ Admin credentials saved to $ADMIN_HTPASSWD" "$GREEN"
+    python3 "$API_SCRIPT" --set-admin-password
 }
 
-step_patch_vhosts() {
-    log_message "\n=== STEP 2: Protect existing /monitor endpoints ===" "$YELLOW"
+step_clean_vhost_auth() {
+    log_message "\n=== STEP 2: Remove nginx-level auth (superseded by app login) ===" "$YELLOW"
     if [ ! -d "$SITES_AVAILABLE" ]; then
         log_message "No $SITES_AVAILABLE directory found, skipping." "$YELLOW"
         return 0
     fi
 
-    local patched=0 already=0 skipped=0
+    local cleaned=0
     local file
     for file in "$SITES_AVAILABLE"/*; do
         [ -f "$file" ] || continue
-        if ! grep -q 'location /monitor' "$file"; then
-            skipped=$((skipped+1))
+        if ! grep -q 'auth_basic_user_file .*openalgo-admin.htpasswd' "$file"; then
             continue
         fi
-        if grep -q 'auth_basic_user_file .*openalgo-admin.htpasswd' "$file"; then
-            already=$((already+1))
-            continue
-        fi
-        awk -v htpasswd="$ADMIN_HTPASSWD" '
-            {
-                print
-                if ($0 ~ /^[[:space:]]*location \/monitor[[:space:]]*\{[[:space:]]*$/) {
-                    print "        auth_basic \"OpenAlgo Admin\";"
-                    print "        auth_basic_user_file " htpasswd ";"
-                }
-            }
-        ' "$file" > "${file}.oa-secure-tmp" && mv "${file}.oa-secure-tmp" "$file"
-        log_message "  patched: $file" "$GREEN"
-        patched=$((patched+1))
+        sed -i \
+            -e '/auth_basic "OpenAlgo Admin";/d' \
+            -e '/auth_basic_user_file .*openalgo-admin\.htpasswd;/d' \
+            "$file"
+        log_message "  cleaned: $file" "$GREEN"
+        cleaned=$((cleaned+1))
     done
-    log_message "Done. Patched: $patched, already protected: $already, no /monitor block: $skipped." "$GREEN"
+    log_message "Done. Cleaned: $cleaned vhost(s)." "$GREEN"
 
-    if [ "$patched" -gt 0 ]; then
+    if [ "$cleaned" -gt 0 ]; then
         if nginx -t && systemctl reload nginx; then
             log_message "✅ nginx reloaded." "$GREEN"
         else
-            log_message "nginx config test failed after patching — check the files above before reloading manually." "$RED"
+            log_message "nginx config test failed after cleanup — check the files above before reloading manually." "$RED"
         fi
+    fi
+
+    if [ -f "$LEGACY_HTPASSWD" ]; then
+        log_message "Note: $LEGACY_HTPASSWD is no longer used by anything and can be deleted whenever you like." "$BLUE"
     fi
 }
 
@@ -212,9 +190,9 @@ server {
     add_header X-Content-Type-Options nosniff;
     add_header Strict-Transport-Security "max-age=63072000" always;
 
+    # Auth is handled by openalgo-restart-api.py's own login page/session,
+    # not nginx - this is a plain reverse proxy.
     location / {
-        auth_basic "OpenAlgo Admin";
-        auth_basic_user_file $ADMIN_HTPASSWD;
         proxy_pass http://127.0.0.1:8888;
         proxy_http_version 1.1;
         proxy_read_timeout 60s;
@@ -264,7 +242,7 @@ main() {
     need_root
     log_message "OpenAlgo Admin Security Setup" "$BLUE"
     step_credentials
-    step_patch_vhosts
+    step_clean_vhost_auth
     step_manager_domain
     step_close_port
 

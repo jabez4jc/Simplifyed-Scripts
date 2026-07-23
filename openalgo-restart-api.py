@@ -14,8 +14,12 @@ import time
 import uuid
 import re
 import shutil
+import hashlib
+import hmac
+import secrets
+import getpass
 from threading import Thread, Lock
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -49,6 +53,75 @@ def get_server_ip():
                 ip = ''
         _SERVER_IP_CACHE = ip
     return _SERVER_IP_CACHE
+
+
+CREDENTIALS_FILE = '/etc/openalgo/admin-auth.json'
+SESSION_COOKIE = 'oa_session'
+SESSION_TTL_SECONDS = 12 * 3600
+PBKDF2_ITERATIONS = 260000
+
+_SESSIONS = {}
+_SESSIONS_LOCK = Lock()
+
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(salt), PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${dk.hex()}"
+
+
+def verify_password(password, stored):
+    try:
+        algo, iterations, salt, hash_hex = stored.split('$')
+        dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(salt), int(iterations))
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    except Exception:
+        return False
+
+
+def load_credentials():
+    try:
+        with open(CREDENTIALS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_credentials(username, password):
+    os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
+    data = {"username": username, "hash": hash_password(password)}
+    with open(CREDENTIALS_FILE, 'w') as f:
+        json.dump(data, f)
+    os.chmod(CREDENTIALS_FILE, 0o600)
+
+
+def create_session():
+    token = secrets.token_urlsafe(32)
+    with _SESSIONS_LOCK:
+        _SESSIONS[token] = time.time() + SESSION_TTL_SECONDS
+    return token
+
+
+def touch_session(token):
+    """Validate a session token and slide its expiry forward. Returns True if valid."""
+    with _SESSIONS_LOCK:
+        expiry = _SESSIONS.get(token)
+        if expiry is None:
+            return False
+        if expiry < time.time():
+            del _SESSIONS[token]
+            return False
+        _SESSIONS[token] = time.time() + SESSION_TTL_SECONDS
+        return True
+
+
+def destroy_session(token):
+    with _SESSIONS_LOCK:
+        _SESSIONS.pop(token, None)
+
+
+def _esc_attr(s):
+    return (s or '').replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
 
 
 DASHBOARD_CSS = """
@@ -894,10 +967,140 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": "Instance not specified"}, 400)
             return None
         return instance
+
+    def _get_session_token(self):
+        cookie_header = self.headers.get('Cookie', '')
+        for part in cookie_header.split(';'):
+            part = part.strip()
+            if part.startswith(SESSION_COOKIE + '='):
+                return part.split('=', 1)[1]
+        return None
+
+    def _is_authenticated(self):
+        token = self._get_session_token()
+        if not token:
+            return False
+        return touch_session(token)
+
+    def _login_prefix(self, path):
+        """nginx only proxies /monitor* to this process for per-instance domains,
+        so the login page must live under the same prefix the request arrived on."""
+        return '/monitor' if path.startswith('/monitor') else ''
+
+    def _redirect_to_login(self, path):
+        prefix = self._login_prefix(path)
+        target = f"{prefix}/login?next={quote(path, safe='')}"
+        self.send_response(302)
+        self.send_header('Location', target)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def serve_login_page(self, path, error=False):
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        prefix = self._login_prefix(path)
+        default_next = prefix if prefix else '/'
+        next_path = params.get('next', [default_next])[0]
+        if not next_path.startswith('/'):
+            next_path = default_next
+        action = f"{prefix}/login-submit"
+        error_html = '<div class="login-error">Invalid username or password.</div>' if error else ''
+        html = ("""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAlgo Admin Login</title>
+<style>""" + DASHBOARD_CSS + """
+body{display:flex;align-items:center;justify-content:center}
+.login-card{width:100%;max-width:360px;padding:28px}
+.login-card h1{font-size:16px;font-weight:650;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.login-card h1 svg{color:var(--accent)}
+.login-card p.sub{font-size:12.5px;color:var(--text-dim);margin-bottom:20px}
+.login-error{background:var(--danger-soft);color:var(--danger);border:1px solid rgba(244,88,110,.35);border-radius:var(--radius-sm);padding:9px 12px;font-size:12.5px;margin-bottom:14px}
+.login-card form{display:flex;flex-direction:column;gap:12px}
+.login-card button{margin-top:4px}
+</style>
+</head>
+<body>
+<div class="card login-card">
+<h1><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>OpenAlgo Admin</h1>
+<p class="sub">Sign in to continue</p>
+""" + error_html + """
+<form method="POST" action=\"""" + _esc_attr(action) + """\">
+<div>
+<label class="reset-field-label">Username</label>
+<input class="reset-input" type="text" name="username" autocomplete="username" autofocus required>
+</div>
+<div>
+<label class="reset-field-label">Password</label>
+<input class="reset-input" type="password" name="password" autocomplete="current-password" required>
+</div>
+<input type="hidden" name="next" value=\"""" + _esc_attr(next_path) + """\">
+<button type="submit" class="btn btn-accent">Sign in</button>
+</form>
+</div>
+</body>
+</html>""")
+        html_bytes = html.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Content-Length', len(html_bytes))
+        self.end_headers()
+        self.wfile.write(html_bytes)
+
+    def handle_login_submit(self, path, body):
+        prefix = self._login_prefix(path)
+        fields = parse_qs(body)
+        username = fields.get('username', [''])[0]
+        password = fields.get('password', [''])[0]
+        next_path = fields.get('next', [prefix if prefix else '/'])[0]
+        if not next_path.startswith('/'):
+            next_path = prefix if prefix else '/'
+
+        creds = load_credentials()
+        ok = bool(creds) and username == creds.get('username') and verify_password(password, creds.get('hash', ''))
+        if not ok:
+            self.serve_login_page(path, error=True)
+            return
+
+        token = create_session()
+        self.send_response(302)
+        self.send_header('Location', next_path)
+        cookie = f"{SESSION_COOKIE}={token}; HttpOnly; Path=/; Max-Age={SESSION_TTL_SECONDS}; SameSite=Lax"
+        if self.headers.get('X-Forwarded-Proto', '').lower() == 'https':
+            cookie += '; Secure'
+        self.send_header('Set-Cookie', cookie)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def handle_logout(self, path):
+        token = self._get_session_token()
+        if token:
+            destroy_session(token)
+        prefix = self._login_prefix(path)
+        self.send_response(302)
+        self.send_header('Location', f"{prefix}/login")
+        self.send_header('Set-Cookie', f"{SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax")
+        self.send_header('Content-Length', '0')
+        self.end_headers()
     
     def do_GET(self):
         """Handle GET requests"""
         path = urlparse(self.path).path
+        if path in ('/login', '/monitor/login'):
+            self.serve_login_page(path)
+            return
+        if path in ('/logout', '/monitor/logout'):
+            self.handle_logout(path)
+            return
+        if path != '/health' and not self._is_authenticated():
+            if path in ('/', '/index.html', '/monitor', '/monitor/'):
+                self._redirect_to_login(path)
+            else:
+                self.send_json({"error": "Authentication required"}, 401)
+            return
         if path == '/monitor' or path == '/monitor/':
             self.serve_monitor_ui()
         elif path == '/monitor/api/health':
@@ -951,16 +1154,24 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     
     def do_POST(self):
         """Handle POST requests"""
+        path = urlparse(self.path).path
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else ''
-        
+
+        if path in ('/login-submit', '/monitor/login-submit'):
+            self.handle_login_submit(path, body)
+            return
+
+        if not self._is_authenticated():
+            self.send_json({"error": "Authentication required"}, 401)
+            return
+
         try:
             data = json.loads(body) if body else {}
         except:
             self.send_json({"error": "Invalid JSON"}, 400)
             return
-        
-        path = urlparse(self.path).path
+
         if path == '/monitor/api/restart':
             instance = self._require_monitor_instance()
             if instance:
@@ -1776,6 +1987,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
 <a class="icon-btn" href="__MANAGER_URL__" title="All Instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></a>
 <button class="icon-btn" title="Refresh" onclick="loadInstance()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+<a class="icon-btn" href="/monitor/logout" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
 </div>
 </div>
 <main>
@@ -2260,6 +2472,7 @@ setInterval(loadInstance,30000);
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
 <button class="icon-btn" title="Refresh" onclick="loadInstances()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+<a class="icon-btn" href="/logout" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
 </div>
 </div>
 <main>
@@ -2870,6 +3083,20 @@ setInterval(loadInstances,30000);
         pass
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--set-admin-password':
+        username = input("Admin username [admin]: ").strip() or "admin"
+        password = getpass.getpass("Admin password: ")
+        confirm = getpass.getpass("Confirm password: ")
+        if not password:
+            print("Password cannot be empty.", flush=True)
+            sys.exit(1)
+        if password != confirm:
+            print("Passwords did not match.", flush=True)
+            sys.exit(1)
+        save_credentials(username, password)
+        print(f"Saved admin credentials to {CREDENTIALS_FILE}", flush=True)
+        sys.exit(0)
+
     PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8888
 
     class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

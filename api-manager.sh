@@ -37,16 +37,18 @@ menu_main() {
     echo "1) Setup / Update OpenAlgo Manager"
     echo "2) Show Status & URL"
     echo "3) View Logs"
-    echo "4) Exit"
+    echo "4) Change Admin Password"
+    echo "5) Exit"
     echo ""
-    read -p "Select option [1-4]: " choice
+    read -p "Select option [1-5]: " choice
     echo ""
-    
+
     case $choice in
         1) setup_update ;;
         2) show_status ;;
         3) show_logs ;;
-        4) exit 0 ;;
+        4) python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password; read -p "Press Enter to continue..."; menu_main ;;
+        5) exit 0 ;;
         *) echo "Invalid option"; sleep 2; menu_main ;;
     esac
 }
@@ -153,6 +155,19 @@ SVCEOF
     fi
 }
 
+setup_admin_login() {
+    echo -e "${YELLOW}Checking admin login...${NC}"
+
+    if [ -f "/etc/openalgo/admin-auth.json" ]; then
+        echo -e "${GREEN}✅ Admin login already configured${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}No admin login set yet - this protects the dashboard's Factory Reset,${NC}"
+    echo -e "${BLUE}Reboot Server, and other destructive actions behind a login page.${NC}"
+    python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password
+}
+
 setup_firewall() {
     echo -e "${YELLOW}Configuring firewall...${NC}"
     
@@ -210,6 +225,8 @@ EOF
     echo ""
 
     install_api || { read -p "Press Enter to continue..."; menu_main; }
+    echo ""
+    setup_admin_login
     echo ""
     setup_service || { read -p "Press Enter to continue..."; menu_main; }
     echo ""
