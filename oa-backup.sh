@@ -141,11 +141,13 @@ backup_full_instance() {
 # Backup nginx configuration
 backup_nginx_config() {
     local instance_name="$1"
+    local env_file="$BASE_DIR/$instance_name/.env"
     local domain=""
-    
-    # Find domain from nginx config
-    domain=$(ls -1 /etc/nginx/sites-available/ 2>/dev/null | grep -i "$instance_name" | head -1)
-    
+
+    if [ -f "$env_file" ]; then
+        domain=$(sudo grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
+    fi
+
     if [ -z "$domain" ]; then
         return 0
     fi

@@ -7,11 +7,6 @@ NGINX_ENABLED="/etc/nginx/sites-enabled"
 
 # === Functions ===
 
-# Extract domain from DEPLOY_NAME
-extract_domain() {
-    echo "$1" | sed 's/-[^-]*$//' | sed 's/-/./g'
-}
-
 get_service_name() {
     local instance_dir="$1"
     local fallback_name="$2"
@@ -34,11 +29,16 @@ get_service_name() {
 remove_instance() {
     local DEPLOY_NAME="$1"
     local INSTANCE_DIR="$BASE_DIR/$DEPLOY_NAME"
+    local ENV_FILE="$INSTANCE_DIR/.env"
     local SERVICE_NAME
     SERVICE_NAME=$(get_service_name "$INSTANCE_DIR" "$DEPLOY_NAME")
-    local DOMAIN=$(extract_domain "$DEPLOY_NAME")
-    local NGINX_CONF="$NGINX_AVAILABLE/$DOMAIN.conf"
-    local NGINX_LINK="$NGINX_ENABLED/$DOMAIN.conf"
+    local DOMAIN=""
+    if [ -f "$ENV_FILE" ]; then
+        DOMAIN=$(grep -E "^DOMAIN=" "$ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+    # Nginx configs are written as sites-available/<domain> (no extension) - see multi-install.sh
+    local NGINX_CONF="$NGINX_AVAILABLE/$DOMAIN"
+    local NGINX_LINK="$NGINX_ENABLED/$DOMAIN"
     local SOCKET_FILE="$INSTANCE_DIR/openalgo.sock"
 
     echo "🔧 Removing instance: $DEPLOY_NAME"
@@ -59,12 +59,16 @@ remove_instance() {
     sudo rm -rf "$INSTANCE_DIR"
     sudo rm -f "$SOCKET_FILE"
 
-    echo "🧹 Cleaning nginx config for domain: $DOMAIN"
-    sudo rm -f "$NGINX_CONF" "$NGINX_LINK"
+    if [ -n "$DOMAIN" ]; then
+        echo "🧹 Cleaning nginx config for domain: $DOMAIN"
+        sudo rm -f "$NGINX_CONF" "$NGINX_LINK"
 
-    if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-        echo "🧯 Removing SSL certificate for $DOMAIN"
-        sudo certbot delete --cert-name "$DOMAIN" --non-interactive
+        if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+            echo "🧯 Removing SSL certificate for $DOMAIN"
+            sudo certbot delete --cert-name "$DOMAIN" --non-interactive
+        fi
+    else
+        echo "⚠️  No DOMAIN found in .env — skipping nginx config and SSL cleanup"
     fi
 
     echo "✅ $DEPLOY_NAME removed"

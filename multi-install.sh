@@ -322,7 +322,6 @@ for ((n=1; n<=INSTANCES; n++)); do
     log_message "\n--- Installing Instance $i: $DOMAIN ($BROKER) ---" "$BLUE"
 
     # Paths
-    DEPLOY_NAME="${DOMAIN/./-}-${BROKER}"
     INSTANCE_DIR="$BASE_DIR/openalgo$i"
     VENV_PATH="$INSTANCE_DIR/venv"
     SOCKET_FILE="$INSTANCE_DIR/openalgo.sock"

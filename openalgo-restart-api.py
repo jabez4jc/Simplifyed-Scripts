@@ -1654,6 +1654,12 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .domain-check{margin-top:10px;padding:10px;background:#fff;border-radius:4px;font-size:13px}
 .domain-check a{color:inherit;text-decoration:none}
 .domain-check a:hover{text-decoration:underline}
+dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%}
+dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
+.reset-field-label{display:block;font-size:13px;margin-bottom:4px;color:#333}
+.reset-input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
+.reset-checkbox-label{display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:13px}
+.reset-dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:5px}
 </style>
 </head>
 <body>
@@ -1687,6 +1693,29 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="instance"></div>
 </div>
 </div>
+
+<dialog id="resetAdminDialog" class="reset-admin-dialog">
+<form method="dialog" id="resetAdminForm">
+<h3 style="margin:0 0 10px;color:#dc3545">⚠️ Reset Admin User</h3>
+<p style="font-size:13px;color:#555;margin:0 0 15px">Deletes ALL users and broker auth/login tokens for this instance, forcing first-time setup and a fresh broker login. Use only when there's no TOTP/QR reset and no working SMTP.</p>
+<label class="reset-field-label">Switch broker (optional, leave blank to keep current)</label>
+<input type="text" id="resetBroker" class="reset-input" placeholder="e.g. zerodha, angel, fyers, upstox">
+<label class="reset-checkbox-label"><input type="checkbox" id="resetRotateCreds" onchange="document.getElementById('resetCredsFields').style.display=this.checked?'block':'none'"> Also rotate broker API credentials in .env</label>
+<div id="resetCredsFields" style="display:none">
+<input type="text" id="resetApiKey" class="reset-input" placeholder="New BROKER_API_KEY">
+<input type="password" id="resetApiSecret" class="reset-input" placeholder="New BROKER_API_SECRET">
+<label class="reset-checkbox-label"><input type="checkbox" id="resetXts" onchange="document.getElementById('resetXtsFields').style.display=this.checked?'block':'none'"> XTS-based broker (separate market data credentials)</label>
+<div id="resetXtsFields" style="display:none">
+<input type="text" id="resetApiKeyMarket" class="reset-input" placeholder="New BROKER_API_KEY_MARKET">
+<input type="password" id="resetApiSecretMarket" class="reset-input" placeholder="New BROKER_API_SECRET_MARKET">
+</div>
+</div>
+<div class="reset-dialog-actions">
+<button type="button" class="btn" onclick="document.getElementById('resetAdminDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn" style="background:#dc3545;color:white">Reset Admin User</button>
+</div>
+</form>
+</dialog>
 
 <script>
 const monitorInstance="__INSTANCE__";
@@ -1894,36 +1923,35 @@ showAlert('Invalidating session...','info');
 await post('/monitor/api/invalidate-session');
 setTimeout(loadInstance,1000);
 }
-function collectBrokerCredentials(){
-const broker=(prompt("Switch to a different broker? Enter the new broker short name (e.g. zerodha, angel, fyers, upstox) exactly as it appears in VALID_BROKERS, or leave blank to keep the current broker:",'')||'').trim().toLowerCase();
-if(!confirm('Also rotate broker API credentials in .env? Click OK to enter new values, Cancel to skip.')){
-if(!broker)return null;
-return{broker:broker};
-}
-const apiKey=(prompt('New BROKER_API_KEY (leave blank to skip):','')||'').trim();
-const apiSecret=(prompt('New BROKER_API_SECRET (leave blank to skip):','')||'').trim();
-let keyMarket='',secretMarket='';
-if(confirm('Is this an XTS-based broker requiring separate market data credentials?')){
-keyMarket=(prompt('New BROKER_API_KEY_MARKET (leave blank to skip):','')||'').trim();
-secretMarket=(prompt('New BROKER_API_SECRET_MARKET (leave blank to skip):','')||'').trim();
-}
-if(!broker&&!apiKey&&!apiSecret&&!keyMarket&&!secretMarket)return null;
-return{broker:broker,broker_api_key:apiKey,broker_api_secret:apiSecret,broker_api_key_market:keyMarket,broker_api_secret_market:secretMarket};
-}
-function describeBrokerCreds(creds){
-if(!creds)return '';
-const parts=[];
-if(creds.broker)parts.push(`the broker will be switched to '${creds.broker}'`);
-if(creds.broker_api_key||creds.broker_api_secret||creds.broker_api_key_market||creds.broker_api_secret_market)parts.push('broker API credentials will be overwritten');
-return parts.length?(' and '+parts.join(', and ')):'';
+function openResetAdminDialog(){
+const dlg=document.getElementById('resetAdminDialog');
+document.getElementById('resetAdminForm').reset();
+document.getElementById('resetCredsFields').style.display='none';
+document.getElementById('resetXtsFields').style.display='none';
+return new Promise(resolve=>{
+dlg.returnValue='';
+dlg.showModal();
+dlg.onclose=function(){
+if(dlg.returnValue!=='confirm'){resolve(null);return;}
+const broker=document.getElementById('resetBroker').value.trim().toLowerCase();
+if(!document.getElementById('resetRotateCreds').checked){resolve(broker?{broker:broker}:{});return;}
+const xts=document.getElementById('resetXts').checked;
+resolve({
+broker:broker,
+broker_api_key:document.getElementById('resetApiKey').value.trim(),
+broker_api_secret:document.getElementById('resetApiSecret').value.trim(),
+broker_api_key_market:xts?document.getElementById('resetApiKeyMarket').value.trim():'',
+broker_api_secret_market:xts?document.getElementById('resetApiSecretMarket').value.trim():''
+});
+};
+});
 }
 async function resetAdminUser(){
-if(!confirm('⚠️ Reset the admin user for this instance? This deletes ALL users AND broker auth/login tokens, forcing first-time setup and a fresh broker login on next visit. Use this only when the user has no TOTP/QR reset and no working SMTP.'))return;
-const creds=collectBrokerCredentials();
-if(!confirm('⚠️ FINAL CONFIRMATION: All users for this instance will be deleted'+describeBrokerCreds(creds)+'. Continue?'))return;
+const creds=await openResetAdminDialog();
+if(creds===null)return;
 showAlert('Resetting admin user...','info');
 try{
-const res=await fetchJson('/monitor/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(creds||{})});
+const res=await fetchJson('/monitor/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(creds)});
 const msg=res&&res.message?res.message:'Admin user reset';
 showAlert(msg,res&&res.status==='error'?'error':'success');
 }catch(e){
@@ -2114,6 +2142,12 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .log-line{padding:2px 5px;word-break:break-all}
 .log-error{background:#c4444466;color:#ff6b6b}
 .log-success{background:#22863a66;color:#85e89d}
+dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%}
+dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
+.reset-field-label{display:block;font-size:13px;margin-bottom:4px;color:#333}
+.reset-input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
+.reset-checkbox-label{display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:13px}
+.reset-dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:5px}
 </style>
 </head>
 <body>
@@ -2193,6 +2227,29 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 <div id="instances"></div>
 </div>
 </div>
+
+<dialog id="resetAdminDialog" class="reset-admin-dialog">
+<form method="dialog" id="resetAdminForm">
+<h3 style="margin:0 0 10px;color:#dc3545">⚠️ Reset Admin User<span id="resetAdminInstanceLabel"></span></h3>
+<p style="font-size:13px;color:#555;margin:0 0 15px">Deletes ALL users and broker auth/login tokens, forcing first-time setup and a fresh broker login. Use only when there's no TOTP/QR reset and no working SMTP.</p>
+<label class="reset-field-label">Switch broker (optional, leave blank to keep current)</label>
+<input type="text" id="resetBroker" class="reset-input" placeholder="e.g. zerodha, angel, fyers, upstox">
+<label class="reset-checkbox-label"><input type="checkbox" id="resetRotateCreds" onchange="document.getElementById('resetCredsFields').style.display=this.checked?'block':'none'"> Also rotate broker API credentials in .env</label>
+<div id="resetCredsFields" style="display:none">
+<input type="text" id="resetApiKey" class="reset-input" placeholder="New BROKER_API_KEY">
+<input type="password" id="resetApiSecret" class="reset-input" placeholder="New BROKER_API_SECRET">
+<label class="reset-checkbox-label"><input type="checkbox" id="resetXts" onchange="document.getElementById('resetXtsFields').style.display=this.checked?'block':'none'"> XTS-based broker (separate market data credentials)</label>
+<div id="resetXtsFields" style="display:none">
+<input type="text" id="resetApiKeyMarket" class="reset-input" placeholder="New BROKER_API_KEY_MARKET">
+<input type="password" id="resetApiSecretMarket" class="reset-input" placeholder="New BROKER_API_SECRET_MARKET">
+</div>
+</div>
+<div class="reset-dialog-actions">
+<button type="button" class="btn" onclick="document.getElementById('resetAdminDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn" style="background:#dc3545;color:white">Reset Admin User</button>
+</div>
+</form>
+</dialog>
 
 <script>
 let brokerStatusCache={};
@@ -2542,36 +2599,36 @@ await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type'
 showAlert(`Invalidating session for ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
-function collectBrokerCredentials(){
-const broker=(prompt("Switch to a different broker? Enter the new broker short name (e.g. zerodha, angel, fyers, upstox) exactly as it appears in VALID_BROKERS, or leave blank to keep the current broker:",'')||'').trim().toLowerCase();
-if(!confirm('Also rotate broker API credentials in .env? Click OK to enter new values, Cancel to skip.')){
-if(!broker)return null;
-return{broker:broker};
-}
-const apiKey=(prompt('New BROKER_API_KEY (leave blank to skip):','')||'').trim();
-const apiSecret=(prompt('New BROKER_API_SECRET (leave blank to skip):','')||'').trim();
-let keyMarket='',secretMarket='';
-if(confirm('Is this an XTS-based broker requiring separate market data credentials?')){
-keyMarket=(prompt('New BROKER_API_KEY_MARKET (leave blank to skip):','')||'').trim();
-secretMarket=(prompt('New BROKER_API_SECRET_MARKET (leave blank to skip):','')||'').trim();
-}
-if(!broker&&!apiKey&&!apiSecret&&!keyMarket&&!secretMarket)return null;
-return{broker:broker,broker_api_key:apiKey,broker_api_secret:apiSecret,broker_api_key_market:keyMarket,broker_api_secret_market:secretMarket};
-}
-function describeBrokerCreds(creds){
-if(!creds)return '';
-const parts=[];
-if(creds.broker)parts.push(`the broker will be switched to '${creds.broker}'`);
-if(creds.broker_api_key||creds.broker_api_secret||creds.broker_api_key_market||creds.broker_api_secret_market)parts.push('broker API credentials will be overwritten');
-return parts.length?(' and '+parts.join(', and ')):'';
+function openResetAdminDialog(inst){
+const dlg=document.getElementById('resetAdminDialog');
+document.getElementById('resetAdminForm').reset();
+document.getElementById('resetCredsFields').style.display='none';
+document.getElementById('resetXtsFields').style.display='none';
+document.getElementById('resetAdminInstanceLabel').textContent=inst?` for ${inst}`:'';
+return new Promise(resolve=>{
+dlg.returnValue='';
+dlg.showModal();
+dlg.onclose=function(){
+if(dlg.returnValue!=='confirm'){resolve(null);return;}
+const broker=document.getElementById('resetBroker').value.trim().toLowerCase();
+if(!document.getElementById('resetRotateCreds').checked){resolve(broker?{broker:broker}:{});return;}
+const xts=document.getElementById('resetXts').checked;
+resolve({
+broker:broker,
+broker_api_key:document.getElementById('resetApiKey').value.trim(),
+broker_api_secret:document.getElementById('resetApiSecret').value.trim(),
+broker_api_key_market:xts?document.getElementById('resetApiKeyMarket').value.trim():'',
+broker_api_secret_market:xts?document.getElementById('resetApiSecretMarket').value.trim():''
+});
+};
+});
 }
 async function resetAdminUser(inst){
-if(!confirm(`⚠️ Reset the admin user for ${inst}? This deletes ALL users AND broker auth/login tokens, forcing first-time setup and a fresh broker login on next visit. Use this only when the user has no TOTP/QR reset and no working SMTP.`))return;
-const creds=collectBrokerCredentials();
-if(!confirm(`⚠️ FINAL CONFIRMATION: All users for ${inst} will be deleted`+describeBrokerCreds(creds)+`. Continue?`))return;
+const creds=await openResetAdminDialog(inst);
+if(creds===null)return;
 showAlert(`Resetting admin user for ${inst}...`,'info');
 try{
-const res=await fetchJson('/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({instance:inst},creds||{}))});
+const res=await fetchJson('/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({instance:inst},creds))});
 showAlert(res&&res.message?res.message:`Admin user reset for ${inst}`,res&&res.status==='error'?'error':'success');
 }catch(e){
 showAlert('Error: '+e.message,'error');
