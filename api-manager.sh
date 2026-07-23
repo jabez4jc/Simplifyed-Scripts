@@ -249,8 +249,10 @@ show_status() {
         echo -e "${RED}❌${NC}"
     fi
     
-    # Get IP
-    SERVER_IP=$(hostname -I | awk '{print $1}')
+    # Get public IP (cloud VMs NAT their public IP, so hostname -I alone
+    # would print the private one)
+    SERVER_IP=$(curl -s -m 3 https://api.ipify.org 2>/dev/null)
+    [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || SERVER_IP=$(hostname -I | awk '{print $1}')
     echo ""
     echo -e "${YELLOW}Access the dashboard:${NC}"
     echo -e "  ${GREEN}http://$SERVER_IP:8888${NC}"

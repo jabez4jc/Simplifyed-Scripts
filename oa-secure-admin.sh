@@ -1,0 +1,284 @@
+#!/bin/bash
+# oa-secure-admin.sh
+# Retrofit HTTP Basic Auth in front of the OpenAlgo admin pages
+# (per-instance /monitor and the all-instances manager on :8888) on a
+# server that was already set up before this protection existed.
+#
+# What it does, in order (each step can be skipped):
+#   1. Create/reuse a shared htpasswd file for admin login.
+#   2. Add auth_basic to the /monitor location in every instance's nginx
+#      vhost that doesn't already have it.
+#   3. Optionally put the manager page (currently only reachable at
+#      http://<server-ip>:8888/) behind its own domain + TLS + the same
+#      login, via a new nginx vhost + certbot.
+#   4. Optionally close public access to port 8888 in ufw and bind the
+#      API to 127.0.0.1 once nginx is confirmed as the only way in.
+#
+# Safe to re-run: existing credentials, already-patched vhosts, and an
+# already-configured manager domain are detected and left alone.
+
+set -uo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log_message() {
+    local message="$1"
+    local color="${2:-$NC}"
+    echo -e "${color}${message}${NC}"
+}
+
+need_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        log_message "ERROR: Run as root (use sudo)." "$RED"
+        exit 1
+    fi
+}
+
+ADMIN_HTPASSWD="/etc/nginx/openalgo-admin.htpasswd"
+SITES_AVAILABLE="/etc/nginx/sites-available"
+SERVICE_NAME="openalgo-restart-api"
+OVERRIDE_DIR="/etc/systemd/system/${SERVICE_NAME}.service.d"
+OVERRIDE_FILE="$OVERRIDE_DIR/override.conf"
+
+current_manager_domain() {
+    [ -f "$OVERRIDE_FILE" ] || return 0
+    grep -oP '(?<=^Environment=MANAGER_DOMAIN=).*' "$OVERRIDE_FILE" 2>/dev/null || true
+}
+
+current_bind() {
+    [ -f "$OVERRIDE_FILE" ] || { echo "0.0.0.0"; return 0; }
+    grep -oP '(?<=^Environment=OPENALGO_BIND=).*' "$OVERRIDE_FILE" 2>/dev/null || echo "0.0.0.0"
+}
+
+write_override() {
+    # Merges MANAGER_DOMAIN/OPENALGO_BIND into the systemd drop-in, preserving
+    # whichever of the two isn't being changed in this call.
+    local domain="$1" bind="$2"
+    mkdir -p "$OVERRIDE_DIR"
+    {
+        echo "[Service]"
+        [ -n "$domain" ] && echo "Environment=MANAGER_DOMAIN=$domain"
+        [ -n "$bind" ] && echo "Environment=OPENALGO_BIND=$bind"
+    } > "$OVERRIDE_FILE"
+    systemctl daemon-reload
+    systemctl restart "$SERVICE_NAME"
+}
+
+step_credentials() {
+    log_message "\n=== STEP 1: Admin login ===" "$YELLOW"
+    if [ -f "$ADMIN_HTPASSWD" ]; then
+        log_message "Credentials already exist at $ADMIN_HTPASSWD." "$GREEN"
+        read -p "Reset them? (y/N): " reset_choice
+        [[ "$reset_choice" =~ ^[Yy]$ ]] || return 0
+    fi
+
+    read -p "Admin username [admin]: " admin_user
+    admin_user=${admin_user:-admin}
+    while true; do
+        read -s -p "Admin password: " admin_pass
+        echo
+        read -s -p "Confirm password: " admin_pass_confirm
+        echo
+        if [ -z "$admin_pass" ]; then
+            log_message "Password cannot be empty." "$RED"
+            continue
+        fi
+        if [ "$admin_pass" != "$admin_pass_confirm" ]; then
+            log_message "Passwords did not match, try again." "$RED"
+            continue
+        fi
+        break
+    done
+    local admin_hash
+    admin_hash=$(openssl passwd -apr1 "$admin_pass")
+    echo "${admin_user}:${admin_hash}" > "$ADMIN_HTPASSWD"
+    chmod 640 "$ADMIN_HTPASSWD"
+    chown root:www-data "$ADMIN_HTPASSWD"
+    unset admin_pass admin_pass_confirm admin_hash
+    log_message "✅ Admin credentials saved to $ADMIN_HTPASSWD" "$GREEN"
+}
+
+step_patch_vhosts() {
+    log_message "\n=== STEP 2: Protect existing /monitor endpoints ===" "$YELLOW"
+    if [ ! -d "$SITES_AVAILABLE" ]; then
+        log_message "No $SITES_AVAILABLE directory found, skipping." "$YELLOW"
+        return 0
+    fi
+
+    local patched=0 already=0 skipped=0
+    local file
+    for file in "$SITES_AVAILABLE"/*; do
+        [ -f "$file" ] || continue
+        if ! grep -q 'location /monitor' "$file"; then
+            skipped=$((skipped+1))
+            continue
+        fi
+        if grep -q 'auth_basic_user_file .*openalgo-admin.htpasswd' "$file"; then
+            already=$((already+1))
+            continue
+        fi
+        awk -v htpasswd="$ADMIN_HTPASSWD" '
+            {
+                print
+                if ($0 ~ /^[[:space:]]*location \/monitor[[:space:]]*\{[[:space:]]*$/) {
+                    print "        auth_basic \"OpenAlgo Admin\";"
+                    print "        auth_basic_user_file " htpasswd ";"
+                }
+            }
+        ' "$file" > "${file}.oa-secure-tmp" && mv "${file}.oa-secure-tmp" "$file"
+        log_message "  patched: $file" "$GREEN"
+        patched=$((patched+1))
+    done
+    log_message "Done. Patched: $patched, already protected: $already, no /monitor block: $skipped." "$GREEN"
+
+    if [ "$patched" -gt 0 ]; then
+        if nginx -t && systemctl reload nginx; then
+            log_message "✅ nginx reloaded." "$GREEN"
+        else
+            log_message "nginx config test failed after patching — check the files above before reloading manually." "$RED"
+        fi
+    fi
+}
+
+step_manager_domain() {
+    log_message "\n=== STEP 3: Dedicated domain for the manager page (optional) ===" "$YELLOW"
+    local existing
+    existing=$(current_manager_domain)
+    if [ -n "$existing" ]; then
+        log_message "Manager domain already configured: https://$existing/" "$GREEN"
+        read -p "Reconfigure it? (y/N): " reconf
+        [[ "$reconf" =~ ^[Yy]$ ]] || return 0
+    fi
+
+    read -p "Domain for the manager page (DNS must already point at this server's IP, blank to skip): " domain
+    if [ -z "$domain" ]; then
+        log_message "Skipped." "$BLUE"
+        return 0
+    fi
+
+    log_message "Configuring nginx for $domain (HTTP, for the certbot challenge)..." "$BLUE"
+    tee "$SITES_AVAILABLE/$domain" > /dev/null << EOL
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+    root /var/www/html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOL
+    ln -sf "$SITES_AVAILABLE/$domain" "/etc/nginx/sites-enabled/$domain"
+    nginx -t && systemctl reload nginx
+    if [ $? -ne 0 ]; then
+        log_message "nginx config test failed, aborting domain setup." "$RED"
+        return 1
+    fi
+
+    log_message "Obtaining SSL certificate for $domain..." "$BLUE"
+    certbot --nginx -d "$domain" --non-interactive --agree-tos --email "admin@${domain#*.}"
+    if [ $? -ne 0 ]; then
+        log_message "certbot failed, aborting domain setup." "$RED"
+        return 1
+    fi
+
+    log_message "Configuring final HTTPS vhost for $domain..." "$BLUE"
+    tee "$SITES_AVAILABLE/$domain" > /dev/null << EOL
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name $domain;
+
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    location / {
+        auth_basic "OpenAlgo Admin";
+        auth_basic_user_file $ADMIN_HTPASSWD;
+        proxy_pass http://127.0.0.1:8888;
+        proxy_http_version 1.1;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOL
+    nginx -t && systemctl reload nginx
+    if [ $? -ne 0 ]; then
+        log_message "nginx config test failed on final vhost, aborting." "$RED"
+        return 1
+    fi
+
+    write_override "$domain" "$(current_bind)"
+    log_message "✅ Manager page now at https://$domain/" "$GREEN"
+}
+
+step_close_port() {
+    log_message "\n=== STEP 4: Close public port 8888 (optional) ===" "$YELLOW"
+    local domain
+    domain=$(current_manager_domain)
+    if [ -z "$domain" ]; then
+        log_message "No manager domain configured yet (step 3) — skipping, you'd lose access entirely." "$BLUE"
+        return 0
+    fi
+
+    log_message "The manager page is reachable at https://$domain/ now." "$GREEN"
+    read -p "Close public access to port 8888 and bind the API to localhost only? (y/N): " close_choice
+    [[ "$close_choice" =~ ^[Yy]$ ]] || { log_message "Left port 8888 open." "$BLUE"; return 0; }
+
+    if command -v ufw &>/dev/null; then
+        ufw delete allow 8888/tcp > /dev/null 2>&1 || true
+        ufw delete allow 8888/udp > /dev/null 2>&1 || true
+        log_message "✅ Removed public ufw allow rules for 8888." "$GREEN"
+    fi
+
+    write_override "$domain" "127.0.0.1"
+    log_message "✅ API now bound to 127.0.0.1 (nginx still reaches it locally)." "$GREEN"
+}
+
+main() {
+    need_root
+    log_message "OpenAlgo Admin Security Setup" "$BLUE"
+    step_credentials
+    step_patch_vhosts
+    step_manager_domain
+    step_close_port
+
+    log_message "\n=== Summary ===" "$YELLOW"
+    local domain
+    domain=$(current_manager_domain)
+    if [ -n "$domain" ]; then
+        log_message "Manager:  https://$domain/ (login required)" "$GREEN"
+    else
+        SERVER_IP=$(curl -s -m 3 https://api.ipify.org 2>/dev/null)
+        [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || SERVER_IP=$(hostname -I | awk '{print $1}')
+        log_message "Manager:  http://$SERVER_IP:8888/ (set up a domain via this script to make this memorable)" "$YELLOW"
+    fi
+    log_message "Monitor:  https://<instance-domain>/monitor (login required)" "$GREEN"
+}
+
+main "$@"

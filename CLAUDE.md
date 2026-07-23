@@ -24,6 +24,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Generates unique configurations per instance (ports, domains, databases)
    - Creates systemd services and Nginx reverse proxy configs
    - Handles SSL certificate generation via Let's Encrypt
+   - Bootstraps a shared htpasswd file (`/etc/nginx/openalgo-admin.htpasswd`) once per server and protects each instance's `/monitor` location with `auth_basic`
 
 3. **update_swap_4gb.sh** - Fixed swap utility
    - Creates or replaces fixed 4GB swap space to prevent OOM during broker authentication
@@ -77,6 +78,13 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Reports success/failure for each script
    - Provides summary and lists all available scripts
    - Simplifies initial setup process
+
+11. **oa-secure-admin.sh** - Admin auth retrofit utility
+   - Adds HTTP Basic Auth (shared htpasswd) in front of every instance's `/monitor` page
+   - Optionally puts the all-instances manager page behind its own domain + TLS instead of raw `IP:8888`
+   - Sets `MANAGER_DOMAIN` for openalgo-restart-api.py via a systemd drop-in so in-app links use the new domain
+   - Optionally closes public access to port 8888 and binds the API to localhost once nginx is confirmed working
+   - Safe to re-run: detects existing credentials, already-patched vhosts, and an already-configured domain
 
 ## Key Implementation Patterns
 

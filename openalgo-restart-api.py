@@ -16,6 +16,7 @@ import re
 import shutil
 from threading import Thread, Lock
 from urllib.parse import urlparse, parse_qs
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 PORT = 8888
@@ -24,14 +25,29 @@ _SERVER_IP_CACHE = None
 
 
 def get_server_ip():
-    """Best-effort primary outbound IP, same convention as api-manager.sh's `hostname -I`."""
+    """Best-effort public IP. Cloud VMs (AWS/GCP/Azure/...) NAT their public IP,
+    so `hostname -I` only returns the private one - ask an external echo
+    service first and fall back to `hostname -I` if there's no outbound
+    internet access."""
     global _SERVER_IP_CACHE
     if _SERVER_IP_CACHE is None:
-        try:
-            out = subprocess.check_output(['hostname', '-I'], text=True, timeout=2).strip()
-            _SERVER_IP_CACHE = out.split()[0] if out else ''
-        except Exception:
-            _SERVER_IP_CACHE = ''
+        ip = ''
+        for url in ('https://api.ipify.org', 'https://ifconfig.me/ip'):
+            try:
+                with urllib.request.urlopen(url, timeout=3) as r:
+                    candidate = r.read().decode('utf-8').strip()
+                if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', candidate):
+                    ip = candidate
+                    break
+            except Exception:
+                continue
+        if not ip:
+            try:
+                out = subprocess.check_output(['hostname', '-I'], text=True, timeout=2).strip()
+                ip = out.split()[0] if out else ''
+            except Exception:
+                ip = ''
+        _SERVER_IP_CACHE = ip
     return _SERVER_IP_CACHE
 
 
@@ -1736,8 +1752,12 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def serve_monitor_ui(self):
         """Serve single-instance monitor UI"""
         instance = self._resolve_monitor_instance() or ""
-        server_ip = get_server_ip()
-        manager_url = f"http://{server_ip}:{PORT}/" if server_ip else "/"
+        manager_domain = os.environ.get('MANAGER_DOMAIN', '').strip()
+        if manager_domain:
+            manager_url = f"https://{manager_domain}/"
+        else:
+            server_ip = get_server_ip()
+            manager_url = f"http://{server_ip}:{PORT}/" if server_ip else "/"
         html = ("""<!DOCTYPE html>
 <html>
 <head>
@@ -2856,9 +2876,10 @@ if __name__ == '__main__':
         allow_reuse_address = True
         daemon_threads = True
 
-    server = ReusableTCPServer(("0.0.0.0", PORT), RestartHandler)
-    
-    print(f"OpenAlgo API running on 0.0.0.0:{PORT}", flush=True)
+    BIND = os.environ.get('OPENALGO_BIND', '0.0.0.0')
+    server = ReusableTCPServer((BIND, PORT), RestartHandler)
+
+    print(f"OpenAlgo API running on {BIND}:{PORT}", flush=True)
     
     try:
         server.serve_forever()

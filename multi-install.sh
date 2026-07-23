@@ -299,6 +299,39 @@ sudo ufw allow 'Nginx Full'
 sudo ufw --force enable
 check_status "Failed to configure firewall"
 
+# Configure admin login for the /monitor pages (one-time per server)
+# Protects Factory Reset, Reboot Server, and other destructive admin actions
+# behind HTTP Basic Auth on every instance's /monitor endpoint.
+ADMIN_HTPASSWD="/etc/nginx/openalgo-admin.htpasswd"
+if [ ! -f "$ADMIN_HTPASSWD" ]; then
+    log_message "\nSetting up admin login for the /monitor pages..." "$BLUE"
+    read -p "Admin username [admin]: " ADMIN_USER
+    ADMIN_USER=${ADMIN_USER:-admin}
+    while true; do
+        read -s -p "Admin password: " ADMIN_PASS
+        echo
+        read -s -p "Confirm password: " ADMIN_PASS_CONFIRM
+        echo
+        if [ -z "$ADMIN_PASS" ]; then
+            log_message "Password cannot be empty." "$RED"
+            continue
+        fi
+        if [ "$ADMIN_PASS" != "$ADMIN_PASS_CONFIRM" ]; then
+            log_message "Passwords did not match, try again." "$RED"
+            continue
+        fi
+        break
+    done
+    ADMIN_HASH=$(openssl passwd -apr1 "$ADMIN_PASS")
+    echo "${ADMIN_USER}:${ADMIN_HASH}" | sudo tee "$ADMIN_HTPASSWD" > /dev/null
+    sudo chmod 640 "$ADMIN_HTPASSWD"
+    sudo chown root:www-data "$ADMIN_HTPASSWD"
+    unset ADMIN_PASS ADMIN_PASS_CONFIRM ADMIN_HASH
+    log_message "✅ Admin credentials saved to $ADMIN_HTPASSWD" "$GREEN"
+else
+    log_message "\n✅ Reusing existing admin credentials at $ADMIN_HTPASSWD" "$GREEN"
+fi
+
 # Create base directory
 sudo mkdir -p "$BASE_DIR"
 
@@ -575,6 +608,8 @@ server {
 
     # Instance monitor UI (OpenAlgo Manager)
     location /monitor {
+        auth_basic "OpenAlgo Admin";
+        auth_basic_user_file $ADMIN_HTPASSWD;
         proxy_pass http://127.0.0.1:8888;
         proxy_http_version 1.1;
         proxy_read_timeout 60s;
