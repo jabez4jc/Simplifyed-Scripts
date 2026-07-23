@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # oa-invalidate-session.sh
-# Invalidate OpenAlgo session using instance ORM logic.
+# Revoke a stale/invalid broker session for an OpenAlgo instance by writing
+# directly to its SQLite auth db. This mirrors the read-side db discovery
+# logic in openalgo-restart-api.py rather than booting the Flask app, since
+# the app's package name (`openalgo`) can be shadowed by an unrelated PyPI
+# package of the same name inside the instance venv.
 
 set -euo pipefail
 
@@ -45,54 +49,71 @@ if [[ ! -d "$ROOT" ]]; then
   exit 1
 fi
 
-# .env uses KEY = 'value' format (spaces around =, quoted values) — not valid
-# for bash source. Export each variable by parsing manually.
-while IFS= read -r line; do
-  # Skip comments and blank lines
-  [[ "$line" =~ ^[[:space:]]*# ]] && continue
-  [[ -z "${line// /}" ]] && continue
-  # Match KEY = 'value' or KEY = value
-  if [[ "$line" =~ ^([A-Z_][A-Z_0-9]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
-    key="${BASH_REMATCH[1]}"
-    value="${BASH_REMATCH[2]}"
-    # Strip surrounding single or double quotes
-    value="${value#\'}" ; value="${value%\'}"
-    value="${value#\"}" ; value="${value%\"}"
-    export "$key"="$value"
-  fi
-done < "$ROOT/.env"
+python3 - "$ROOT" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
 
-sudo -u www-data bash -c "cd '$ROOT' && '$ROOT/venv/bin/python3'" - <<'PY'
-import sys, os
+root = Path(sys.argv[1])
+db_dir = root / "db"
 
-# Must run from the instance root so openalgo package is importable
-sys.path.insert(0, os.getcwd())
+def has_table(db_file, table):
+    try:
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        conn.close()
+        return bool(row)
+    except sqlite3.Error:
+        return False
 
-from openalgo import create_app
-app = create_app()
+def find_db_with_table(table):
+    instance_num = root.name.replace("openalgo", "")
+    candidates = []
+    if instance_num.isdigit():
+        candidates.append(db_dir / f"openalgo{instance_num}.db")
+    candidates.append(db_dir / "openalgo.db")
+    candidates.append(db_dir / "auth.db")
+    for path in candidates:
+        if path.exists() and has_table(path, table):
+            return path
+    if db_dir.is_dir():
+        for entry in db_dir.iterdir():
+            if entry.suffix == ".db" and has_table(entry, table):
+                return entry
+    return None
 
-with app.app_context():
-    from database.auth_db import Auth, upsert_auth, db
-    from database.master_contract_status_db import update_status
+auth_db = find_db_with_table("auth")
+if not auth_db:
+    print("No auth database found.")
+    raise SystemExit(0)
 
-    users = Auth.query.all()
-    if not users:
-        print("No auth users found.")
-        raise SystemExit(0)
+conn = sqlite3.connect(auth_db)
+rows = conn.execute("SELECT name, broker FROM auth").fetchall()
+if not rows:
+    print("No auth users found.")
+    raise SystemExit(0)
 
-    for auth in users:
-        upsert_auth(auth.name, "", "", revoke=True)
-        print(f"Revoked: {auth.name}")
-        try:
-            Auth.query.filter_by(name=auth.name).update(
-                {"is_revoked": 1, "auth": "", "feed_token": ""}
-            )
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print(f"Failed to mark revoked for {auth.name}: {e}")
+conn.execute("UPDATE auth SET is_revoked = 1, auth = '', feed_token = ''")
+conn.commit()
+for name, broker in rows:
+    print(f"Revoked: {name}")
 
-        if auth.broker:
-            update_status(auth.broker, "pending", "Invalidated by admin script")
-            print(f"Reset master contract status: {auth.broker}")
+mc_db = find_db_with_table("master_contract_status")
+if mc_db:
+    mc_conn = sqlite3.connect(mc_db) if mc_db != auth_db else conn
+    for name, broker in rows:
+        if not broker:
+            continue
+        mc_conn.execute(
+            "UPDATE master_contract_status SET is_ready = 0, message = ? WHERE broker = ?",
+            ("Invalidated by admin script", broker),
+        )
+        print(f"Reset master contract status: {broker}")
+    mc_conn.commit()
+    if mc_conn is not conn:
+        mc_conn.close()
+
+conn.close()
 PY
