@@ -456,6 +456,7 @@ fi
 
 log_message "Starting service: $SERVICE_NAME" "$BLUE"
 systemctl start "$SERVICE_NAME"
+systemctl reload nginx
 
 if [[ -n "$AUTH_DB" ]]; then
   log_message "Done. '$INSTANCE' will prompt for first-time admin setup and require a fresh broker login on next visit." "$GREEN"

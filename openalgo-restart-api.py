@@ -20,6 +20,165 @@ from datetime import datetime, timedelta, timezone
 
 PORT = 8888
 
+DASHBOARD_CSS = """
+:root{
+--bg:#0a0e17;--bg-elev:#0e1420;--surface:#121a29;--surface-2:#182135;--border:#232e44;--border-soft:#1b2438;
+--text:#e8ecf5;--text-dim:#94a2b9;--text-faint:#8291a8;
+--accent:#5b8cff;--accent-soft:rgba(91,140,255,.12);
+--success:#2fd8a6;--success-soft:rgba(47,216,166,.12);
+--warning:#f2b84b;--warning-soft:rgba(242,184,75,.12);
+--danger:#f4586e;--danger-soft:rgba(244,88,110,.12);
+--info:#4bb8f0;--info-soft:rgba(75,184,240,.12);
+--radius:12px;--radius-sm:8px;
+--shadow:0 1px 2px rgba(0,0,0,.35),0 12px 28px -12px rgba(0,0,0,.55);
+--font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+--mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+::selection{background:var(--accent-soft)}
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:10px;height:56px;padding:0 20px;background:rgba(14,20,32,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);overflow:hidden}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#5b8cff,#8a5bff);display:flex;align-items:center;justify-content:center;color:#fff;flex:none}
+.brand-text{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+.brand-text b{font-size:13.5px;font-weight:650;letter-spacing:-.01em}
+.brand-text span{font-size:11px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar-right{display:flex;align-items:center;gap:14px;flex:none}
+.live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
+.dot.pulse{animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-2);color:var(--text-dim);cursor:pointer;transition:.15s ease}
+.icon-btn:hover{color:var(--text);border-color:#324063;background:#1c2740}
+.icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1360px;margin:0 auto;padding:24px 20px 64px;display:flex;flex-direction:column;gap:18px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 20px;border-bottom:1px solid var(--border-soft)}
+.card-head h2{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-head h2 svg{color:var(--text-dim)}
+.card-sub{font-size:12px;color:var(--text-faint);margin-top:1px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;transition:.15s ease;white-space:nowrap;font-family:inherit}
+.btn svg{width:15px;height:15px;flex:none}
+.btn:hover{border-color:#324063;background:#1c2740;transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none!important}
+.btn-sm{padding:6px 10px;font-size:12px}
+.btn-sm svg{width:14px;height:14px}
+.btn-accent{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-accent:hover{background:#4a7bef;border-color:#4a7bef}
+.btn-success{color:var(--success);border-color:rgba(47,216,166,.35);background:var(--success-soft)}
+.btn-success:hover{background:var(--success);color:#04231a;border-color:var(--success)}
+.btn-warning{color:var(--warning);border-color:rgba(242,184,75,.35);background:var(--warning-soft)}
+.btn-warning:hover{background:var(--warning);color:#2a1c02;border-color:var(--warning)}
+.btn-danger{color:var(--danger);border-color:rgba(244,88,110,.35);background:var(--danger-soft)}
+.btn-danger:hover{background:var(--danger);color:#2a0810;border-color:var(--danger)}
+.btn-ghost{background:transparent}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;padding:16px 20px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.badge svg{width:11px;height:11px}
+.badge-active{background:var(--success-soft);color:var(--success)}
+.badge-inactive{background:var(--danger-soft);color:var(--danger)}
+.badge-authenticated{background:var(--success-soft);color:var(--success)}
+.badge-unauthenticated{background:var(--danger-soft);color:var(--danger)}
+.badge-info{background:var(--info-soft);color:var(--info)}
+.instance-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border-soft)}
+.instance-name{font-size:15px;font-weight:650;display:flex;align-items:center;gap:10px}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;padding:16px 20px}
+.detail-item{font-size:12.5px}
+.detail-label{color:var(--text-faint);font-weight:500;margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.detail-value{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.detail-value.mono{font-family:var(--mono);font-size:12px;font-weight:500}
+.detail-value.active{color:var(--success)}
+.detail-value.inactive{color:var(--danger)}
+.status-inline{display:inline-flex;align-items:center;gap:4px}
+.status-inline svg{width:12px;height:12px;flex:none}
+.subpanel{margin:0 20px 16px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);font-size:12.5px;border-left:3px solid var(--border)}
+.subpanel.ok{border-left-color:var(--success)}
+.subpanel.bad{border-left-color:var(--danger)}
+.subpanel-title{font-weight:600;display:flex;align-items:center;gap:8px;margin-bottom:2px;flex-wrap:wrap}
+.subpanel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px}
+.domain-check{margin:0 20px 16px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);font-size:12.5px;border-left:3px solid var(--border)}
+.logs-toggle{display:flex;align-items:center;gap:6px;width:calc(100% - 40px);margin:0 20px 16px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-dim);font-size:12.5px;cursor:pointer;transition:.15s ease}
+.logs-toggle:hover{color:var(--text);border-color:#324063}
+.logs-toggle svg:last-child{transition:transform .2s ease;margin-left:auto}
+.logs-toggle.open svg:last-child{transform:rotate(180deg)}
+.logs-section{display:none;margin:0 20px 16px;padding:12px;background:#080b12;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.logs-section.show{display:block}
+.logs-container{max-height:420px;overflow-y:auto;font-family:var(--mono);font-size:11.5px;color:#c3cadb;line-height:1.5}
+.log-line{padding:2px 6px;word-break:break-all;border-radius:4px}
+.log-error{background:rgba(244,88,110,.12);color:#ff8fa0}
+.log-success{background:rgba(47,216,166,.12);color:#7ee8c8}
+.actions{display:flex;gap:8px;flex-wrap:wrap;padding:16px 20px;border-top:1px solid var(--border-soft)}
+.actions .danger-group{margin-left:auto;display:flex;gap:8px;padding-left:12px;border-left:1px solid var(--border-soft)}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;padding:16px 20px}
+.stat{font-size:12.5px}
+.stat-label{color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px}
+.stat-value{font-weight:650;font-size:14px;font-variant-numeric:tabular-nums;margin-bottom:6px}
+.meter{height:4px;border-radius:2px;background:var(--border-soft);overflow:hidden}
+.meter-fill{height:100%;border-radius:2px;background:var(--success);transition:width .4s ease}
+.meter-fill.warn{background:var(--warning)}
+.meter-fill.crit{background:var(--danger)}
+.scripts-row{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text-dim);padding:0 20px 16px}
+.script-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border-soft)}
+.script-chip svg{width:11px;height:11px}
+.script-chip.ok svg{color:var(--success)}
+.script-chip.missing svg{color:var(--danger)}
+.maintenance-status{font-size:12px;color:var(--text-dim);padding:0 20px 12px}
+.maintenance-output{display:none;margin:0 20px 18px;background:#080b12;border-radius:var(--radius-sm);border:1px solid var(--border);padding:12px;max-height:360px;overflow:auto}
+.maintenance-output pre{color:#c3cadb;font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.loading{display:flex;flex-direction:column;align-items:center;gap:10px;padding:48px;color:var(--text-dim);font-size:13px}
+.spinner{width:26px;height:26px;border-radius:50%;border:2.5px solid var(--border);border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#toasts{position:fixed;top:16px;right:16px;z-index:1000;display:flex;flex-direction:column;gap:8px;max-width:360px}
+.toast{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:var(--radius-sm);background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);font-size:13px;animation:toast-in .18s ease}
+@keyframes toast-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.toast svg{flex:none;margin-top:1px;width:16px;height:16px}
+.toast.info svg{color:var(--info)}
+.toast.success svg{color:var(--success)}
+.toast.error svg{color:var(--danger)}
+.toast-msg{flex:1;line-height:1.4}
+.toast-close{cursor:pointer;color:var(--text-faint);flex:none;background:none;border:none;padding:0;font-size:15px;line-height:1}
+.toast-close:hover{color:var(--text)}
+dialog.reset-admin-dialog{border:none;border-radius:var(--radius);padding:22px;max-width:440px;width:90%;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;background:var(--surface);color:var(--text);box-shadow:var(--shadow);border:1px solid var(--border)}
+dialog.reset-admin-dialog::backdrop{background:rgba(4,6,12,.65);backdrop-filter:blur(2px)}
+.reset-field-label{display:block;font-size:12.5px;margin-bottom:5px;color:var(--text-dim)}
+.reset-input{width:100%;padding:9px 10px;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit}
+.reset-input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.reset-checkbox-label{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12.5px;color:var(--text-dim)}
+.reset-dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
+.reset-section{border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);padding:14px 0;margin-bottom:14px}
+.reset-preview{font-size:12px;color:var(--text-dim);margin-top:6px;word-break:break-all;font-family:var(--mono)}
+.toolbar-danger{margin-left:auto}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;padding:16px 20px}
+.kpi{font-size:12.5px}
+.kpi-label{color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px}
+.kpi-value{font-weight:700;font-size:22px;font-variant-numeric:tabular-nums}
+.kpi-value.success{color:var(--success)}
+.kpi-value.danger{color:var(--danger)}
+#instances{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:16px}
+.field{font-size:12.5px}
+.field-label{color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px;display:block}
+.field select,.field input,.field textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit}
+.field select:focus,.field input:focus,.field textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.field textarea{min-height:70px;resize:vertical;font-family:var(--mono);font-size:12px}
+.terminal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:16px 20px 0}
+.terminal-run{padding:0 20px;margin-top:12px}
+.terminal-output{margin:12px 20px 18px;background:#080b12;border-radius:var(--radius-sm);border:1px solid var(--border);padding:12px;max-height:360px;overflow:auto}
+.terminal-output pre{color:#c3cadb;font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+@media (max-width:640px){
+.detail-grid,.stat-grid,.subpanel-grid,.kpi-row{grid-template-columns:repeat(2,1fr)}
+.actions .danger-group{margin-left:0;padding-left:0;border-left:none;width:100%;border-top:1px dashed var(--border-soft);padding-top:8px;margin-top:2px}
+.toolbar-danger{margin-left:0;width:100%;border-top:1px dashed var(--border-soft);padding-top:8px;margin-top:2px}
+.live span.live-text{display:none}
+#instances{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+*{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+"""
+
 class RestartHandler(http.server.BaseHTTPRequestHandler):
     JOBS = {}
     JOBS_LOCK = Lock()
@@ -1279,7 +1438,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
 
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "env_version": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None}
+        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "env_version": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None, "valid_brokers": []}
 
         try:
             service_name = self._service_name(instance)
@@ -1315,6 +1474,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                         m = re.match(r"^ENV_CONFIG_VERSION\s*=\s*(.+)", line)
                         if m:
                             health["env_version"] = m.group(1).strip().strip("'\"")
+                            continue
+                        m = re.match(r"^VALID_BROKERS\s*=\s*(.+)", line)
+                        if m:
+                            raw = m.group(1).strip().strip("'\"")
+                            health["valid_brokers"] = [b.strip() for b in raw.split(",") if b.strip()]
                             continue
                         if 'REDIRECT_URL' in line and '=' in line:
                             redirect_url = line.split('=', 1)[1].strip().strip("'\"")
@@ -1509,7 +1673,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         result = self._reset_admin_user(instance, broker_creds)
         self.send_json({
             "status": "success" if result.get("reset") else "error",
-            "message": f"Admin user reset for {instance}" if result.get("reset") else (result.get("error") or "Reset failed"),
+            "message": f"Factory reset complete for {instance}" if result.get("reset") else (result.get("error") or "Reset failed"),
             "instance": instance,
             "details": result,
             "timestamp": str(datetime.now())
@@ -1557,167 +1721,98 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
     def serve_monitor_ui(self):
         """Serve single-instance monitor UI"""
         instance = self._resolve_monitor_instance() or ""
-        html = """<!DOCTYPE html>
+        html = ("""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenAlgo Monitor</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
-.container{background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:900px;width:100%}
-.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;text-align:center}
-.header h1{font-size:28px;margin-bottom:10px}
-.content{padding:30px}
-.btn{padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600;margin:5px;white-space:nowrap}
-.btn-primary{background:#667eea;color:white;width:100%;padding:12px;font-size:14px}
-.btn-primary:hover{background:#5568d3}
-.btn-restart{background:#667eea;color:white}
-.btn-invalidate{background:#6c757d;color:white}
-.btn-invalidate:hover{background:#5a6268}
-.btn-reboot{background:#ff6b6b;color:white}
-.btn-reboot:hover{background:#ff5252}
-.btn-stop{background:#dc3545;color:white}
-.btn-start{background:#28a745;color:white}
-.btn-invalidate{background:#6c757d;color:white}
-.btn-invalidate:hover{background:#5a6268}
-.btn-clear{background:#f0ad4e;color:white}
-.btn-clear:hover{background:#ec971f}
-.btn-small{padding:6px 12px;font-size:12px;margin:2px}
-.btn:hover{opacity:0.9;transform:translateY(-2px)}
-.btn:disabled{opacity:0.5;cursor:not-allowed;transform:none}
-.instance{background:#f8f9fa;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #667eea}
-.instance-header{display:flex;justify-content:space-between;align-items:center}
-.instance-name{font-weight:600;color:#333;font-size:16px}
-.instance-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e0e0e0}
-.detail-item{font-size:13px}
-.detail-label{color:#666;font-weight:500}
-.detail-value{color:#333;font-weight:600;margin-top:2px}
-.active{color:#28a745}
-.inactive{color:#dc3545}
-.badge{padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600;margin-left:10px}
-.badge-active{background:#d4edda;color:#155724}
-.badge-inactive{background:#f8d7da;color:#721c24}
-.badge-authenticated{background:#d4edda;color:#155724}
-.badge-unauthenticated{background:#f8d7da;color:#721c24}
-.alert{padding:15px;margin:20px 0;border-radius:8px;display:none}
-.alert.show{display:block}
-.alert-success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}
-.alert-error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}
-.alert-info{background:#d1ecf1;color:#0c5460;border:1px solid #bee5eb}
-.loading{text-align:center;padding:40px;color:#666}
-.spinner{border:3px solid #f3f3f3;border-top:3px solid #667eea;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 10px}
-@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
-.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
-.broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
-.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
-.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
-.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
-.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
-.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
-.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
-.logs-toggle{padding:8px 12px;background:#667eea;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-top:10px;width:100%}
-.logs-toggle:hover{background:#5568d3}
-.logs-section{display:none;margin-top:10px;padding:10px;background:#1e1e1e;border-radius:4px;border:1px solid #ccc}
-.logs-section.show{display:block}
-.logs-container{max-height:500px;overflow-y:auto;font-family:'Courier New',monospace;font-size:11px;color:#d4d4d4;line-height:1.4}
-.log-line{padding:2px 5px;word-break:break-all}
-.log-error{background:#c4444466;color:#ff6b6b}
-.log-success{background:#22863a66;color:#85e89d}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-.toolbar .btn-primary{width:auto}
-.system-card{background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #28a745}
-.system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
-.system-item{font-size:13px}
-.system-label{color:#666;font-weight:500}
-.system-value{color:#333;font-weight:600;margin-top:2px}
-.maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
-.maintenance-actions{margin:10px 0}
-.manager-toolbar{margin-bottom:10px}
-.button-row{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:8px 0}
-.button-row td{width:33%;vertical-align:top}
-.button-row .btn{width:100%;margin:0}
-.scripts-status{display:flex;gap:12px;flex-wrap:wrap}
-.maintenance-actions .btn{flex:1 1 0;min-width:180px;width:auto}
-.manager-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-.manager-toolbar .btn{flex:1 1 0;min-width:180px;width:auto}
-.maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
-.maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
-.maintenance-status{font-size:12px;color:#555}
-.scripts-status{display:flex;gap:12px;flex-wrap:wrap}
-.scripts-status{display:flex;gap:12px;flex-wrap:wrap}
-.btn-update{background:#17a2b8;color:white}
-.btn-update:hover{background:#138496}
-.btn-health{background:#20c997;color:white}
-.btn-health:hover{background:#18a17a}
-.domain-check{margin-top:10px;padding:10px;background:#fff;border-radius:4px;font-size:13px}
-.domain-check a{color:inherit;text-decoration:none}
-.domain-check a:hover{text-decoration:underline}
-dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0}
-dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
-.reset-field-label{display:block;font-size:13px;margin-bottom:4px;color:#333}
-.reset-input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
-.reset-checkbox-label{display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:13px}
-.reset-dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:5px}
-</style>
+<style>""" + DASHBOARD_CSS + """</style>
 </head>
 <body>
-<div class="container">
-<div class="header">
-<h1>🚀 OpenAlgo Monitor</h1>
-<p>Manage your OpenAlgo instance</p>
+<div class="topbar">
+<div class="brand">
+<div class="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
+<div class="brand-text"><b>OpenAlgo</b><span>Instance Monitor</span></div>
 </div>
-<div class="content">
-<div id="alert" class="alert"></div>
+<div class="topbar-right">
+<span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
+<button class="icon-btn" title="Refresh" onclick="loadInstance()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+</div>
+</div>
+<main>
+<div id="toasts" role="status" aria-live="polite"></div>
+
+<div class="card">
 <div class="toolbar">
-<button class="btn btn-primary" style="background:#28a745" onclick="loadInstance()">🔄 Refresh</button>
-<button class="btn btn-primary btn-restart" onclick="restartInstance()">🔄 Restart Instance</button>
-<button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button>
-<button class="btn btn-primary btn-clear" onclick="clearLogs()">🧹 Clear Logs</button>
-<button class="btn btn-primary btn-clear" style="background:#6c757d" onclick="invalidateSession()">🚫 Invalidate Session</button>
-<button class="btn btn-primary btn-clear" style="background:#dc3545" onclick="resetAdminUser()">🗑️ Reset Admin User</button>
+<button class="btn btn-accent" onclick="loadInstance()">Refresh</button>
+<button class="btn" onclick="restartInstance()">Restart Instance</button>
+<button class="btn btn-warning" onclick="rebootServer()">Reboot Server</button>
+<button class="btn" onclick="clearLogs()">Clear Logs</button>
+<button class="btn" onclick="invalidateSession()">Invalidate Session</button>
+<div class="toolbar-danger"><button class="btn btn-danger" onclick="resetAdminUser()">Factory Reset</button></div>
 </div>
-<div id="system" class="system-card"></div>
-<div class="maintenance">
-<h3>Maintenance</h3>
-<div id="scripts-status" class="maintenance-status scripts-status"></div>
-<div class="maintenance-actions">
-<button id="btn-health-instance" class="btn btn-primary btn-health" onclick="runHealthCheck()">🩺 Health Check</button>
-<button id="btn-update-instance" class="btn btn-primary btn-update" onclick="updateInstance()">⬆ Update Instance</button>
+</div>
+
+<div id="system" class="card"></div>
+
+<div class="card">
+<div class="card-head"><h2>Maintenance</h2></div>
+<div id="scripts-status" class="scripts-row"></div>
+<div class="toolbar" style="padding-top:0">
+<button id="btn-health-instance" class="btn" onclick="runHealthCheck()">Health Check</button>
+<button id="btn-update-instance" class="btn" onclick="updateInstance()">Update Instance</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
 </div>
+
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading instance...</p></div>
 <div id="instance"></div>
-</div>
-</div>
+</main>
 
 <dialog id="resetAdminDialog" class="reset-admin-dialog">
 <form method="dialog" id="resetAdminForm">
-<h3 style="margin:0 0 10px;color:#dc3545">⚠️ Reset Admin User</h3>
-<p style="font-size:13px;color:#555;margin:0 0 15px">Deletes ALL users and broker auth/login tokens for this instance, forcing first-time setup and a fresh broker login. Use only when there's no TOTP/QR reset and no working SMTP.</p>
-<label class="reset-field-label">Switch broker (optional, leave blank to keep current)</label>
-<input type="text" id="resetBroker" class="reset-input" placeholder="e.g. zerodha, angel, fyers, upstox">
-<label class="reset-checkbox-label"><input type="checkbox" id="resetRotateCreds" onchange="document.getElementById('resetCredsFields').style.display=this.checked?'block':'none'"> Also rotate broker API credentials in .env</label>
+<h3 style="margin:0 0 10px;color:var(--danger);display:flex;align-items:center;gap:8px;font-size:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>Factory Reset</h3>
+<p style="font-size:13px;color:var(--text-dim);margin:0 0 15px;line-height:1.5">Deletes all users and clears the broker login session for this instance. The next visit will require first-time admin setup and a fresh broker login. Use only when there's no TOTP/QR reset and no working SMTP.</p>
+<div class="reset-section">
+<label class="reset-field-label">Broker</label>
+<select id="resetBroker" class="reset-input" onchange="updateCallbackPreview()">
+<option value="">Keep current broker</option>
+</select>
+<div id="resetCallbackPreview" class="reset-preview"></div>
+</div>
+<label class="reset-checkbox-label"><input type="checkbox" id="resetRotateCreds" onchange="document.getElementById('resetCredsFields').style.display=this.checked?'block':'none'"> Also update broker API key/secret in .env</label>
 <div id="resetCredsFields" style="display:none">
-<input type="text" id="resetApiKey" class="reset-input" placeholder="New BROKER_API_KEY">
-<input type="password" id="resetApiSecret" class="reset-input" placeholder="New BROKER_API_SECRET">
-<label class="reset-checkbox-label"><input type="checkbox" id="resetXts" onchange="document.getElementById('resetXtsFields').style.display=this.checked?'block':'none'"> XTS-based broker (separate market data credentials)</label>
+<label class="reset-field-label">New BROKER_API_KEY</label>
+<input type="text" id="resetApiKey" class="reset-input" placeholder="Leave blank to keep existing">
+<label class="reset-field-label">New BROKER_API_SECRET</label>
+<input type="password" id="resetApiSecret" class="reset-input" placeholder="Leave blank to keep existing">
+<label class="reset-checkbox-label"><input type="checkbox" id="resetXts" onchange="document.getElementById('resetXtsFields').style.display=this.checked?'block':'none'"> This broker also needs separate market-data credentials (XTS-based)</label>
 <div id="resetXtsFields" style="display:none">
-<input type="text" id="resetApiKeyMarket" class="reset-input" placeholder="New BROKER_API_KEY_MARKET">
-<input type="password" id="resetApiSecretMarket" class="reset-input" placeholder="New BROKER_API_SECRET_MARKET">
+<label class="reset-field-label">New BROKER_API_KEY_MARKET</label>
+<input type="text" id="resetApiKeyMarket" class="reset-input" placeholder="Leave blank to keep existing">
+<label class="reset-field-label">New BROKER_API_SECRET_MARKET</label>
+<input type="password" id="resetApiSecretMarket" class="reset-input" placeholder="Leave blank to keep existing">
 </div>
 </div>
 <div class="reset-dialog-actions">
-<button type="button" class="btn" onclick="document.getElementById('resetAdminDialog').close()">Cancel</button>
-<button type="submit" value="confirm" class="btn" style="background:#dc3545;color:white">Reset Admin User</button>
+<button type="button" class="btn btn-ghost" onclick="document.getElementById('resetAdminDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn btn-danger">Factory Reset</button>
 </div>
 </form>
 </dialog>
 
 <script>
+const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
+const ICON_X='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+const TOAST_ICONS={
+info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+success:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>',
+error:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>'
+};
+const ICON_LOGS='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
+const ICON_CHEVRON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 const monitorInstance="__INSTANCE__";
 let resolvedInstance=null;
 let logsLoaded=false;
@@ -1740,6 +1835,7 @@ const preview=text.replace(/\\s+/g,' ').slice(0,160);
 throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
 }
 }
+let lastHealth=null;
 async function loadInstance(){
 if(!monitorInstance){
 showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
@@ -1755,9 +1851,12 @@ if(h.error){
 showAlert(h.error,'error');
 return;
 }
+lastHealth=h;
 renderSystem(h.system);
 renderScriptsStatus(scriptsStatus);
 renderInstance(h);
+const lu=document.getElementById('last-updated');
+if(lu){lu.textContent='Live · updated '+new Date().toLocaleTimeString();}
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
@@ -1769,12 +1868,12 @@ return;
 }
 const items=Object.entries(data.scripts).map(([name,info])=>{
 const ok=info&&info.found;
-return `<span>${ok?'✅':'❌'} ${name}</span>`;
+return `<span class="script-chip ${ok?'ok':'missing'}">${ok?ICON_CHECK:ICON_X} ${name}</span>`;
 }).join('');
 let extra='';
 if(data.missing&&data.missing.length){
 const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
-extra=`<div style="margin-top:6px"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
+extra=`<div style="margin-top:6px;width:100%"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
 }
 el.innerHTML=(items||'')+extra;
 applyScriptsAvailability(data.scripts);
@@ -1813,19 +1912,20 @@ const gitUpdated=git.current_date||'Unknown';
 const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurrent} → ${gitLatest} ${gitBehind}`.trim();
 const dc=h.domain_check||{};
 const dcOk=dc.reachable===true&&dc.status_code>=200&&dc.status_code<400;
-const dcColor=dcOk?'#28a745':(dc.reachable?'#f0ad4e':'#dc3545');
-const dcBadge=dcOk?`<span class="badge badge-authenticated">✓ ${dc.status_code} OK</span>`:`<span class="badge badge-unauthenticated">✗ ${dc.reachable?dc.status_code:'Unreachable'}</span>`;
-const dcExtra=dc.error?`<div style="color:#dc3545;font-size:11px;margin-top:3px">${escapeHtml(dc.error)}</div>`:'';
-const dcHtml=domain!=='Unknown'&&h.domain_check!==undefined?`<div class="domain-check" style="border-left:3px solid ${dcColor}"><strong>App Reachability</strong> | <a href="https://${domain}" target="_blank" rel="noopener">${domain}</a> | ${dcBadge}${dcExtra}</div>`:'';
+const dcClass=dcOk?'ok':(dc.reachable?'':'bad');
+const dcBadge=dcOk?`<span class="badge badge-authenticated">${ICON_CHECK} ${dc.status_code} OK</span>`:`<span class="badge badge-unauthenticated">${ICON_X} ${dc.reachable?dc.status_code:'Unreachable'}</span>`;
+const dcExtra=dc.error?`<div style="color:var(--danger);font-size:11px;margin-top:3px">${escapeHtml(dc.error)}</div>`:'';
+const dcHtml=domain!=='Unknown'&&h.domain_check!==undefined?`<div class="domain-check ${dcClass}"><strong>App Reachability</strong> | <a href="https://${domain}" target="_blank" rel="noopener">${domain}</a> | ${dcBadge}${dcExtra}</div>`:'';
 const actions=active
-?`<button class="btn btn-small btn-stop" onclick="stopInstance()">⏹ Stop</button>`
-:`<button class="btn btn-small btn-start" onclick="startInstance()">▶ Start</button>`;
-document.getElementById('instance').innerHTML=`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener" style="color:inherit">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div>${dcHtml}<div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">📋 View Logs</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-restart" onclick="restartInstance()">🔄 Restart</button>${actions}</div></div>`;
+?`<button class="btn btn-sm btn-danger" onclick="stopInstance()">Stop</button>`
+:`<button class="btn btn-sm btn-success" onclick="startInstance()">Start</button>`;
+document.getElementById('instance').innerHTML=`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+' Inactive'}</span></div></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div>${dcHtml}<div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="restartInstance()">Restart</button><div class="danger-group">${actions}</div></div></div>`;
 }
 function toggleLogs(){
 const logsSection=document.getElementById('logs');
 if(!logsSection)return;
 logsSection.classList.toggle('show');
+document.querySelector('.logs-toggle')?.classList.toggle('open');
 if(logsSection.classList.contains('show')&&!logsLoaded){
 fetchLogs();
 }
@@ -1844,10 +1944,10 @@ return`<div class="log-line ${hasAuthError?'log-error':''}${hasSuccess?'log-succ
 logsContent.innerHTML=html;
 logsLoaded=true;
 }else{
-logsContent.innerHTML='<p style="color:#999">No logs available</p>';
+logsContent.innerHTML='<p style="color:var(--text-faint)">No logs available</p>';
 }
 }catch(e){
-document.getElementById('logs-content').innerHTML=`<p style="color:#ff6b6b">Error loading logs: ${e.message}</p>`;
+document.getElementById('logs-content').innerHTML=`<p style="color:var(--danger)">Error loading logs: ${e.message}</p>`;
 }
 }
 function escapeHtml(text){
@@ -1863,19 +1963,29 @@ function formatPercent(p){
 if(p===null||p===undefined)return 'N/A';
 return p.toFixed(1)+'%';
 }
+function meterClass(p){
+if(p===null||p===undefined)return '';
+if(p>=90)return 'crit';
+if(p>=70)return 'warn';
+return '';
+}
+function meter(p){
+if(p===null||p===undefined)return '';
+return `<div class="meter"><div class="meter-fill ${meterClass(p)}" style="width:${Math.min(p,100)}%"></div></div>`;
+}
 function renderSystem(sys){
 const el=document.getElementById('system');
 if(!sys){
-el.innerHTML='<h3>System</h3><p style="color:#999">System stats unavailable</p>';
+el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
 return;
 }
-el.innerHTML=`<h3>System</h3>
-<div class="system-grid">
-<div class="system-item"><div class="system-label">CPU</div><div class="system-value">${formatPercent(sys.cpu_percent)}</div></div>
-<div class="system-item"><div class="system-label">Load Avg</div><div class="system-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
-<div class="system-item"><div class="system-label">RAM Used</div><div class="system-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div></div>
-<div class="system-item"><div class="system-label">Swap Used</div><div class="system-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div></div>
-<div class="system-item"><div class="system-label">Storage Used</div><div class="system-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div></div>
+el.innerHTML=`<div class="card-head"><h2>System</h2></div>
+<div class="stat-grid">
+<div class="stat"><div class="stat-label">CPU</div><div class="stat-value">${formatPercent(sys.cpu_percent)}</div>${meter(sys.cpu_percent)}</div>
+<div class="stat"><div class="stat-label">Load Avg</div><div class="stat-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
+<div class="stat"><div class="stat-label">RAM Used</div><div class="stat-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div>${meter(sys.mem_percent)}</div>
+<div class="stat"><div class="stat-label">Swap Used</div><div class="stat-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div>${meter(sys.swap_percent)}</div>
+<div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div>${meter(sys.disk_percent)}</div>
 </div>`;
 }
 async function post(path){
@@ -1923,9 +2033,36 @@ showAlert('Invalidating session...','info');
 await post('/monitor/api/invalidate-session');
 setTimeout(loadInstance,1000);
 }
-function openResetAdminDialog(){
+let resetDialogHealth=null;
+function populateBrokerSelect(){
+const sel=document.getElementById('resetBroker');
+const h=resetDialogHealth||{};
+const current=h.broker||'';
+sel.innerHTML='';
+const keepOpt=document.createElement('option');
+keepOpt.value='';
+keepOpt.textContent=current?`Keep current broker (${current})`:'Keep current broker';
+sel.appendChild(keepOpt);
+(h.valid_brokers||[]).forEach(b=>{
+const opt=document.createElement('option');
+opt.value=b;
+opt.textContent=b;
+sel.appendChild(opt);
+});
+updateCallbackPreview();
+}
+function updateCallbackPreview(){
+const h=resetDialogHealth||{};
+const sel=document.getElementById('resetBroker');
+const chosen=(sel&&sel.value)||h.broker||'';
+const preview=document.getElementById('resetCallbackPreview');
+if(preview)preview.textContent=(h.domain&&chosen)?`Callback URL: https://${h.domain}/${chosen}/callback`:'';
+}
+function openResetAdminDialog(health){
+resetDialogHealth=health||{};
 const dlg=document.getElementById('resetAdminDialog');
 document.getElementById('resetAdminForm').reset();
+populateBrokerSelect();
 document.getElementById('resetCredsFields').style.display='none';
 document.getElementById('resetXtsFields').style.display='none';
 return new Promise(resolve=>{
@@ -1933,7 +2070,7 @@ dlg.returnValue='';
 dlg.showModal();
 dlg.onclose=function(){
 if(dlg.returnValue!=='confirm'){resolve(null);return;}
-const broker=document.getElementById('resetBroker').value.trim().toLowerCase();
+const broker=document.getElementById('resetBroker').value;
 if(!document.getElementById('resetRotateCreds').checked){resolve(broker?{broker:broker}:{});return;}
 const xts=document.getElementById('resetXts').checked;
 resolve({
@@ -1947,12 +2084,12 @@ broker_api_secret_market:xts?document.getElementById('resetApiSecretMarket').val
 });
 }
 async function resetAdminUser(){
-const creds=await openResetAdminDialog();
+const creds=await openResetAdminDialog(lastHealth);
 if(creds===null)return;
 showAlert('Resetting admin user...','info');
 try{
 const res=await fetchJson('/monitor/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(creds)});
-const msg=res&&res.message?res.message:'Admin user reset';
+const msg=res&&res.message?res.message:'Factory reset complete';
 showAlert(msg,res&&res.status==='error'?'error':'success');
 }catch(e){
 showAlert('Error: '+e.message,'error');
@@ -1961,8 +2098,8 @@ return;
 setTimeout(loadInstance,1000);
 }
 async function rebootServer(){
-if(!confirm('⚠️ Reboot the server? This will reboot all instances on this server.'))return;
-if(!confirm('⚠️ FINAL CONFIRMATION: The server will restart now. Continue?'))return;
+if(!confirm('Reboot the server? This will reboot all instances on this server.'))return;
+if(!confirm('FINAL CONFIRMATION: The server will restart now. Continue?'))return;
 showAlert('Rebooting server... Connection will be lost shortly.','info');
 try{
 const r=await fetch('/monitor/api/reboot-server',{method:'POST'});
@@ -2040,16 +2177,20 @@ if(!confirm(`Update ${target}? This can take several minutes.`))return;
 startJob(`${monitorApiBase}/update`,{scope:'instance',instance:target},`Update ${target}`);
 }
 function showAlert(msg,type){
-const a=document.getElementById('alert');
-a.textContent=msg;
-a.className=`alert alert-${type} show`;
-if(type!=='error')setTimeout(()=>a.classList.remove('show'),4000);
+const list=document.getElementById('toasts');
+if(!list)return;
+const t=document.createElement('div');
+t.className=`toast ${type}`;
+t.innerHTML=`${TOAST_ICONS[type]||TOAST_ICONS.info}<div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss" onclick="this.parentElement.remove()">×</button>`;
+t.querySelector('.toast-msg').textContent=msg;
+list.appendChild(t);
+if(type!=='error')setTimeout(()=>t.remove(),4000);
 }
 window.addEventListener('load',loadInstance);
 setInterval(loadInstance,30000);
 </script>
 </body>
-</html>"""
+</html>""")
 
         html = html.replace("__INSTANCE__", instance)
         html_bytes = html.encode('utf-8')
@@ -2064,126 +2205,53 @@ setInterval(loadInstance,30000);
 
     def serve_web_ui(self):
         """Serve HTML dashboard"""
-        html = """<!DOCTYPE html>
+        html = ("""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenAlgo Manager</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
-.container{background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:900px;width:100%}
-.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;text-align:center}
-.header h1{font-size:28px;margin-bottom:10px}
-.content{padding:30px}
-.btn{padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600;margin:5px;white-space:nowrap}
-.btn-primary{background:#667eea;color:white;width:100%;padding:12px;font-size:14px}
-.btn-primary:hover{background:#5568d3}
-.btn-restart{background:#667eea;color:white}
-.btn-stop{background:#dc3545;color:white}
-.btn-start{background:#28a745;color:white}
-.btn-reboot{background:#ff6b6b;color:white}
-.btn-reboot:hover{background:#ff5252}
-.btn-small{padding:6px 12px;font-size:12px;margin:2px}
-.btn:hover{opacity:0.9;transform:translateY(-2px)}
-.instance{background:#f8f9fa;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #667eea}
-.instance-header{display:flex;justify-content:space-between;align-items:center}
-.instance-name{font-weight:600;color:#333;font-size:16px}
-.instance-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e0e0e0}
-.detail-item{font-size:13px}
-.detail-label{color:#666;font-weight:500}
-.detail-value{color:#333;font-weight:600;margin-top:2px}
-.status{font-size:12px;color:#666;margin-top:5px}
-.active{color:#28a745}
-.inactive{color:#dc3545}
-.badge{padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600;margin-left:10px}
-.badge-active{background:#d4edda;color:#155724}
-.badge-inactive{background:#f8d7da;color:#721c24}
-.badge-info{background:#cfe2ff;color:#084298}
-.badge-authenticated{background:#d4edda;color:#155724}
-.badge-unauthenticated{background:#f8d7da;color:#721c24}
-.alert{padding:15px;margin:20px 0;border-radius:8px;display:none}
-.alert.show{display:block}
-.alert-success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}
-.alert-error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}
-.alert-info{background:#d1ecf1;color:#0c5460;border:1px solid #bee5eb}
-.loading{text-align:center;padding:40px;color:#666}
-.spinner{border:3px solid #f3f3f3;border-top:3px solid #667eea;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 10px}
-@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
-.summary{background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:20px;border-left:4px solid #667eea}
-.system-card{background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #28a745}
-.system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
-.system-item{font-size:13px}
-.system-label{color:#666;font-weight:500}
-.system-value{color:#333;font-weight:600;margin-top:2px}
-.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;justify-content:flex-end}
-.maintenance{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #17a2b8}
-.maintenance-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-.maintenance-output{display:none;margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
-.maintenance-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
-.maintenance-status{font-size:12px;color:#555}
-.btn-update{background:#17a2b8;color:white}
-.btn-update:hover{background:#138496}
-.btn-health{background:#20c997;color:white}
-.btn-health:hover{background:#18a17a}
-.terminal{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;border-left:4px solid #6f42c1}
-.terminal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
-.terminal-output{margin-top:10px;background:#1e1e1e;border-radius:6px;border:1px solid #333;padding:10px;max-height:400px;overflow:auto}
-.terminal-output pre{color:#d4d4d4;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
-.broker-status{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #667eea;font-size:13px}
-.master-contract{margin-top:10px;padding:10px;background:#fff;border-radius:4px;border-left:3px solid #28a745;font-size:13px}
-.master-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
-.logs-toggle{padding:8px 12px;background:#667eea;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-top:10px;width:100%}
-.logs-toggle:hover{background:#5568d3}
-.logs-section{display:none;margin-top:10px;padding:10px;background:#1e1e1e;border-radius:4px;border:1px solid #ccc}
-.logs-section.show{display:block}
-.logs-container{max-height:500px;overflow-y:auto;font-family:'Courier New',monospace;font-size:11px;color:#d4d4d4;line-height:1.4}
-.log-line{padding:2px 5px;word-break:break-all}
-.log-error{background:#c4444466;color:#ff6b6b}
-.log-success{background:#22863a66;color:#85e89d}
-dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0}
-dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
-.reset-field-label{display:block;font-size:13px;margin-bottom:4px;color:#333}
-.reset-input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
-.reset-checkbox-label{display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:13px}
-.reset-dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:5px}
-</style>
+<style>""" + DASHBOARD_CSS + """</style>
 </head>
 <body>
-<div class="container">
-<div class="header">
-<h1>🚀 OpenAlgo Manager</h1>
-<p>Manage your OpenAlgo instances</p>
+<div class="topbar">
+<div class="brand">
+<div class="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
+<div class="brand-text"><b>OpenAlgo</b><span>Instance Manager</span></div>
 </div>
-<div class="content">
-<div id="alert" class="alert"></div>
-<div class="summary">
-<h3>Summary</h3>
-<div id="summary"><p>Loading...</p></div>
+<div class="topbar-right">
+<span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
+<button class="icon-btn" title="Refresh" onclick="loadInstances()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
 </div>
-<div id="system" class="system-card"></div>
-<div class="maintenance">
-<h3>Maintenance</h3>
-<div id="scripts-status" class="maintenance-status scripts-status"></div>
-<div class="maintenance-actions">
-<table class="button-row">
-<tr>
-<td><button id="btn-health-all" class="btn btn-primary btn-health" onclick="runHealthCheck('all')">🩺 Health Check (All)</button></td>
-<td><button id="btn-health-system" class="btn btn-primary btn-health" onclick="runHealthCheck('system')">🧩 Health Check (System)</button></td>
-<td><button id="btn-update-all" class="btn btn-primary btn-update" onclick="updateAll()">⬆️ Update All Instances</button></td>
-</tr>
-</table>
+</div>
+<main>
+<div id="toasts" role="status" aria-live="polite"></div>
+
+<div class="card">
+<div class="card-head"><h2>Summary</h2></div>
+<div id="summary" class="kpi-row"><div class="kpi"><div class="kpi-label">Instances</div><div class="kpi-value">Loading…</div></div></div>
+</div>
+
+<div id="system" class="card"></div>
+
+<div class="card">
+<div class="card-head"><h2>Maintenance</h2></div>
+<div id="scripts-status" class="scripts-row"></div>
+<div class="toolbar" style="padding-top:0">
+<button id="btn-health-all" class="btn" onclick="runHealthCheck('all')">Health Check (All)</button>
+<button id="btn-health-system" class="btn" onclick="runHealthCheck('system')">Health Check (System)</button>
+<button id="btn-update-all" class="btn" onclick="updateAll()">Update All Instances</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
 </div>
-<div class="terminal">
-<h3>Terminal (Safe)</h3>
+
+<div class="card">
+<div class="card-head"><h2>Terminal <span class="card-sub" style="margin-left:6px;font-weight:400">(safe, read-only commands)</span></h2></div>
 <div class="terminal-grid">
-<div>
-<div class="detail-label">Action</div>
-<select id="term-action" class="btn" style="width:100%">
+<div class="field">
+<span class="field-label">Action</span>
+<select id="term-action">
 <option value="systemctl_status">Systemctl Status</option>
 <option value="journalctl_tail">Journalctl Tail</option>
 <option value="df">Disk Usage (df -h)</option>
@@ -2192,66 +2260,81 @@ dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
 <option value="sqlite_select">sqlite3 SELECT</option>
 </select>
 </div>
-<div id="term-instance-wrap">
-<div class="detail-label">Instance</div>
-<select id="term-instance" class="btn" style="width:100%"></select>
+<div id="term-instance-wrap" class="field">
+<span class="field-label">Instance</span>
+<select id="term-instance"></select>
 </div>
-<div id="term-lines-wrap">
-<div class="detail-label">Lines</div>
-<input id="term-lines" class="btn" style="width:100%" type="number" min="10" max="500" value="100"/>
+<div id="term-lines-wrap" class="field">
+<span class="field-label">Lines</span>
+<input id="term-lines" type="number" min="10" max="500" value="100"/>
 </div>
-<div id="term-db-wrap">
-<div class="detail-label">DB</div>
-<select id="term-db" class="btn" style="width:100%"></select>
+<div id="term-db-wrap" class="field">
+<span class="field-label">DB</span>
+<select id="term-db"></select>
 </div>
 </div>
-<div id="term-query-wrap" style="margin-top:10px">
-<div class="detail-label">Query (SELECT only)</div>
-<textarea id="term-query" class="btn" style="width:100%;min-height:70px"></textarea>
+<div id="term-query-wrap" class="field" style="padding:0 20px;margin-top:12px">
+<span class="field-label">Query (SELECT only)</span>
+<textarea id="term-query"></textarea>
 </div>
-<div style="margin-top:10px">
-<button class="btn btn-primary" style="width:auto" onclick="runTerminal()">▶ Run Command</button>
-</div>
+<div class="terminal-run"><button class="btn btn-accent" onclick="runTerminal()">Run Command</button></div>
 <div class="terminal-output"><pre id="term-output">Ready.</pre></div>
 </div>
-<div class="manager-toolbar">
-<table class="button-row">
-<tr>
-<td><button class="btn btn-primary" onclick="restartAll()">🔄 Restart All Instances</button></td>
-<td><button class="btn btn-primary" style="background:#28a745" onclick="loadInstances()">🔄 Refresh</button></td>
-<td><button class="btn btn-primary btn-reboot" onclick="rebootServer()">⚡ Reboot Server</button></td>
-</tr>
-</table>
-</div>
-<div id="loading" class="loading"><div class="spinner"></div><p>Loading instances...</p></div>
-<div id="instances"></div>
+
+<div class="card">
+<div class="toolbar">
+<button class="btn" onclick="restartAll()">Restart All Instances</button>
+<button class="btn btn-accent" onclick="loadInstances()">Refresh</button>
+<button class="btn btn-warning" onclick="rebootServer()">Reboot Server</button>
 </div>
 </div>
 
+<div id="loading" class="loading"><div class="spinner"></div><p>Loading instances...</p></div>
+<div id="instances"></div>
+</main>
+
 <dialog id="resetAdminDialog" class="reset-admin-dialog">
 <form method="dialog" id="resetAdminForm">
-<h3 style="margin:0 0 10px;color:#dc3545">⚠️ Reset Admin User<span id="resetAdminInstanceLabel"></span></h3>
-<p style="font-size:13px;color:#555;margin:0 0 15px">Deletes ALL users and broker auth/login tokens, forcing first-time setup and a fresh broker login. Use only when there's no TOTP/QR reset and no working SMTP.</p>
-<label class="reset-field-label">Switch broker (optional, leave blank to keep current)</label>
-<input type="text" id="resetBroker" class="reset-input" placeholder="e.g. zerodha, angel, fyers, upstox">
-<label class="reset-checkbox-label"><input type="checkbox" id="resetRotateCreds" onchange="document.getElementById('resetCredsFields').style.display=this.checked?'block':'none'"> Also rotate broker API credentials in .env</label>
+<h3 style="margin:0 0 10px;color:var(--danger);display:flex;align-items:center;gap:8px;font-size:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>Factory Reset<span id="resetAdminInstanceLabel"></span></h3>
+<p style="font-size:13px;color:var(--text-dim);margin:0 0 15px;line-height:1.5">Deletes all users and clears the broker login session. The next visit will require first-time admin setup and a fresh broker login. Use only when there's no TOTP/QR reset and no working SMTP.</p>
+<div class="reset-section">
+<label class="reset-field-label">Broker</label>
+<select id="resetBroker" class="reset-input" onchange="updateCallbackPreview()">
+<option value="">Keep current broker</option>
+</select>
+<div id="resetCallbackPreview" class="reset-preview"></div>
+</div>
+<label class="reset-checkbox-label"><input type="checkbox" id="resetRotateCreds" onchange="document.getElementById('resetCredsFields').style.display=this.checked?'block':'none'"> Also update broker API key/secret in .env</label>
 <div id="resetCredsFields" style="display:none">
-<input type="text" id="resetApiKey" class="reset-input" placeholder="New BROKER_API_KEY">
-<input type="password" id="resetApiSecret" class="reset-input" placeholder="New BROKER_API_SECRET">
-<label class="reset-checkbox-label"><input type="checkbox" id="resetXts" onchange="document.getElementById('resetXtsFields').style.display=this.checked?'block':'none'"> XTS-based broker (separate market data credentials)</label>
+<label class="reset-field-label">New BROKER_API_KEY</label>
+<input type="text" id="resetApiKey" class="reset-input" placeholder="Leave blank to keep existing">
+<label class="reset-field-label">New BROKER_API_SECRET</label>
+<input type="password" id="resetApiSecret" class="reset-input" placeholder="Leave blank to keep existing">
+<label class="reset-checkbox-label"><input type="checkbox" id="resetXts" onchange="document.getElementById('resetXtsFields').style.display=this.checked?'block':'none'"> This broker also needs separate market-data credentials (XTS-based)</label>
 <div id="resetXtsFields" style="display:none">
-<input type="text" id="resetApiKeyMarket" class="reset-input" placeholder="New BROKER_API_KEY_MARKET">
-<input type="password" id="resetApiSecretMarket" class="reset-input" placeholder="New BROKER_API_SECRET_MARKET">
+<label class="reset-field-label">New BROKER_API_KEY_MARKET</label>
+<input type="text" id="resetApiKeyMarket" class="reset-input" placeholder="Leave blank to keep existing">
+<label class="reset-field-label">New BROKER_API_SECRET_MARKET</label>
+<input type="password" id="resetApiSecretMarket" class="reset-input" placeholder="Leave blank to keep existing">
 </div>
 </div>
 <div class="reset-dialog-actions">
-<button type="button" class="btn" onclick="document.getElementById('resetAdminDialog').close()">Cancel</button>
-<button type="submit" value="confirm" class="btn" style="background:#dc3545;color:white">Reset Admin User</button>
+<button type="button" class="btn btn-ghost" onclick="document.getElementById('resetAdminDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn btn-danger">Factory Reset</button>
 </div>
 </form>
 </dialog>
 
 <script>
+const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
+const ICON_X='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+const TOAST_ICONS={
+info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+success:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>',
+error:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>'
+};
+const ICON_LOGS='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
+const ICON_CHEVRON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 let brokerStatusCache={};
 let logsCache={};
 let terminalInstances=[];
@@ -2267,6 +2350,7 @@ const preview=text.replace(/\\s+/g,' ').slice(0,160);
 throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
 }
 }
+let lastHealthAll={};
 async function loadInstances(){
 try{
 document.getElementById('loading').style.display='block';
@@ -2277,18 +2361,21 @@ fetchJson('/api/health')
 ]);
 document.getElementById('loading').style.display='none';
 if(!instances||instances.length===0){
-document.getElementById('instances').innerHTML='<p>No instances found</p>';
+document.getElementById('instances').innerHTML='<p style="color:var(--text-faint)">No instances found</p>';
 return;
 }
+lastHealthAll=health.instances||{};
 renderScriptsStatus(scriptsStatus);
 renderInstances(instances, health, true);
+const lu=document.getElementById('last-updated');
+if(lu){lu.textContent='Live · updated '+new Date().toLocaleTimeString();}
 }catch(e){
 showAlert('Error: '+e.message,'error');
 }
 }
 function renderInstances(instances, health, initTerminal){
 const running=Object.values(health.instances||{}).filter(i=>i.status==='active').length;
-document.getElementById('summary').innerHTML=`<p><strong>Total Instances:</strong> ${instances.length} | <strong>Running:</strong> <span class="active">${running}</span> | <strong>Stopped:</strong> <span class="inactive">${instances.length-running}</span></p>`;
+document.getElementById('summary').innerHTML=`<div class="kpi"><div class="kpi-label">Total Instances</div><div class="kpi-value">${instances.length}</div></div><div class="kpi"><div class="kpi-label">Running</div><div class="kpi-value success">${running}</div></div><div class="kpi"><div class="kpi-label">Stopped</div><div class="kpi-value danger">${instances.length-running}</div></div>`;
 renderSystem(health.system);
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
@@ -2313,7 +2400,10 @@ const gitLatest=git.latest_commit||'N/A';
 const gitBehind=(git.behind!==null&&git.behind!==undefined)?`${git.behind} behind`:'';
 const gitUpdated=git.current_date||'Unknown';
 const gitSummary=gitCurrent===gitLatest?`${gitCurrent} (up to date)`:`${gitCurrent} → ${gitLatest} ${gitBehind}`.trim();
-return`<div class="instance"><div class="instance-header"><div><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?'✓ Active':'✗ Inactive'}</span></div></div></div><div class="instance-details"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener" style="color:inherit">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value">${h.database?'✓ Present':'✗ Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="broker-status"><strong>${authName}</strong> | <strong>Broker:</strong> ${broker} | ${brokerAuthBadge}</div><div class="master-contract" style="border-left-color:${mcReady?'#28a745':'#dc3545'}"><strong>Master Contract Data</strong> | ${mcBadge}<div class="master-details"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">📋 View Logs</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:#999">Loading logs...</p></div></div><div class="actions"><button class="btn btn-small btn-health" onclick="runHealthCheck('instance','${inst}')">🩺 Health</button><button class="btn btn-small btn-update" onclick="updateInstance('${inst}')">⬆ Update</button><button class="btn btn-small btn-restart" onclick="restart('${inst}')">🔄 Restart</button><button class="btn btn-small btn-invalidate" onclick="invalidate('${inst}')">🚫 Invalidate</button><button class="btn btn-small btn-invalidate" style="background:#dc3545" onclick="resetAdminUser('${inst}')">🗑️ Reset Admin</button>${active?`<button class="btn btn-small btn-stop" onclick="stop('${inst}')">⏹ Stop</button>`:`<button class="btn btn-small btn-start" onclick="start('${inst}')">▶ Start</button>`}</div></div>`;
+const actions=active
+?`<button class="btn btn-sm btn-danger" onclick="stop('${inst}')">Stop</button>`
+:`<button class="btn btn-sm btn-success" onclick="start('${inst}')">Start</button>`;
+return`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+' Inactive'}</span></div></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="runHealthCheck('instance','${inst}')">Health</button><button class="btn btn-sm" onclick="updateInstance('${inst}')">Update</button><button class="btn btn-sm" onclick="restart('${inst}')">Restart</button><div class="danger-group"><button class="btn btn-sm" onclick="invalidate('${inst}')">Invalidate</button><button class="btn btn-sm btn-danger" onclick="resetAdminUser('${inst}')">Factory Reset</button>${actions}</div></div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 if(initTerminal && !terminalInitialized){
@@ -2443,12 +2533,12 @@ return;
 }
 const items=Object.entries(data.scripts).map(([name,info])=>{
 const ok=info&&info.found;
-return `<span>${ok?'✅':'❌'} ${name}</span>`;
+return `<span class="script-chip ${ok?'ok':'missing'}">${ok?ICON_CHECK:ICON_X} ${name}</span>`;
 }).join('');
 let extra='';
 if(data.missing&&data.missing.length){
 const fix=data.suggested_fix||'sudo ln -sf /path/to/openalgo-scripts/*.sh /usr/local/bin/';
-extra=`<div style="margin-top:6px"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
+extra=`<div style="margin-top:6px;width:100%"><strong>Fix:</strong> <code>${escapeHtml(fix)}</code></div>`;
 }
 el.innerHTML=(items||'')+extra;
 applyScriptsAvailability(data.scripts);
@@ -2466,6 +2556,7 @@ if(btnUpdateAll){btnUpdateAll.disabled=!updateOk;btnUpdateAll.title=updateOk?'':
 async function toggleLogs(inst){
 const logsSection=document.getElementById(`logs-${inst}`);
 logsSection.classList.toggle('show');
+event?.currentTarget?.classList.toggle('open');
 if(logsSection.classList.contains('show')&&!logsCache[inst]){
 fetchLogs(inst);
 }
@@ -2484,10 +2575,10 @@ return`<div class="log-line ${hasAuthError?'log-error':''}${hasSuccess?'log-succ
 logsContent.innerHTML=html;
 logsCache[inst]=true;
 }else{
-logsContent.innerHTML='<p style="color:#999">No logs available</p>';
+logsContent.innerHTML='<p style="color:var(--text-faint)">No logs available</p>';
 }
 }catch(e){
-document.getElementById(`logs-content-${inst}`).innerHTML=`<p style="color:#ff6b6b">Error loading logs: ${e.message}</p>`;
+document.getElementById(`logs-content-${inst}`).innerHTML=`<p style="color:var(--danger)">Error loading logs: ${e.message}</p>`;
 }
 }
 function escapeHtml(text){
@@ -2503,19 +2594,29 @@ function formatPercent(p){
 if(p===null||p===undefined)return 'N/A';
 return p.toFixed(1)+'%';
 }
+function meterClass(p){
+if(p===null||p===undefined)return '';
+if(p>=90)return 'crit';
+if(p>=70)return 'warn';
+return '';
+}
+function meter(p){
+if(p===null||p===undefined)return '';
+return `<div class="meter"><div class="meter-fill ${meterClass(p)}" style="width:${Math.min(p,100)}%"></div></div>`;
+}
 function renderSystem(sys){
 const el=document.getElementById('system');
 if(!sys){
-el.innerHTML='<h3>System</h3><p style="color:#999">System stats unavailable</p>';
+el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
 return;
 }
-el.innerHTML=`<h3>System</h3>
-<div class="system-grid">
-<div class="system-item"><div class="system-label">CPU</div><div class="system-value">${formatPercent(sys.cpu_percent)}</div></div>
-<div class="system-item"><div class="system-label">Load Avg</div><div class="system-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
-<div class="system-item"><div class="system-label">RAM Used</div><div class="system-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div></div>
-<div class="system-item"><div class="system-label">Swap Used</div><div class="system-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div></div>
-<div class="system-item"><div class="system-label">Storage Used</div><div class="system-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div></div>
+el.innerHTML=`<div class="card-head"><h2>System</h2></div>
+<div class="stat-grid">
+<div class="stat"><div class="stat-label">CPU</div><div class="stat-value">${formatPercent(sys.cpu_percent)}</div>${meter(sys.cpu_percent)}</div>
+<div class="stat"><div class="stat-label">Load Avg</div><div class="stat-value">${sys.load1??'N/A'} / ${sys.load5??'N/A'} / ${sys.load15??'N/A'}</div></div>
+<div class="stat"><div class="stat-label">RAM Used</div><div class="stat-value">${formatBytes(sys.mem_used)} / ${formatBytes(sys.mem_total)} (${formatPercent(sys.mem_percent)})</div>${meter(sys.mem_percent)}</div>
+<div class="stat"><div class="stat-label">Swap Used</div><div class="stat-value">${formatBytes(sys.swap_used)} / ${formatBytes(sys.swap_total)} (${formatPercent(sys.swap_percent)})</div>${meter(sys.swap_percent)}</div>
+<div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value">${formatBytes(sys.disk_used)} / ${formatBytes(sys.disk_total)} (${formatPercent(sys.disk_percent)})</div>${meter(sys.disk_percent)}</div>
 </div>`;
 }
 async function restartAll(){
@@ -2599,9 +2700,36 @@ await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type'
 showAlert(`Invalidating session for ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
+let resetDialogHealth=null;
+function populateBrokerSelect(){
+const sel=document.getElementById('resetBroker');
+const h=resetDialogHealth||{};
+const current=h.broker||'';
+sel.innerHTML='';
+const keepOpt=document.createElement('option');
+keepOpt.value='';
+keepOpt.textContent=current?`Keep current broker (${current})`:'Keep current broker';
+sel.appendChild(keepOpt);
+(h.valid_brokers||[]).forEach(b=>{
+const opt=document.createElement('option');
+opt.value=b;
+opt.textContent=b;
+sel.appendChild(opt);
+});
+updateCallbackPreview();
+}
+function updateCallbackPreview(){
+const h=resetDialogHealth||{};
+const sel=document.getElementById('resetBroker');
+const chosen=(sel&&sel.value)||h.broker||'';
+const preview=document.getElementById('resetCallbackPreview');
+if(preview)preview.textContent=(h.domain&&chosen)?`Callback URL: https://${h.domain}/${chosen}/callback`:'';
+}
 function openResetAdminDialog(inst){
+resetDialogHealth=(lastHealthAll&&lastHealthAll[inst])||{};
 const dlg=document.getElementById('resetAdminDialog');
 document.getElementById('resetAdminForm').reset();
+populateBrokerSelect();
 document.getElementById('resetCredsFields').style.display='none';
 document.getElementById('resetXtsFields').style.display='none';
 document.getElementById('resetAdminInstanceLabel').textContent=inst?` for ${inst}`:'';
@@ -2610,7 +2738,7 @@ dlg.returnValue='';
 dlg.showModal();
 dlg.onclose=function(){
 if(dlg.returnValue!=='confirm'){resolve(null);return;}
-const broker=document.getElementById('resetBroker').value.trim().toLowerCase();
+const broker=document.getElementById('resetBroker').value;
 if(!document.getElementById('resetRotateCreds').checked){resolve(broker?{broker:broker}:{});return;}
 const xts=document.getElementById('resetXts').checked;
 resolve({
@@ -2629,7 +2757,7 @@ if(creds===null)return;
 showAlert(`Resetting admin user for ${inst}...`,'info');
 try{
 const res=await fetchJson('/api/reset-admin-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({instance:inst},creds))});
-showAlert(res&&res.message?res.message:`Admin user reset for ${inst}`,res&&res.status==='error'?'error':'success');
+showAlert(res&&res.message?res.message:`Factory reset complete for ${inst}`,res&&res.status==='error'?'error':'success');
 }catch(e){
 showAlert('Error: '+e.message,'error');
 return;
@@ -2649,8 +2777,8 @@ showAlert(`Starting ${inst}`,'info');
 setTimeout(loadInstances,1000);
 }
 async function rebootServer(){
-if(!confirm('⚠️ Are you sure you want to reboot the server? This will disconnect all instances!'))return;
-if(!confirm('⚠️ FINAL CONFIRMATION: The server will restart now. Continue?'))return;
+if(!confirm('Are you sure you want to reboot the server? This will disconnect all instances!'))return;
+if(!confirm('FINAL CONFIRMATION: The server will restart now. Continue?'))return;
 showAlert('Rebooting server... Connection will be lost shortly.','info');
 try{
 const d=await fetchJson('/api/reboot-server',{method:'POST'});
@@ -2660,16 +2788,20 @@ showAlert('Reboot initiated (API connection lost as expected)','success');
 }
 }
 function showAlert(msg,type){
-const a=document.getElementById('alert');
-a.textContent=msg;
-a.className=`alert alert-${type} show`;
-if(type!=='error')setTimeout(()=>a.classList.remove('show'),4000);
+const list=document.getElementById('toasts');
+if(!list)return;
+const t=document.createElement('div');
+t.className=`toast ${type}`;
+t.innerHTML=`${TOAST_ICONS[type]||TOAST_ICONS.info}<div class="toast-msg"></div><button class="toast-close" aria-label="Dismiss" onclick="this.parentElement.remove()">×</button>`;
+t.querySelector('.toast-msg').textContent=msg;
+list.appendChild(t);
+if(type!=='error')setTimeout(()=>t.remove(),4000);
 }
 window.addEventListener('load',loadInstances);
 setInterval(loadInstances,30000);
 </script>
 </body>
-</html>"""
+</html>""")
         
         html_bytes = html.encode('utf-8')
         self.send_response(200)
