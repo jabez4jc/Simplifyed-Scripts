@@ -67,6 +67,11 @@ cat > "$RESTART_SCRIPT" << 'EOF'
 BASE_DIR="/var/python/openalgo-flask"
 LOG_FILE="/var/log/openalgo-daily-restart.log"
 CLEAR_LOGS_SCRIPT="/usr/local/bin/oa-clear-logs.sh"
+INVALIDATE_SCRIPT="/usr/local/bin/oa-invalidate-session.sh"
+
+# Brokers that trade 24x7 - their sessions must NOT be force-invalidated on
+# the daily restart, since re-login would interrupt live crypto trading.
+CRYPTO_BROKERS="deltaexchange"
 
 # Function to log messages
 log_to_file() {
@@ -88,6 +93,18 @@ get_service_name() {
     else
         echo "$fallback_name"
     fi
+}
+
+get_broker() {
+    local instance_dir="$1"
+    local env_file="$instance_dir/.env"
+    local redirect_url=""
+
+    if [ -f "$env_file" ]; then
+        redirect_url=$(grep -E "REDIRECT_URL" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+    fi
+
+    echo "$redirect_url" | sed -nE 's#.*/([^/]+)/callback.*#\1#p'
 }
 
 log_to_file "Starting daily restart of all OpenAlgo instances"
@@ -116,6 +133,18 @@ fi
 restart_count=0
 for instance in "${INSTANCES[@]}"; do
     SERVICE_NAME=$(get_service_name "$BASE_DIR/$instance" "$instance")
+    BROKER=$(get_broker "$BASE_DIR/$instance")
+
+    if [[ -n "$BROKER" && ",$CRYPTO_BROKERS," == *",$BROKER,"* ]]; then
+        log_to_file "Skipping session invalidation for $instance (broker: $BROKER trades 24x7)"
+    elif [ -x "$INVALIDATE_SCRIPT" ]; then
+        log_to_file "Invalidating stale session for $instance (broker: ${BROKER:-unknown})..."
+        if "$INVALIDATE_SCRIPT" --instance "$instance" >> "$LOG_FILE" 2>&1; then
+            log_to_file "✓ Session invalidated for $instance"
+        else
+            log_to_file "✗ Failed to invalidate session for $instance"
+        fi
+    fi
 
     log_to_file "Restarting $SERVICE_NAME..."
     
