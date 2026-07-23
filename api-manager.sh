@@ -38,9 +38,10 @@ menu_main() {
     echo "2) Show Status & URL"
     echo "3) View Logs"
     echo "4) Change Admin Password"
-    echo "5) Exit"
+    echo "5) Configure Manager Domain / Lock Down Port 8888"
+    echo "6) Exit"
     echo ""
-    read -p "Select option [1-5]: " choice
+    read -p "Select option [1-6]: " choice
     echo ""
 
     case $choice in
@@ -48,7 +49,8 @@ menu_main() {
         2) show_status ;;
         3) show_logs ;;
         4) python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password; read -p "Press Enter to continue..."; menu_main ;;
-        5) exit 0 ;;
+        5) run_secure_admin; read -p "Press Enter to continue..."; menu_main ;;
+        6) exit 0 ;;
         *) echo "Invalid option"; sleep 2; menu_main ;;
     esac
 }
@@ -153,6 +155,19 @@ SVCEOF
         journalctl -u openalgo-restart-api -n 20 --no-pager
         return 1
     fi
+}
+
+run_secure_admin() {
+    local script=""
+    if [ -f "/usr/local/bin/oa-secure-admin.sh" ]; then
+        script="/usr/local/bin/oa-secure-admin.sh"
+    elif [ -f "$(dirname "$0")/oa-secure-admin.sh" ]; then
+        script="$(dirname "$0")/oa-secure-admin.sh"
+    else
+        echo -e "${RED}❌ oa-secure-admin.sh not found. Run 'Setup / Update' first to link it.${NC}"
+        return 1
+    fi
+    bash "$script"
 }
 
 setup_admin_login() {
