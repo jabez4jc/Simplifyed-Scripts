@@ -1654,7 +1654,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .domain-check{margin-top:10px;padding:10px;background:#fff;border-radius:4px;font-size:13px}
 .domain-check a{color:inherit;text-decoration:none}
 .domain-check a:hover{text-decoration:underline}
-dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%}
+dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0}
 dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
 .reset-field-label{display:block;font-size:13px;margin-bottom:4px;color:#333}
 .reset-input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
@@ -2142,7 +2142,7 @@ body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;jus
 .log-line{padding:2px 5px;word-break:break-all}
 .log-error{background:#c4444466;color:#ff6b6b}
 .log-success{background:#22863a66;color:#85e89d}
-dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%}
+dialog.reset-admin-dialog{border:none;border-radius:8px;padding:20px;max-width:420px;width:90%;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0}
 dialog.reset-admin-dialog::backdrop{background:rgba(0,0,0,0.5)}
 .reset-field-label{display:block;font-size:13px;margin-bottom:4px;color:#333}
 .reset-input{width:100%;padding:8px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
