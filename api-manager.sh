@@ -252,6 +252,17 @@ EOF
     show_status
 }
 
+# Retry a condition until it succeeds or the deadline passes. Returns as soon
+# as it passes, so an already-healthy service costs nothing.
+wait_for() {
+    local deadline=$(( SECONDS + $1 )); shift
+    while ! eval "$@"; do
+        [ $SECONDS -ge $deadline ] && return 1
+        sleep 1
+    done
+    return 0
+}
+
 show_status() {
     clear
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
@@ -267,17 +278,19 @@ show_status() {
         echo -e "${RED}❌${NC}"
     fi
     
-    # Check port
+    # Check port. systemd reports the unit active the moment the process forks,
+    # but the app needs a few more seconds to bind :8888 - so poll instead of
+    # sampling once, or a fresh Setup/Update always reports a false failure.
     echo -n "Checking port 8888... "
-    if ss -tlnp 2>/dev/null | grep -q ":8888 "; then
+    if wait_for 15 'ss -tlnp 2>/dev/null | grep -q ":8888 "'; then
         echo -e "${GREEN}✅${NC}"
     else
         echo -e "${RED}❌${NC}"
     fi
-    
+
     # Test API
     echo -n "Testing API response... "
-    if curl -s -m 5 http://localhost:8888/health 2>&1 | grep -q "healthy"; then
+    if wait_for 15 'curl -s -m 5 http://localhost:8888/health 2>&1 | grep -q "healthy"'; then
         echo -e "${GREEN}✅${NC}"
     else
         echo -e "${RED}❌${NC}"

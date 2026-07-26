@@ -93,7 +93,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 - Each instance uses a unique port range (Flask: 5000+N, WebSocket: 8765+N, ZMQ: 5555+N)
 - Separate SQLite databases per instance (openalgo{N}.db, latency{N}.db, logs{N}.db)
 - Unique session/CSRF cookie names (session{N}, csrf_token{N}) to prevent cross-instance pollution
-- Individual systemd services (openalgo{N}) with separate Unix sockets
+- Individual systemd services with separate Unix sockets. **Service names are derived from the domain, not the index**: `openalgo-<domain with dots as dashes>` (e.g. `fyers.simplifyed.in` → `openalgo-fyers-simplifyed-in`). See multi-install.sh:334-335. `openalgo{N}` is the *directory* name under /var/python/openalgo-flask/ — `systemctl status openalgo2` will always report "unit could not be found".
 
 **Broker Integration:**
 - Validates broker names against hardcoded list (30 supported brokers)
@@ -141,9 +141,10 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 **Debug installation failures:**
 1. Check latest log: `tail -f logs/install_multi_*.log`
-2. Verify systemd service: `sudo systemctl status openalgo<N>`
+2. Verify systemd service: `sudo systemctl status openalgo-<domain-with-dashes>`
+   (find it with `systemctl list-units 'openalgo-*'` — NOT `openalgo<N>`, that's the directory name)
 3. Check Nginx config: `sudo nginx -t`
-4. View Flask app logs: `sudo journalctl -u openalgo<N> -n 50`
+4. View Flask app logs: `sudo journalctl -u openalgo-<domain-with-dashes> -n 50`
 
 **Monitor instance health:**
 1. Run health check: `sudo ./oa-health-check.sh all`
