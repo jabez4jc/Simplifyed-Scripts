@@ -364,13 +364,18 @@ check_system_health() {
         print_warning "Firewall disabled"
     fi
     
-    # Check swap
-    local swap=$(free -h | grep Swap | awk '{print $2}')
-    if [ "$swap" != "0B" ]; then
-        local swap_used=$(free -h | grep Swap | awk '{print $3}')
-        print_ok "Swap configured: $swap (using $swap_used)"
+    # Check swap - critical, not cosmetic: broker auth + master contract download
+    # OOM-kills the single eventlet worker without it, which surfaces as nginx 504.
+    local swap_bytes=$(free -b | awk '/^Swap:/ {print $2}')
+    if [ "${swap_bytes:-0}" -gt 0 ]; then
+        print_ok "Swap configured: $(free -h | awk '/^Swap:/ {print $2" (using "$3")"}')"
     else
-        print_warning "No swap configured"
+        print_critical "No swap configured - run ./update_swap_4gb.sh (expect OOM/504 without it)"
+    fi
+
+    # Check for recent OOM kills - the usual cause of a 504 on a live instance
+    if sudo journalctl --since "24 hours ago" -k 2>/dev/null | grep -qi "out of memory\|oom-kill"; then
+        print_critical "OOM kill(s) in last 24h - check 'journalctl -k | grep -i oom'"
     fi
     
     # Check system load
