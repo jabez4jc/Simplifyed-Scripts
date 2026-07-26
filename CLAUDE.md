@@ -165,6 +165,16 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 **Modify port allocation strategy:**
 Update the port calculation formulas in the instance loop (lines 272-274 in multi-install.sh)
 
+## Known Upstream Issue: WhatsApp auto-start wedges the eventlet worker
+
+**Symptom:** instance returns nginx 504 while `systemctl is-active` says `active` and the process is running. `oa-health-check.sh` reports "Socket accepts but does not respond - worker wedged".
+
+**Cause:** `app.py` auto-starts the WhatsApp bot on a raw `threading.Thread`. That thread acquires an eventlet semaphore, and the hub (on another OS thread) then hits `greenlet.error: Cannot switch to a different thread` inside `fire_timers`, killing its timer/accept loop. Deterministic, ~6s after every boot, on any instance with a paired WhatsApp session. Confirmed 2026-07-27 on openalgo2 (fyers.simplifyed.in).
+
+**Local mitigation:** the `is_paired` gate in `app.py` (~line 766) is forced false so the bot never auto-starts. It can still be started manually from the UI.
+
+**IMPORTANT:** `oa-update.sh` runs `git pull`, which reverts this. After any update, re-apply the patch and confirm the instance actually serves — `systemctl is-active` will NOT catch the regression. The real fix belongs upstream (use `eventlet.spawn` instead of `threading.Thread`, or drop the eventlet worker class — gunicorn already warns eventlet is deprecated).
+
 ## Testing Considerations
 
 - Scripts require root access; local testing limited to syntax checking with `shellcheck`
