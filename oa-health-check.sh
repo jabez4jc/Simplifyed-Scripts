@@ -216,18 +216,36 @@ check_venv() {
     fi
 }
 
-# Check socket file
+# Check the socket actually serves HTTP - not just that the file exists.
+#
+# A wedged eventlet hub (see the WhatsApp/greenlet.error class of bug) leaves
+# systemd reporting "active", the process running, and this socket file present,
+# while every request hangs until nginx gives up with a 504. "File exists" and
+# "systemctl is-active" both pass throughout. Only an end-to-end request catches it.
 check_socket() {
     local instance_dir="$1"
     local socket_file="$instance_dir/openalgo.sock"
-    
-    if [ -S "$socket_file" ]; then
-        print_ok "Socket file exists: openalgo.sock"
-        return 0
-    else
-        print_warning "Socket file missing or not a socket: openalgo.sock"
+
+    if [ ! -S "$socket_file" ]; then
+        print_critical "Socket file missing or not a socket: openalgo.sock"
         return 1
     fi
+
+    # A healthy instance answers in milliseconds; 10s is generous headroom for a
+    # cold start, and short enough to not stall a sweep over every instance.
+    local code
+    code=$(sudo -u www-data curl -s -m 10 -o /dev/null -w '%{http_code}' \
+        --unix-socket "$socket_file" http://localhost/ 2>/dev/null)
+
+    # Any HTTP response means the worker is accepting and serving. A redirect to
+    # the login page is a perfectly healthy answer, so don't require 200.
+    if [ -n "$code" ] && [ "$code" != "000" ]; then
+        print_ok "Socket serving HTTP (status $code)"
+        return 0
+    fi
+
+    print_critical "Socket accepts but does not respond - worker wedged (nginx will 504)"
+    return 1
 }
 
 # Check recent errors in logs
