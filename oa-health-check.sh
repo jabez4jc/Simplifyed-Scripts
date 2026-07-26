@@ -339,14 +339,14 @@ check_instance() {
     check_service_status "$instance_name"
     check_env_file "$instance_dir"
 
-    local flask_port
     local websocket_port
     local zmq_port
-    flask_port=$(get_env_value "$instance_dir" "FLASK_PORT")
     websocket_port=$(get_env_value "$instance_dir" "WEBSOCKET_PORT")
     zmq_port=$(get_env_value "$instance_dir" "ZMQ_PORT")
 
-    check_port_listening "Flask" "$flask_port"
+    # No check on FLASK_PORT: gunicorn binds the Unix socket, not a TCP port
+    # (multi-install.sh --bind unix:$SOCKET_FILE), so nothing ever listens there.
+    # check_socket below is the real test of whether the app serves.
     check_port_listening "WebSocket" "$websocket_port"
     check_port_listening "ZMQ" "$zmq_port"
     check_databases "$instance_dir" "$instance_num"
