@@ -71,6 +71,19 @@ get_default_branch() {
 }
 
 # Function to check command status
+# Locate a sibling utility script. Prefer the copy next to this one (a git
+# checkout being run directly) over /usr/local/bin, so a freshly pulled repo
+# doesn't silently run an older linked version.
+find_helper_script() {
+    local name="$1" here
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$here/$name" ]; then
+        echo "$here/$name"
+    elif [ -f "/usr/local/bin/$name" ]; then
+        echo "/usr/local/bin/$name"
+    fi
+}
+
 check_status() {
     if [ $? -ne 0 ]; then
         log_message "Error: $1" "$RED"
@@ -631,15 +644,26 @@ update_instance() {
         log_message "⚠ Migration script not found, skipping" "$YELLOW"
     fi
 
+    # Re-apply known-issue mitigations. The git pull above reverts them, so this
+    # must run on every update or the instance comes back with the upstream bug.
+    local patch_script
+    patch_script=$(find_helper_script "oa-patch-known-issues.sh")
+    if [ -n "$patch_script" ]; then
+        log_message "  Applying known-issue mitigations..." "$BLUE"
+        sudo bash "$patch_script" "$instance_dir" 2>&1 | tee -a "$UPDATE_LOG"
+    else
+        log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
+    fi
+
     # Restart service
     if [ "$was_running" = true ]; then
         log_message "  Restarting service: $service_name" "$BLUE"
         sudo systemctl start "$service_name"
         check_status "Failed to start service" || return 1
-        
+
         # Wait for service to be ready
         sleep 3
-        
+
         # Verify service is running
         if systemctl is-active --quiet "$service_name"; then
             log_message "✓ Service restarted successfully" "$GREEN"
@@ -649,8 +673,29 @@ update_instance() {
             log_message "Backup available at: $backup_dir" "$YELLOW"
             return 1
         fi
+
+        # systemd reporting "active" is NOT proof the app serves - a wedged
+        # eventlet worker stays "active" while every request hangs into a 504.
+        # Only an end-to-end probe catches that, so gate success on the health
+        # check's exit code (2 = critical) rather than on systemctl.
+        local health_script
+        health_script=$(find_helper_script "oa-health-check.sh")
+        if [ -n "$health_script" ]; then
+            log_message "  Verifying instance actually serves requests..." "$BLUE"
+            sleep 20   # the known wedge lands ~6s after boot; don't declare too early
+            sudo bash "$health_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
+            local health_rc=${PIPESTATUS[0]}
+            if [ "$health_rc" -eq 2 ]; then
+                log_message "❌ Update left $instance_name NOT serving requests!" "$RED"
+                log_message "   Roll back: sudo ./oa-update.sh rollback $backup_dir $instance_name" "$YELLOW"
+                return 1
+            fi
+            log_message "✓ Instance verified serving" "$GREEN"
+        else
+            log_message "⚠ oa-health-check.sh not found - could not verify the app serves" "$YELLOW"
+        fi
     fi
-    
+
     log_message "✓ Instance updated successfully" "$GREEN"
     log_message "  Backup preserved at: $backup_dir" "$BLUE"
     return 0

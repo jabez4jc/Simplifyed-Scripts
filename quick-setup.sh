@@ -478,6 +478,16 @@ log_message "\n╔════════════════════�
 log_message "║ Step 7: Create Systemd Service     ║" "$BLUE"
 log_message "╚════════════════════════════════════╝" "$BLUE"
 
+# Apply mitigations for known upstream bugs before first start, so a new
+# instance is not born with a worker that wedges on boot.
+PATCH_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oa-patch-known-issues.sh"
+if [ -f "$PATCH_SCRIPT" ]; then
+    log_message "\n🔧 Applying known-issue mitigations..." "$BLUE"
+    sudo bash "$PATCH_SCRIPT" "$INSTANCE_DIR"
+else
+    log_message "\n⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
+fi
+
 log_message "\n🔧 Creating systemd service..." "$BLUE"
 
 VENV_PATH="$INSTANCE_DIR/venv"

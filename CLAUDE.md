@@ -79,7 +79,13 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Provides summary and lists all available scripts
    - Simplifies initial setup process
 
-11. **oa-secure-admin.sh** - Admin auth retrofit utility
+11. **oa-patch-known-issues.sh** - Upstream bug mitigation applier
+   - Idempotent, pattern-matched patches for known OpenAlgo bugs that break under this deployment's gunicorn/eventlet setup
+   - Called automatically by both installers (before first start) and by `oa-update.sh` (after `git pull` reverts them)
+   - `--self-test` verifies patch logic against synthetic samples without touching any instance
+   - See "Known Upstream Issue" section below
+
+12. **oa-secure-admin.sh** - Admin auth retrofit utility
    - Sets/resets the admin login via `openalgo-restart-api.py --set-admin-password` (app-owned credential store, not nginx)
    - Removes any leftover `auth_basic` directives from an earlier version of this script, so the app's own login page is the only gate
    - Optionally puts the all-instances manager page behind its own domain + TLS instead of raw `IP:8888`
@@ -171,9 +177,13 @@ Update the port calculation formulas in the instance loop (lines 272-274 in mult
 
 **Cause:** `app.py` auto-starts the WhatsApp bot on a raw `threading.Thread`. That thread acquires an eventlet semaphore, and the hub (on another OS thread) then hits `greenlet.error: Cannot switch to a different thread` inside `fire_timers`, killing its timer/accept loop. Deterministic, ~6s after every boot, on any instance with a paired WhatsApp session. Confirmed 2026-07-27 on openalgo2 (fyers.simplifyed.in).
 
-**Local mitigation:** the `is_paired` gate in `app.py` (~line 766) is forced false so the bot never auto-starts. It can still be started manually from the UI.
+**Mitigation (automated):** `oa-patch-known-issues.sh` forces the `is_paired` gate in `app.py` false so the bot never auto-starts. The bot still starts manually from the UI; pairing and session blob are untouched. The patch is pattern-matched (not line-numbered), idempotent, self-skipping once upstream fixes the bug, and auto-reverted if the result doesn't compile.
 
-**IMPORTANT:** `oa-update.sh` runs `git pull`, which reverts this. After any update, re-apply the patch and confirm the instance actually serves — `systemctl is-active` will NOT catch the regression. The real fix belongs upstream (use `eventlet.spawn` instead of `threading.Thread`, or drop the eventlet worker class — gunicorn already warns eventlet is deprecated).
+It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before first start) and by `oa-update.sh` (after `git pull`, which reverts it). `oa-update.sh` then gates success on `oa-health-check.sh`'s exit code rather than on `systemctl is-active`, which cannot detect a wedged worker.
+
+**The real fix belongs upstream:** use `eventlet.spawn(_autostart_whatsapp_bot)` instead of `threading.Thread(...)` in `app.py`, or drop the eventlet worker class — gunicorn already warns eventlet is deprecated. Once upstream lands it, the patcher detects the change and skips automatically.
+
+**Adding a future mitigation:** add a `patch_*` function to `oa-patch-known-issues.sh` following the rules in its header, and extend `--self-test` to cover it. Run `./oa-patch-known-issues.sh --self-test` to verify patch logic without touching any instance.
 
 ## Testing Considerations
 

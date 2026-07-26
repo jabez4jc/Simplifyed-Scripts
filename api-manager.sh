@@ -234,9 +234,36 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+    echo -e "${YELLOW}Installing health check timer...${NC}"
+    # oa-health-check.sh exits 2 when an instance is critical (e.g. a wedged
+    # worker that systemd still reports as "active"). Letting the unit fail on
+    # that surfaces it in `systemctl list-units --failed` and the journal,
+    # instead of the check only mattering when someone remembers to run it.
+    cat > /etc/systemd/system/openalgo-health-check.service << 'EOF'
+[Unit]
+Description=OpenAlgo instance health check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oa-health-check.sh all
+EOF
+    cat > /etc/systemd/system/openalgo-health-check.timer << 'EOF'
+[Unit]
+Description=Run OpenAlgo health check twice daily
+
+[Timer]
+OnCalendar=*-*-* 07,19:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
     systemctl daemon-reload >/dev/null 2>&1
     systemctl enable --now openalgo-clear-safe.timer >/dev/null 2>&1 || true
-    echo -e "${GREEN}✅ Cleanup timer installed${NC}"
+    systemctl enable --now openalgo-health-check.timer >/dev/null 2>&1 || true
+    echo -e "${GREEN}✅ Cleanup and health check timers installed${NC}"
+    echo -e "${BLUE}   Check results: systemctl list-units --failed | grep openalgo${NC}"
     echo ""
 
     install_api || { read -p "Press Enter to continue..."; menu_main; }

@@ -616,6 +616,16 @@ EOL
     sudo nginx -t
     check_status "Failed to validate Nginx config"
 
+    # Apply mitigations for known upstream bugs before the service ever starts,
+    # so a new instance is not born with a worker that wedges on boot.
+    PATCH_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oa-patch-known-issues.sh"
+    if [ -f "$PATCH_SCRIPT" ]; then
+        log_message "Applying known-issue mitigations..." "$BLUE"
+        sudo bash "$PATCH_SCRIPT" "$INSTANCE_DIR"
+    else
+        log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
+    fi
+
     # Create systemd service
     log_message "Creating systemd service..." "$BLUE"
     if systemctl is-active --quiet "$SERVICE_NAME"; then
