@@ -651,6 +651,19 @@ update_instance() {
         log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
     fi
 
+    # One-time migration: eventlet → gthread in systemd service file
+    local service_file="/etc/systemd/system/${service_name}.service"
+    if [ -f "$service_file" ] && sudo grep -q -- '--worker-class eventlet' "$service_file"; then
+        log_message "  Migrating systemd service from eventlet → gthread..." "$BLUE"
+        sudo sed -i \
+            -e 's/--worker-class eventlet/--worker-class gthread/' \
+            -e '/-w 1 \\/a\    --threads 4 \\' \
+            -e 's/--timeout [0-9]\+ \\/--timeout 120 \\/' \
+            "$service_file"
+        sudo systemctl daemon-reload
+        log_message "✓ Systemd service migrated to gthread" "$GREEN"
+    fi
+
     # Restart service
     if [ "$was_running" = true ]; then
         log_message "  Restarting service: $service_name" "$BLUE"
