@@ -7,18 +7,16 @@ scripts, detect and fix failures, and validate the fixes.
 ## Quick Start
 
 ```bash
-# 1. Set your EC2 connection
-export EC2_HOST="ec2-13-127-20-39.ap-south-1.compute.amazonaws.com"
-export EC2_USER="ubuntu"
-export EC2_KEY_PATH="$HOME/.ssh/openalgoec2.pem"
+# 0. Load EC2 connection (see .env — not committed to git)
+set -a; source .env; set +a
 
-# 2. Run local tests first
+# 1. Run local tests first
 bash tests/oa-test.sh --local
 
-# 3. Run integration tests on EC2
+# 2. Run integration tests on EC2
 bash tests/oa-test.sh --remote
 
-# 4. Run everything
+# 3. Run everything
 bash tests/oa-test.sh --all
 ```
 
@@ -169,9 +167,9 @@ For EC2 integration tests to run in CI, add these **repository secrets** (Settin
 
 | Secret | Value |
 |--------|-------|
-| `EC2_HOST` | `ec2-13-127-20-39.ap-south-1.compute.amazonaws.com` |
+| `EC2_HOST` | Your EC2 hostname |
 | `EC2_USER` | `ubuntu` |
-| `EC2_KEY` | Content of `~/.ssh/openalgoec2.pem` (the full private key) |
+| `EC2_KEY` | Content of your SSH private key (e.g. `~/.ssh/your-key.pem`) |
 
 The `remote` job is skipped automatically if `EC2_HOST` is not set, so it's safe to merge without secrets.
 
