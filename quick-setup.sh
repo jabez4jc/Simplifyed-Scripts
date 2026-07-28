@@ -58,12 +58,12 @@ echo " ██║   ██║██████╔╝███████╗█�
 echo " ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔══██║██║     ██║   ██║██║   ██║"
 echo " ╚██████╔╝██╗     ███████╗██║ ╚████║██║  ██║███████╗╚██████╔╝╚██████╔╝"
 echo "  ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚══════╝ ╚═════╝  ╚═════╝ "
-echo "            QUICK SETUP - SINGLE INSTANCE (4GB SWAP)                   "
+echo "            QUICK SETUP - SINGLE INSTANCE (2GB SWAP)                   "
 echo -e "${NC}"
 
 log_message "\n📋 This script will perform the following setup steps:" "$BLUE"
 echo "   1. Update system packages"
-echo "   2. Configure 4GB swap memory"
+echo "   2. Configure 2GB swap memory"
 echo "   3. Install OpenAlgo single instance"
 echo "   4. Set up SSL certificate"
 echo "   5. Create systemd service"
@@ -101,9 +101,9 @@ log_message "\n🔍 Checking existing swap..." "$BLUE"
 
 # Check if swap already exists
 if [ -f "$SWAPFILE" ] && swapon --show | grep -q "$SWAPFILE"; then
-    log_message "✓ 4GB swap already configured" "$GREEN"
+    log_message "✓ 2GB swap already configured" "$GREEN"
 else
-    log_message "🛠️  Creating 4GB swap..." "$BLUE"
+    log_message "🛠️  Creating 2GB swap..." "$BLUE"
     
     # Disable any existing swap
     if grep -q "$SWAPFILE" /etc/fstab; then
@@ -120,9 +120,9 @@ else
         }
     fi
     
-    # Create new 4GB swap
-    log_message "   Allocating 4GB swap space..." "$BLUE"
-    sudo fallocate -l 4G "$SWAPFILE"
+    # Create new 2GB swap
+    log_message "   Allocating 2GB swap space..." "$BLUE"
+    sudo fallocate -l 2G "$SWAPFILE"
     check_status "Failed to allocate swap space"
     
     log_message "   Setting permissions..." "$BLUE"

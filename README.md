@@ -62,15 +62,15 @@ sudo ./multi-install.sh
   - ZMQ: 5555 + instance number
 - Comprehensive logging to `logs/install_multi_TIMESTAMP.log`
 
-### `update_swap_4gb.sh`
+### `update_swap_2gb.sh`
 **Configure 4GB swap memory (fixed size)**
 
 Sets up a fixed 4GB swap space to prevent out-of-memory issues, especially useful for broker authentication processes that can consume significant memory.
 
 **Usage:**
 ```bash
-chmod +x update_swap_4gb.sh
-sudo ./update_swap_4gb.sh
+chmod +x update_swap_2gb.sh
+sudo ./update_swap_2gb.sh
 ```
 
 ### `oa-configure-swap.sh`
@@ -630,7 +630,7 @@ This will:
 
 3. **Configure swap:**
    ```bash
-   sudo ./update_swap_4gb.sh
+   sudo ./update_swap_2gb.sh
    ```
    Or use custom size:
    ```bash

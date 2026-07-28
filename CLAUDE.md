@@ -26,7 +26,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - Handles SSL certificate generation via Let's Encrypt
    - `/monitor` is a plain reverse proxy to the admin API - login is handled by openalgo-restart-api.py itself, not nginx
 
-3. **update_swap_4gb.sh** - Fixed swap utility
+3. **update_swap_2gb.sh** - Fixed swap utility
    - Creates or replaces fixed 4GB swap space to prevent OOM during broker authentication
 
 4. **oa-configure-swap.sh** - Flexible swap utility

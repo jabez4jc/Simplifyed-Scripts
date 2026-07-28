@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================
-# OpenAlgo Utility Script - Configure 4GB Swap on Ubuntu
+# OpenAlgo Utility Script - Configure 2GB Swap on Ubuntu
 # ============================================================
 
 set -e
 
 SWAPFILE="/swapfile"
-SWAPSIZE="4G"
+SWAPSIZE="2G"
 
 echo "🔁 Checking existing swap configuration..."
 
@@ -23,8 +23,8 @@ if [ -f "$SWAPFILE" ]; then
     sudo rm -f $SWAPFILE
 fi
 
-# Create new 4GB swap file
-echo "🛠️  Creating new 4GB swap file..."
+# Create new 2GB swap file
+echo "🛠️  Creating new 2GB swap file..."
 sudo fallocate -l $SWAPSIZE $SWAPFILE
 
 # Secure permissions
@@ -51,4 +51,4 @@ echo "-----------------------------------"
 sudo swapon --show
 free -h
 echo "-----------------------------------"
-echo "💾 4GB Swap is now active and permanent."
+echo "💾 2GB Swap is now active and permanent."

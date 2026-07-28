@@ -55,7 +55,7 @@ calculate_ram_limits() {
     mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
     if [ -z "$mem_kb" ]; then
         MAX_SWAP_GB=512
-        RECOMMENDED_SWAP_GB=4
+        RECOMMENDED_SWAP_GB=2
         return
     fi
     local mem_gb

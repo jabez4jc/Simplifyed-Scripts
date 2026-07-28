@@ -400,7 +400,7 @@ check_system_health() {
     if [ "${swap_bytes:-0}" -gt 0 ]; then
         print_ok "Swap configured: $(free -h | awk '/^Swap:/ {print $2" (using "$3")"}')"
     else
-        print_critical "No swap configured - run ./update_swap_4gb.sh (expect OOM/504 without it)"
+        print_critical "No swap configured - run ./update_swap_2gb.sh (expect OOM/504 without it)"
     fi
 
     # Check for recent OOM kills - the usual cause of a 504 on a live instance
