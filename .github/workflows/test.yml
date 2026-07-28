@@ -19,43 +19,27 @@ jobs:
       - name: Run local tests
         run: bash tests/oa-test.sh --local
 
-      - name: Upload test output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-output-local
-          path: /tmp/test-output.txt
-          retention-days: 7
-
   remote:
     name: EC2 Integration Tests
     needs: local
-    if: >
-      github.event_name == 'push'
-      && github.ref == 'refs/heads/main'
-      && secrets.EC2_HOST != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/ec2-key.pem
-          chmod 600 ~/.ssh/ec2-key.pem
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
-
       - name: Run integration tests on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_KEY: ${{ secrets.EC2_KEY }}
         run: |
-          export EC2_HOST="${{ secrets.EC2_HOST }}"
-          export EC2_USER="${{ secrets.EC2_USER }}"
-          export EC2_KEY_PATH="$HOME/.ssh/ec2-key.pem"
+          if [ -z "$EC2_HOST" ]; then
+            echo "EC2_HOST not set — skipping EC2 integration tests"
+            echo "Add EC2_HOST, EC2_USER, and EC2_KEY to repository secrets to enable"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$EC2_KEY" > ~/.ssh/ec2-key.pem
+          chmod 600 ~/.ssh/ec2-key.pem
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           bash tests/oa-test.sh --suite integration
-
-      - name: Upload integration test output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-output-remote
-          path: /tmp/test-output.txt
-          retention-days: 7
