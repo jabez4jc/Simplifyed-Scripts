@@ -365,9 +365,9 @@ for ((n=1; n<=INSTANCES; n++)); do
     sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$VENV_PATH\" uv sync"
     check_status "Failed to sync dependencies"
 
-    # Ensure gunicorn and eventlet
-    sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$VENV_PATH/bin/python\" \"gunicorn<23\" eventlet"
-    check_status "Failed to install gunicorn/eventlet"
+    # Ensure gunicorn
+    sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$VENV_PATH/bin/python\" \"gunicorn<23\""
+    check_status "Failed to install gunicorn"
     
     # Fix permissions for venv
     sudo chown -R www-data:www-data "$VENV_PATH"
@@ -653,10 +653,11 @@ Environment="MKL_NUM_THREADS=2"
 Environment="NUMEXPR_NUM_THREADS=2"
 Environment="NUMBA_NUM_THREADS=2"
 ExecStart=/bin/bash -c 'source $VENV_PATH/bin/activate && $VENV_PATH/bin/gunicorn \\
-    --worker-class eventlet \\
+    --worker-class gthread \\
     -w 1 \\
+    --threads 4 \\
+    --timeout 120 \\
     --bind unix:$SOCKET_FILE \\
-    --timeout 300 \\
     --log-level info \\
     app:app'
 Restart=always

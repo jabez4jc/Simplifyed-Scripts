@@ -578,7 +578,7 @@ update_instance() {
 
         if [ -n "$req_file" ]; then
             # Install from requirements file, resolving gunicorn<23 together in one pass
-            sudo bash -c "uv pip install --python \"$venv_path/bin/python\" -r \"$req_file\" \"gunicorn<23\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+            sudo bash -c "uv pip install --python \"$venv_path/bin/python\" -r \"$req_file\" \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
             local deps_status=${PIPESTATUS[0]}
         else
             # pyproject.toml-only project: sync first, then pin gunicorn
@@ -605,10 +605,6 @@ update_instance() {
             else
                 log_message "✓ gunicorn $gunicorn_ver (OK — no change needed)" "$GREEN"
             fi
-        fi
-        # Ensure eventlet is present (needed for gunicorn -k eventlet worker)
-        if ! "$venv_path/bin/python" -c "import eventlet" 2>/dev/null; then
-            sudo bash -c "$venv_path/bin/pip install -q --no-deps eventlet" 2>&1 | tee -a "$UPDATE_LOG"
         fi
 
         # Fix permissions

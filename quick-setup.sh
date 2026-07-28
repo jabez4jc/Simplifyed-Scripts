@@ -266,9 +266,9 @@ log_message "   Syncing Python dependencies with uv..." "$BLUE"
 sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/venv\" uv sync" > /dev/null 2>&1
 check_status "Failed to sync Python dependencies"
 
-# Install gunicorn and eventlet
-sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$INSTANCE_DIR/venv/bin/python\" \"gunicorn<23\" eventlet" > /dev/null 2>&1
-check_status "Failed to install gunicorn and eventlet"
+# Install gunicorn
+sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$INSTANCE_DIR/venv/bin/python\" \"gunicorn<23\"" > /dev/null 2>&1
+check_status "Failed to install gunicorn"
 
 # Fix permissions for venv
 sudo chown -R www-data:www-data "$INSTANCE_DIR/venv"
@@ -518,10 +518,11 @@ Environment="MKL_NUM_THREADS=2"
 Environment="NUMEXPR_NUM_THREADS=2"
 Environment="NUMBA_NUM_THREADS=2"
 ExecStart=/bin/bash -c 'source $VENV_PATH/bin/activate && $VENV_PATH/bin/gunicorn \\
-    --worker-class eventlet \\
+    --worker-class gthread \\
     -w 1 \\
+    --threads 4 \\
+    --timeout 120 \\
     --bind unix:$SOCKET_FILE \\
-    --timeout 300 \\
     --log-level info \\
     app:app'
 Restart=always
