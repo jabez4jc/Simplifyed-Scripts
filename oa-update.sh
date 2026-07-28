@@ -141,10 +141,10 @@ get_git_status() {
         return 1
     fi
     
-    cd "$instance_dir"
-    local branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-    local remote=$(git config --get remote.origin.url 2>/dev/null)
-    local commit=$(git rev-parse --short HEAD 2>/dev/null)
+    cd "$instance_dir" || return 1
+    local branch; branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    local remote; remote=$(git config --get remote.origin.url 2>/dev/null)
+    local commit; commit=$(git rev-parse --short HEAD 2>/dev/null)
     
     echo "$branch|$remote|$commit"
 }
@@ -173,7 +173,7 @@ backup_before_update() {
     fi
     
     # Set readable permissions
-    sudo chown -R $(whoami) "$backup_dir"
+    sudo chown -R "$(whoami)" "$backup_dir"
 
     # Keep only the most recent pre-update backup for this instance
     local backup_glob="/tmp/openalgo_backup_${instance_name}_*"
@@ -402,7 +402,7 @@ ensure_instance_runtime_layout() {
 update_instance() {
     local instance_name="$1"
     local instance_dir="$BASE_DIR/$instance_name"
-    local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
+    local instance_num; instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
     local service_name
     service_name=$(get_service_name "$instance_dir" "$instance_num")
     
@@ -418,7 +418,7 @@ update_instance() {
     sudo git config --global --add safe.directory "$instance_dir" 2>/dev/null
     
     # Get current git status
-    local git_status=$(get_git_status "$instance_dir")
+    local git_status; git_status=$(get_git_status "$instance_dir")
     if [ $? -eq 0 ]; then
         IFS='|' read -r branch remote commit <<< "$git_status"
         log_message "Current branch: $branch" "$BLUE"
@@ -429,7 +429,7 @@ update_instance() {
     fi
     
     # Create backup
-    local backup_dir=$(backup_before_update "$instance_name")
+    local backup_dir; backup_dir=$(backup_before_update "$instance_name")
     check_status "Failed to create backup" || return 1
     local env_file="$instance_dir/.env"
 
@@ -450,7 +450,7 @@ update_instance() {
     
     # Fetch latest changes
     log_message "  Fetching latest changes..." "$BLUE"
-    cd "$instance_dir"
+    cd "$instance_dir" || return 1
     sudo git fetch --prune origin 2>&1 | tee -a "$UPDATE_LOG"
     local fetch_status=${PIPESTATUS[0]}
     if [ $fetch_status -ne 0 ]; then
@@ -565,7 +565,7 @@ update_instance() {
     fi
     
     # Get new commit
-    local new_commit=$(git rev-parse --short HEAD 2>/dev/null)
+    local new_commit; new_commit=$(git rev-parse --short HEAD 2>/dev/null)
     log_message "✓ Updated to commit: $new_commit" "$GREEN"
     
     # Update dependencies
@@ -713,7 +713,7 @@ dry_run_update() {
         return 1
     fi
     
-    cd "$instance_dir"
+    cd "$instance_dir" || return 1
     
     log_message "Current status:" "$BLUE"
     sudo git status 2>&1 | head -10 | tee -a "$UPDATE_LOG"
@@ -744,7 +744,7 @@ show_menu() {
     log_message "=== UPDATE OPTIONS ===" "$BLUE"
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
@@ -786,7 +786,7 @@ show_menu() {
 update_all_instances() {
     log_message "Starting batch update of all instances..." "$BLUE"
     
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     local success=0
     local failed=0
     
@@ -814,7 +814,7 @@ show_dry_run_menu() {
     echo ""
     log_message "=== DRY-RUN OPTIONS ===" "$BLUE"
     
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         return 1
@@ -852,7 +852,7 @@ rollback_instance() {
     local backup_dir="$1"
     local instance_name="$2"
     local instance_dir="$BASE_DIR/$instance_name"
-    local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
+    local instance_num; instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
     local service_name
     service_name=$(get_service_name "$instance_dir" "$instance_num")
     

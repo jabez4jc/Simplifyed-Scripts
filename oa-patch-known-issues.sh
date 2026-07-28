@@ -69,7 +69,9 @@ patched = pattern.sub(lambda mm: f'{mm.group("indent")}if True:  # {marker}', sr
 with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False) as tmp:
     tmp.write(patched); tmp_path = tmp.name
 try:
-    py_compile.compile(tmp_path, doraise=True)
+    tmp_cfile = tempfile.mkstemp(suffix='.pyc')[1]
+    py_compile.compile(tmp_path, doraise=True, cfile=tmp_cfile)
+    os.unlink(tmp_cfile)
 except py_compile.PyCompileError as e:
     os.unlink(tmp_path); print(f"FAIL patched file does not compile: {e}"); sys.exit(1)
 os.unlink(tmp_path)
@@ -91,9 +93,8 @@ apply_to_instance() {
     local backup="$app_py.oa-patch.bak"
     sudo cp "$app_py" "$backup"
 
-    local out rc
+    local out
     out=$(sudo -E bash -c "$(declare -f patch_whatsapp_autostart); WHATSAPP_MARKER='$WHATSAPP_MARKER'; patch_whatsapp_autostart '$app_py'" 2>&1)
-    rc=$?
 
     case "$out" in
         PATCHED*)
@@ -142,7 +143,7 @@ EOF
     out=$(patch_whatsapp_autostart "$tmp/app.py")
     [[ "$out" == PATCHED* ]] || { echo "FAIL: vulnerable file not patched ($out)"; fails=1; }
     grep -q "if True:  # $WHATSAPP_MARKER" "$tmp/app.py" || { echo "FAIL: marker missing"; fails=1; }
-    python3 -m py_compile "$tmp/app.py" || { echo "FAIL: result does not compile"; fails=1; }
+    python3 -B -c "import ast; ast.parse(open('$tmp/app.py').read())" || { echo "FAIL: result does not compile"; fails=1; }
 
     # Idempotence: second run must not double-patch
     out=$(patch_whatsapp_autostart "$tmp/app.py")

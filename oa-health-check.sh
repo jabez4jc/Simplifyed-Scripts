@@ -74,7 +74,8 @@ check_service_status() {
         print_ok "Service running: $service_name"
         return 0
     else
-        local status=$(systemctl is-active "$service_name")
+        local status
+        status=$(systemctl is-active "$service_name")
         print_critical "Service not running ($status): $service_name"
         return 1
     fi
@@ -131,7 +132,7 @@ check_env_file() {
     # Check for critical variables (handle spaces around =)
     local required_vars=("DATABASE_URL" "FLASK_PORT" "WEBSOCKET_PORT" "ZMQ_PORT")
     for var in "${required_vars[@]}"; do
-        if sudo grep -q "^[[:space:]]*$var[[:space:]]*=" "$env_file"; then
+        if sudo grep -q "^[[:space:]]*${var}[[:space:]]*=" "$env_file"; then
             print_ok ".env contains $var"
         else
             print_warning ".env missing $var"
@@ -143,8 +144,10 @@ check_env_file() {
         print_ok ".env contains BROKER"
     elif sudo grep -q "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file"; then
         # Extract broker from REDIRECT_URL (e.g., https://domain.com/kotak/callback -> kotak)
-        local redirect_url=$(sudo grep "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"' | xargs)
-        local broker=$(echo "$redirect_url" | sed 's|.*/\([^/]*\)/callback.*|\1|')
+        local redirect_url
+        redirect_url=$(sudo grep "^[[:space:]]*REDIRECT_URL[[:space:]]*=" "$env_file" | cut -d'=' -f2 | tr -d "'" | tr -d '"' | xargs)
+        local broker
+        broker=$(echo "$redirect_url" | sed 's|.*/\([^/]*\)/callback.*|\1|')
         if [ -n "$broker" ] && [ "$broker" != "$redirect_url" ]; then
             print_ok ".env contains BROKER (detected from REDIRECT_URL: $broker)"
         else
@@ -169,7 +172,8 @@ check_databases() {
     local db_files=("openalgo${instance_num}.db" "latency${instance_num}.db" "logs${instance_num}.db")
     for db_file in "${db_files[@]}"; do
         if [ -f "$db_dir/$db_file" ]; then
-            local size=$(du -h "$db_dir/$db_file" | cut -f1)
+            local size
+            size=$(du -h "$db_dir/$db_file" | cut -f1)
             print_ok "Database exists: $db_file ($size)"
         else
             print_warning "Database missing: $db_file"
@@ -181,12 +185,15 @@ check_databases() {
 check_disk_space() {
     local instance_dir="$1"
     
-    local usage=$(du -sh "$instance_dir" 2>/dev/null | cut -f1)
+    local usage
+    usage=$(du -sh "$instance_dir" 2>/dev/null | cut -f1)
     print_ok "Disk usage: $usage"
     
     # Get overall filesystem usage
-    local filesystem=$(df "$instance_dir" | tail -1 | awk '{print $1}')
-    local percent=$(df "$instance_dir" | tail -1 | awk '{print $5}' | sed 's/%//')
+    local filesystem
+    filesystem=$(df "$instance_dir" | tail -1 | awk '{print $1}')
+    local percent
+    percent=$(df "$instance_dir" | tail -1 | awk '{print $5}' | sed 's/%//')
     
     if [ "$percent" -gt 90 ]; then
         print_critical "Filesystem nearly full: $percent% used on $filesystem"
@@ -255,7 +262,8 @@ check_recent_errors() {
     service_name=$(get_service_name "$instance_name")
     
     # Get last 20 lines of journalctl
-    local error_count=$(sudo journalctl -u "$service_name" -n 100 2>/dev/null | grep -i "error\|exception\|traceback" | wc -l)
+    local error_count
+    error_count=$(sudo journalctl -u "$service_name" -n 100 2>/dev/null | grep -i "error\|exception\|traceback" | wc -l)
     
     if [ "$error_count" -eq 0 ]; then
         print_ok "No recent errors in logs"
@@ -300,7 +308,8 @@ check_permissions() {
     local instance_dir="$1"
     
     # Check if owned by www-data
-    local owner=$(stat -c %U "$instance_dir" 2>/dev/null || stat -f %Su "$instance_dir" 2>/dev/null)
+    local owner
+    owner=$(stat -c %U "$instance_dir" 2>/dev/null || stat -f %Su "$instance_dir" 2>/dev/null)
     
     if [ "$owner" = "www-data" ] || [ "$owner" = "root" ]; then
         print_ok "Directory ownership correct: $owner"
@@ -311,7 +320,8 @@ check_permissions() {
     # Check keys directory is restricted
     local keys_dir="$instance_dir/keys"
     if [ -d "$keys_dir" ]; then
-        local perms=$(stat -c %a "$keys_dir" 2>/dev/null || stat -f %a "$keys_dir" 2>/dev/null)
+        local perms
+        perms=$(stat -c %a "$keys_dir" 2>/dev/null || stat -f %a "$keys_dir" 2>/dev/null)
         if [ "$perms" = "700" ] || [ "$perms" = "750" ]; then
             print_ok "Keys directory permissions secure: $perms"
         else
@@ -326,7 +336,8 @@ check_instance() {
     local instance_dir="$BASE_DIR/$instance_name"
     
     # Extract instance number for port calculations
-    local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
+    local instance_num
+    instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
     
     print_header "Instance: $instance_name"
     
@@ -384,7 +395,8 @@ check_system_health() {
     
     # Check swap - critical, not cosmetic: broker auth + master contract download
     # OOM-kills the single eventlet worker without it, which surfaces as nginx 504.
-    local swap_bytes=$(free -b | awk '/^Swap:/ {print $2}')
+    local swap_bytes
+    swap_bytes=$(free -b | awk '/^Swap:/ {print $2}')
     if [ "${swap_bytes:-0}" -gt 0 ]; then
         print_ok "Swap configured: $(free -h | awk '/^Swap:/ {print $2" (using "$3")"}')"
     else
@@ -397,7 +409,8 @@ check_system_health() {
     fi
     
     # Check system load
-    local load=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
+    local load
+    load=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
     print_ok "System load: $load"
 }
 
@@ -433,7 +446,7 @@ show_menu() {
     echo -e "${BLUE}=== HEALTH CHECK OPTIONS ===${NC}"
     echo ""
 
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         echo -e "${RED}❌ No OpenAlgo instances found in $BASE_DIR${NC}"
@@ -473,7 +486,7 @@ show_menu() {
 
 # Check all instances
 check_all_instances() {
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     check_system_health
     
@@ -503,7 +516,7 @@ main() {
     fi
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         echo -e "${YELLOW}ℹ No OpenAlgo instances found in $BASE_DIR${NC}"

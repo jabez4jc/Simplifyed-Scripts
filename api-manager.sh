@@ -214,7 +214,7 @@ setup_update() {
     echo ""
 
     echo -e "${YELLOW}Installing daily cleanup timer...${NC}"
-    local script_path="/usr/local/bin/oa-clear-logs.sh"
+    local _script_path="/usr/local/bin/oa-clear-logs.sh"
     cat > /etc/systemd/system/openalgo-clear-safe.service << 'EOF'
 [Unit]
 Description=OpenAlgo safe disk cleanup
@@ -283,7 +283,7 @@ EOF
 # as it passes, so an already-healthy service costs nothing.
 wait_for() {
     local deadline=$(( SECONDS + $1 )); shift
-    while ! eval "$@"; do
+    while ! bash -c "$*"; do
         [ $SECONDS -ge $deadline ] && return 1
         sleep 1
     done

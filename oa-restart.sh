@@ -20,7 +20,7 @@ get_service_name() {
 }
 
 # Discover installed instances (exclude symlinks)
-INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+mapfile -t INSTANCES < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort)
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     echo "❌ No OpenAlgo instances found in $BASE_DIR"

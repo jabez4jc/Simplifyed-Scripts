@@ -127,7 +127,7 @@ fi
 if [[ -n "$ONLY_INSTANCE" ]]; then
     INSTANCES=("$ONLY_INSTANCE")
 else
-    INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+    mapfile -t INSTANCES < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort)
 fi
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then

@@ -185,9 +185,58 @@ It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before f
 
 **Adding a future mitigation:** add a `patch_*` function to `oa-patch-known-issues.sh` following the rules in its header, and extend `--self-test` to cover it. Run `./oa-patch-known-issues.sh --self-test` to verify patch logic without touching any instance.
 
-## Testing Considerations
+## Testing & Validation
 
-- Scripts require root access; local testing limited to syntax checking with `shellcheck`
+### Test Framework
+
+A comprehensive test suite lives in `tests/`. The master runner is:
+
+```bash
+bash tests/oa-test.sh --local    # syntax + shellcheck + unit tests
+bash tests/oa-test.sh --remote   # integration tests on EC2 (set EC2_HOST)
+bash tests/oa-test.sh --all      # local then remote
+bash tests/oa-test.sh --suite <name>  # run specific suite
+```
+
+| Suite | What it checks |
+|-------|----------------|
+| `syntax` | `bash -n` on all `.sh`, `python -m py_compile` on `.py` |
+| `shellcheck` | ShellCheck at warning level (requires shellcheck) |
+| `unit` | Logic tests: patch self-test, broker validation, health exit codes, env version parsing |
+| `integration` | SSH connectivity, repo push, tool availability, remote checks |
+
+### EC2 Remote Testing Workflow
+
+For full validation on a live server, set up EC2 access and run:
+
+```bash
+export EC2_HOST="ec2-xxx.compute.amazonaws.com"
+export EC2_USER="ubuntu"
+export EC2_KEY_PATH="$HOME/.ssh/your-key.pem"
+
+bash tests/oa-test.sh --all
+```
+
+The integration suite (`tests/suites/integration.sh`) automatically:
+1. Tests SSH connectivity
+2. SCPs the repo to EC2
+3. Runs syntax checks on the remote server
+4. Runs `oa-patch-known-issues.sh --self-test` on EC2
+5. Verifies all required tools are installed
+
+### Automated Fix Loop (for AI agents)
+
+See `AGENTS.md` for the complete fix loop workflow. In brief:
+
+1. Run `bash tests/oa-test.sh --suite <name>` to identify failures
+2. Fix the *source script* (never the test)
+3. Re-run the test to verify
+4. Push to EC2 and re-run remotely
+5. Repeat until all suites pass
+
+### Per-Script Testing Notes
+
+- Scripts require root access; local testing limited to syntax/shellcheck
 - `.env` template comes from OpenAlgo repository; verify template variables before sed replacements
 - Domain validation uses regex; test with various formats (subdomains, international domains)
 - Nginx config uses variables in heredoc; ensure proper escaping of `$` characters

@@ -75,8 +75,10 @@ check_disk_space() {
     local swap_size_gb="$1"
     local swap_size_bytes=$((swap_size_gb * 1024 * 1024 * 1024))
     
-    local available_bytes=$(df / | tail -1 | awk '{print $4 * 1024}')
-    local available_gb=$((available_bytes / (1024 * 1024 * 1024)))
+    local available_bytes
+    available_bytes=$(df / | tail -1 | awk '{print $4 * 1024}')
+    local available_gb
+    available_gb=$((available_bytes / (1024 * 1024 * 1024)))
     
     # Add 10% buffer
     local required_bytes=$((swap_size_bytes + (swap_size_bytes / 10)))
@@ -93,15 +95,18 @@ check_disk_space() {
 
 # Function to get current swap info
 get_current_swap_info() {
-    local total=$(free -h | grep Swap | awk '{print $2}')
-    local used=$(free -h | grep Swap | awk '{print $3}')
+    local total
+    total=$(free -h | grep Swap | awk '{print $2}')
+    local used
+    used=$(free -h | grep Swap | awk '{print $3}')
     
     log_message "\n📊 Current Swap Configuration:" "$BLUE"
     log_message "   Total: $total" "$BLUE"
     log_message "   Used: $used" "$BLUE"
     
     if [ -f "$SWAPFILE" ]; then
-        local size=$(ls -lh "$SWAPFILE" | awk '{print $5}')
+        local size
+        size=$(ls -lh "$SWAPFILE" | awk '{print $5}')
         log_message "   Swapfile: $SWAPFILE ($size)" "$BLUE"
     fi
 }
@@ -111,12 +116,18 @@ get_disk_space_info() {
     log_message "\n💾 Available Disk Space:" "$BLUE"
     
     # Get root filesystem info
-    local df_output=$(df -h / | tail -1)
-    local total=$(echo "$df_output" | awk '{print $2}')
-    local used=$(echo "$df_output" | awk '{print $3}')
-    local available=$(echo "$df_output" | awk '{print $4}')
-    local percent=$(echo "$df_output" | awk '{print $5}')
-    local filesystem=$(echo "$df_output" | awk '{print $1}')
+    local df_output
+    df_output=$(df -h / | tail -1)
+    local total
+    total=$(echo "$df_output" | awk '{print $2}')
+    local used
+    used=$(echo "$df_output" | awk '{print $3}')
+    local available
+    available=$(echo "$df_output" | awk '{print $4}')
+    local percent
+    percent=$(echo "$df_output" | awk '{print $5}')
+    local filesystem
+    filesystem=$(echo "$df_output" | awk '{print $1}')
     
     log_message "   Filesystem: $filesystem" "$BLUE"
     log_message "   Total: $total" "$BLUE"
@@ -124,7 +135,8 @@ get_disk_space_info() {
     log_message "   Available: $available" "$BLUE"
     
     # Convert available to GB (float) for reference
-    local available_gb=$(echo "$available" | awk '
+    local available_gb
+    available_gb=$(echo "$available" | awk '
         {
             if (match($0, /([0-9.]+)([A-Za-z])/, a)) {
                 num = a[1] + 0

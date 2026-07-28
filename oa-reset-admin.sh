@@ -149,7 +149,8 @@ backup_file_copy() {
   mkdir -p "$BACKUP_DIR"
   local timestamp
   timestamp=$(date +%Y%m%d_%H%M%S)
-  local backup_file="$BACKUP_DIR/${INSTANCE}_${label}_reset_${timestamp}_$(basename "$src_file")"
+  local backup_file
+  backup_file="$BACKUP_DIR/${INSTANCE}_${label}_reset_${timestamp}_$(basename "$src_file")"
   cp "$src_file" "$backup_file"
   log_message "Backed up to: $backup_file" "$GREEN"
 }

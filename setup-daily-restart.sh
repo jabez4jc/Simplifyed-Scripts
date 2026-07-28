@@ -47,9 +47,6 @@ if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# Get the script directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-
 # Define paths
 RESTART_SCRIPT="/usr/local/bin/openalgo-daily-restart.sh"
 LOG_FILE="/var/log/openalgo-daily-restart.log"
@@ -122,7 +119,7 @@ else
 fi
 
 # Get list of instances (exclude symlinks)
-INSTANCES=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort))
+mapfile -t INSTANCES < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort)
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     log_to_file "No OpenAlgo instances found"

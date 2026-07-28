@@ -59,7 +59,8 @@ get_size() {
 # Backup instance .env file
 backup_env_file() {
     local instance_dir="$1"
-    local instance_name=$(basename "$instance_dir")
+    local instance_name
+    instance_name=$(basename "$instance_dir")
     local env_file="$instance_dir/.env"
     
     if [ ! -f "$env_file" ]; then
@@ -73,7 +74,7 @@ backup_env_file() {
     if command -v gpg &> /dev/null; then
         sudo gpg --symmetric --cipher-algo AES256 --output "$backup_file" "$env_file" 2>/dev/null
         if [ $? -eq 0 ]; then
-            sudo chown $(whoami) "$backup_file"
+            sudo chown "$(whoami)" "$backup_file"
             log_message "✓ Backed up .env (encrypted): $instance_name" "$GREEN"
             return 0
         else
@@ -85,7 +86,7 @@ backup_env_file() {
     backup_file="$BACKUP_DIR/${instance_name}_env_${TIMESTAMP}.env"
     sudo cp "$env_file" "$backup_file"
     check_status "Failed to backup .env for $instance_name" || return 1
-    sudo chown $(whoami) "$backup_file"
+    sudo chown "$(whoami)" "$backup_file"
     chmod 600 "$backup_file"
     log_message "✓ Backed up .env (plain text): $instance_name" "$GREEN"
     return 0
@@ -94,7 +95,8 @@ backup_env_file() {
 # Backup instance databases
 backup_databases() {
     local instance_dir="$1"
-    local instance_name=$(basename "$instance_dir")
+    local instance_name
+    instance_name=$(basename "$instance_dir")
     local db_dir="$instance_dir/db"
     
     if [ ! -d "$db_dir" ]; then
@@ -108,8 +110,9 @@ backup_databases() {
     sudo tar -czf "$backup_file" -C "$db_dir" . 2>/dev/null
     check_status "Failed to backup databases for $instance_name" || return 1
     
-    sudo chown $(whoami) "$backup_file"
-    local size=$(get_size "$backup_file")
+    sudo chown "$(whoami)" "$backup_file"
+    local size
+    size=$(get_size "$backup_file")
     log_message "✓ Backed up databases: $instance_name ($size)" "$GREEN"
     return 0
 }
@@ -117,7 +120,8 @@ backup_databases() {
 # Backup complete instance (optional)
 backup_full_instance() {
     local instance_dir="$1"
-    local instance_name=$(basename "$instance_dir")
+    local instance_name
+    instance_name=$(basename "$instance_dir")
     local backup_file="$BACKUP_DIR/${instance_name}_full_${TIMESTAMP}.tar.gz"
     
     log_message "  Archiving complete instance (this may take a while)..." "$BLUE"
@@ -132,8 +136,9 @@ backup_full_instance() {
     
     check_status "Failed to backup complete instance $instance_name" || return 1
     
-    sudo chown $(whoami) "$backup_file"
-    local size=$(get_size "$backup_file")
+    sudo chown "$(whoami)" "$backup_file"
+    local size
+    size=$(get_size "$backup_file")
     log_message "✓ Full instance backup: $instance_name ($size)" "$GREEN"
     return 0
 }
@@ -159,7 +164,7 @@ backup_nginx_config() {
     
     local backup_file="$BACKUP_DIR/${instance_name}_nginx_${TIMESTAMP}.conf"
     sudo cp "$nginx_conf" "$backup_file"
-    sudo chown $(whoami) "$backup_file"
+    sudo chown "$(whoami)" "$backup_file"
     log_message "✓ Backed up nginx config: $domain" "$GREEN"
     return 0
 }
@@ -167,7 +172,8 @@ backup_nginx_config() {
 # Backup systemd service file
 backup_service_file() {
     local instance_name="$1"
-    local instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
+    local instance_num
+    instance_num=$(echo "$instance_name" | sed 's/[^0-9]*//g')
     local service_name
     service_name=$(get_service_name "$BASE_DIR/$instance_name" "$instance_num")
     local service_file="/etc/systemd/system/$service_name.service"
@@ -178,7 +184,7 @@ backup_service_file() {
     
     local backup_file="$BACKUP_DIR/${instance_name}_systemd_${TIMESTAMP}.service"
     sudo cp "$service_file" "$backup_file"
-    sudo chown $(whoami) "$backup_file"
+    sudo chown "$(whoami)" "$backup_file"
     log_message "✓ Backed up systemd service: $service_name" "$GREEN"
     return 0
 }
@@ -229,7 +235,8 @@ restore_databases() {
     
     # Create backup of current databases
     if [ -d "$db_dir" ]; then
-        local current_backup="$db_dir/backup_before_restore_$(date +%Y%m%d_%H%M%S)"
+        local current_backup
+        current_backup="$db_dir/backup_before_restore_$(date +%Y%m%d_%H%M%S)"
         sudo mkdir -p "$current_backup"
         sudo cp "$db_dir"/*.db "$current_backup/" 2>/dev/null || true
         log_message "  Current databases backed up to: $current_backup" "$BLUE"
@@ -294,7 +301,7 @@ show_menu() {
     echo ""
     log_message "=== BACKUP OPERATIONS ===" "$BLUE"
     
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
@@ -327,7 +334,7 @@ show_menu() {
 
 # Select single instance for backup
 select_instance_for_backup() {
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found" "$RED"
@@ -359,7 +366,7 @@ backup_instances() {
     local backup_type="$2"
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found in $BASE_DIR" "$RED"
@@ -368,7 +375,8 @@ backup_instances() {
     
     # If single mode, prompt for instance selection
     if [ "$backup_mode" = "single" ]; then
-        local selected=$(select_instance_for_backup)
+        local selected
+        selected=$(select_instance_for_backup)
         if [ -z "$selected" ]; then
             return 1
         fi
@@ -411,7 +419,7 @@ restore_operation() {
     log_message "=== RESTORE BACKUP ===" "$BLUE"
     
     # Get list of instances
-    local instances=($(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort))
+    local instances_list; mapfile -t instances_list < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort); local instances=("${instances_list[@]}")
     
     if [ ${#instances[@]} -eq 0 ]; then
         log_message "❌ No OpenAlgo instances found" "$RED"
@@ -454,7 +462,7 @@ restore_operation() {
     echo ""
     read -p "Select backup file number: " backup_choice
     
-    local backup_files=($(ls -1 "$BACKUP_DIR"/${selected_instance}_*_*.tar.gz "$BACKUP_DIR"/${selected_instance}_*_*.enc "$BACKUP_DIR"/${selected_instance}_*_*.env 2>/dev/null))
+    local backup_files_list; mapfile -t backup_files_list < <(ls -1 "$BACKUP_DIR"/${selected_instance}_*_*.tar.gz "$BACKUP_DIR"/${selected_instance}_*_*.enc "$BACKUP_DIR"/${selected_instance}_*_*.env 2>/dev/null); local backup_files=("${backup_files_list[@]}")
     
     if ! [[ "$backup_choice" =~ ^[0-9]+$ ]] || (( backup_choice < 1 || backup_choice > ${#backup_files[@]} )); then
         log_message "Invalid backup file selection" "$RED"
@@ -488,9 +496,12 @@ restore_operation() {
             ;;
         3)
             # Try to find matching env and database backups
-            local base_filename=$(echo "$(basename "$selected_backup")" | cut -d'_' -f1-2)
-            local env_backup=$(ls -1 "$BACKUP_DIR"/${base_filename}_env_*.enc "$BACKUP_DIR"/${base_filename}_env_*.env 2>/dev/null | tail -1)
-            local db_backup=$(ls -1 "$BACKUP_DIR"/${base_filename}_databases_*.tar.gz 2>/dev/null | tail -1)
+            local base_filename
+            base_filename=$(echo "$(basename "$selected_backup")" | cut -d'_' -f1-2)
+            local env_backup
+            env_backup=$(ls -1 "$BACKUP_DIR"/${base_filename}_env_*.enc "$BACKUP_DIR"/${base_filename}_env_*.env 2>/dev/null | tail -1)
+            local db_backup
+            db_backup=$(ls -1 "$BACKUP_DIR"/${base_filename}_databases_*.tar.gz 2>/dev/null | tail -1)
             
             if [ -n "$env_backup" ]; then
                 restore_env_file "$env_backup" "$selected_instance"
