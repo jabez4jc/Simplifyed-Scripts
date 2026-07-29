@@ -1,5 +1,42 @@
 #!/bin/bash
 
+# Non-interactive mode: pass --config /path/to/instances.env to skip all
+# prompts (used by remote automation, e.g. the Fleet Manager provisioning
+# an instance over SSH). Config file is sourced as shell vars:
+#
+#   CHANGE_TZ=y                        # y/n, whether to switch to IST
+#   BRANCH=main                        # git branch to install
+#   INSTANCES=2                        # how many instances in this run
+#   INSTANCE_1_DOMAIN=trade1.example.com
+#   INSTANCE_1_BROKER=zerodha
+#   INSTANCE_1_API_KEY=xxx
+#   INSTANCE_1_API_SECRET=yyy
+#   INSTANCE_2_DOMAIN=trade2.example.com
+#   INSTANCE_2_BROKER=fivepaisaxts
+#   INSTANCE_2_API_KEY=xxx
+#   INSTANCE_2_API_SECRET=yyy
+#   INSTANCE_2_MARKET_KEY=zzz          # only for XTS brokers
+#   INSTANCE_2_MARKET_SECRET=www
+#
+# Any field left unset/blank still fails the same validation the
+# interactive prompts use, it just exits instead of re-prompting.
+CONFIG_FILE=""
+if [[ "$1" == "--config" ]]; then
+    CONFIG_FILE="$2"
+    shift 2
+fi
+if [ -n "$CONFIG_FILE" ]; then
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Config file not found: $CONFIG_FILE" >&2
+        exit 1
+    fi
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+    NONINTERACTIVE=true
+else
+    NONINTERACTIVE=false
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -81,7 +118,11 @@ check_timezone() {
     fi
 
     log_message "Server is not set to IST timezone." "$YELLOW"
-    read -p "Would you like to change the timezone to IST? (y/n): " change_tz
+    if [ "$NONINTERACTIVE" = true ]; then
+        change_tz="${CHANGE_TZ:-n}"
+    else
+        read -p "Would you like to change the timezone to IST? (y/n): " change_tz
+    fi
     if [[ $change_tz =~ ^[Yy]$ ]]; then
         log_message "Changing timezone to IST..." "$BLUE"
         sudo timedatectl set-timezone Asia/Kolkata
@@ -101,14 +142,21 @@ log_message "----------------------------------------" "$BLUE"
 check_timezone
 
 # Ask number of instances
-while true; do
-    read -p "How many OpenAlgo instances do you want to set up? " INSTANCES
-    if [[ "$INSTANCES" =~ ^[0-9]+$ ]] && [ "$INSTANCES" -gt 0 ]; then
-        break
-    else
-        log_message "❌ Invalid number. Please enter a positive integer." "$RED"
+if [ "$NONINTERACTIVE" = true ]; then
+    if ! [[ "$INSTANCES" =~ ^[0-9]+$ ]] || [ "$INSTANCES" -le 0 ]; then
+        log_message "❌ Config file must set INSTANCES to a positive integer." "$RED"
+        exit 1
     fi
-done
+else
+    while true; do
+        read -p "How many OpenAlgo instances do you want to set up? " INSTANCES
+        if [[ "$INSTANCES" =~ ^[0-9]+$ ]] && [ "$INSTANCES" -gt 0 ]; then
+            break
+        else
+            log_message "❌ Invalid number. Please enter a positive integer." "$RED"
+        fi
+    done
+fi
 
 log_message "Setting up $INSTANCES OpenAlgo instances" "$GREEN"
 
@@ -124,6 +172,12 @@ SELECTED_BRANCH="main"
 select_branch() {
     local branch_input
     local -a branches
+
+    if [ "$NONINTERACTIVE" = true ]; then
+        SELECTED_BRANCH="${BRANCH:-main}"
+        log_message "Using branch: $SELECTED_BRANCH" "$GREEN"
+        return
+    fi
 
     log_message "\nFetching available branches from repo..." "$BLUE"
     mapfile -t branches < <(git ls-remote --heads "$REPO_URL" | awk '{print $2}' | sed 's|refs/heads/||')
@@ -203,6 +257,50 @@ log_message "\n=== COLLECTING INSTANCE CONFIGURATIONS ===" "$YELLOW"
 
 for ((i=1; i<=INSTANCES; i++)); do
     log_message "\n--- Instance $i Configuration ---" "$BLUE"
+
+    if [ "$NONINTERACTIVE" = true ]; then
+        domain_var="INSTANCE_${i}_DOMAIN"; broker_var="INSTANCE_${i}_BROKER"
+        api_key_var="INSTANCE_${i}_API_KEY"; api_secret_var="INSTANCE_${i}_API_SECRET"
+        market_key_var="INSTANCE_${i}_MARKET_KEY"; market_secret_var="INSTANCE_${i}_MARKET_SECRET"
+        domain="${!domain_var}"; broker="${!broker_var}"
+        api_key="${!api_key_var}"; api_secret="${!api_secret_var}"
+        market_key="${!market_key_var}"; market_secret="${!market_secret_var}"
+
+        if [ -z "$domain" ] || [[ ! $domain =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?))+$ ]]; then
+            log_message "Error: $domain_var missing or invalid in config file" "$RED"
+            exit 1
+        fi
+        if ! validate_broker "$broker"; then
+            log_message "Error: $broker_var missing or invalid in config file" "$RED"
+            exit 1
+        fi
+        if [ -z "$api_key" ] || [ -z "$api_secret" ]; then
+            log_message "Error: $api_key_var/$api_secret_var required in config file" "$RED"
+            exit 1
+        fi
+
+        DOMAINS+=("$domain")
+        BROKERS+=("$broker")
+        API_KEYS+=("$api_key")
+        API_SECRETS+=("$api_secret")
+
+        if is_xts_broker "$broker"; then
+            IS_XTS+=("true")
+            if [ -z "$market_key" ] || [ -z "$market_secret" ]; then
+                log_message "Error: $market_key_var/$market_secret_var required for XTS broker in config file" "$RED"
+                exit 1
+            fi
+            API_KEYS_MARKET+=("$market_key")
+            API_SECRETS_MARKET+=("$market_secret")
+        else
+            IS_XTS+=("false")
+            API_KEYS_MARKET+=("")
+            API_SECRETS_MARKET+=("")
+        fi
+
+        log_message "✅ Instance $i configuration loaded from config file" "$GREEN"
+        continue
+    fi
 
     # Get domain
     while true; do

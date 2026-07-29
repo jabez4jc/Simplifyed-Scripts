@@ -3042,15 +3042,35 @@ setInterval(loadInstances,30000);
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--set-admin-password':
-        username = input("Admin username [admin]: ").strip() or "admin"
-        password = getpass.getpass("Admin password: ")
-        confirm = getpass.getpass("Confirm password: ")
-        if not password:
-            print("Password cannot be empty.", flush=True)
-            sys.exit(1)
-        if password != confirm:
-            print("Passwords did not match.", flush=True)
-            sys.exit(1)
+        # Non-interactive form for automation (e.g. a Fleet Manager provisioning
+        # a dedicated admin account over SSH): --set-admin-password --username X
+        # --password-stdin reads the password from stdin instead of a TTY prompt,
+        # so it never appears in argv/process listings or shell history.
+        extra_args = sys.argv[2:]
+        username = None
+        password_stdin = '--password-stdin' in extra_args
+        if '--username' in extra_args:
+            idx = extra_args.index('--username')
+            if idx + 1 < len(extra_args):
+                username = extra_args[idx + 1]
+
+        if password_stdin:
+            username = username or "admin"
+            password = sys.stdin.readline().rstrip('\n')
+            if not password:
+                print("Password cannot be empty.", flush=True)
+                sys.exit(1)
+        else:
+            username = input("Admin username [admin]: ").strip() or "admin"
+            password = getpass.getpass("Admin password: ")
+            confirm = getpass.getpass("Confirm password: ")
+            if not password:
+                print("Password cannot be empty.", flush=True)
+                sys.exit(1)
+            if password != confirm:
+                print("Passwords did not match.", flush=True)
+                sys.exit(1)
+
         save_credentials(username, password)
         print(f"Saved admin credentials to {CREDENTIALS_FILE}", flush=True)
         sys.exit(0)
