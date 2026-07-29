@@ -51,7 +51,8 @@ Register servers, poll each one's admin API on an interval, cache into local DB,
 Proxy restart / stop / start / update / health-check / logs-view through to the right server's admin API. Async jobs tracked via `/api/jobs/<id>` polling, surfaced as a live log/status panel.
 
 **Phase 3 — Remote provisioning (SSH)**
-- Add a new instance to an existing, already-provisioned server: SSH in, run `multi-install.sh` (see §7 for the non-interactive gap this exposes).
+- Every SSH session starts by syncing this scripts repo onto the target server (§7a) — never SFTP individual script files.
+- Add a new instance to an existing, already-provisioned server: SSH in, run `multi-install.sh` (see §7 for the non-interactive mode).
 - Onboard a brand-new bare server: SSH in, run prerequisite bootstrap, then `multi-install.sh`.
 - Trigger `oa-update.sh`, `oa-backup.sh`, `oa-patch-known-issues.sh --self-test` remotely where the admin API doesn't cover them.
 
@@ -104,6 +105,33 @@ Keep `instances` as a cache table only — never treat it as authoritative; a po
 - Never store broker API keys/secrets in Fleet Manager's own DB beyond what's needed to pass them through once during provisioning; don't display them again in the UI after entry (write-only field).
 - All provisioning actions require confirmation in the UI (these run root-level, hard-to-reverse installs/reboots on remote boxes) — mirror this repo's own convention of confirmation prompts before destructive actions.
 - TLS: run behind Coolify's built-in HTTPS/reverse proxy; don't terminate plaintext HTTP outside localhost.
+
+## 7a. Getting the scripts onto the target server (git pull, not SFTP)
+
+Repo is public (`https://github.com/jabez4jc/Simplifyed-Scripts.git`), so no deploy key/PAT needed — plain `git clone`/`git pull` over HTTPS works from any server with outbound internet.
+
+Fixed path convention: **`/opt/openalgo-scripts`** on every managed server.
+
+Before any script invocation in a provisioning job, the Fleet Manager runs this over the existing SSH connection (idempotent, safe to run every time):
+
+```bash
+if [ -d /opt/openalgo-scripts/.git ]; then
+    sudo git -C /opt/openalgo-scripts fetch --quiet origin
+    sudo git -C /opt/openalgo-scripts reset --hard "origin/${SCRIPTS_REF}"
+else
+    sudo git clone --quiet -b "${SCRIPTS_REF}" https://github.com/jabez4jc/Simplifyed-Scripts.git /opt/openalgo-scripts
+fi
+```
+
+Then invoke scripts straight from that path, e.g.:
+
+```bash
+sudo bash /opt/openalgo-scripts/multi-install.sh --config /tmp/instance-<job_id>.env
+```
+
+`SCRIPTS_REF` (a branch or tag, e.g. `main` or a pinned release tag) is a Fleet Manager **global setting**, not per-server — these scripts run root-level, potentially destructive operations, so floating every server on `main` unpinned is the wrong default. Recommend pinning to a tag and bumping it deliberately (a one-line config change) after testing a new scripts version, rather than every provisioning job silently picking up whatever is newest on `main`.
+
+Config files written for `--config` (§7) contain broker secrets in plaintext — write them to `/tmp` with `0600` perms, and delete them (`shred` or plain `rm`) immediately after the script exits, success or failure, from the SSH session itself (not as a separate step that can be skipped if the connection drops).
 
 ## 7. Non-interactive prerequisites — DONE
 
@@ -165,6 +193,7 @@ Use this to provision a dedicated `fleetmgr` admin account per server (rather th
 
 - [ ] Confirm the `/api/*` endpoint list and auth flow against a live `openalgo-restart-api.py` instance (not just static grep) before coding the client.
 - [x] `multi-install.sh --config` and `--set-admin-password --password-stdin` non-interactive modes are already implemented (§7) — use them as-is for Phase 3.
+- [ ] Implement the git-sync-then-invoke step (§7a) as a reusable helper in the Fleet Manager's SSH client, not copy-pasted per job type — every provisioning job routes through it.
 - [ ] Build Phase 1 and Phase 2 first, deployed and used for real, before touching SSH provisioning.
 - [ ] Dedicated SSH keypair per Fleet Manager deployment; pin host keys per server row.
 - [ ] Every provisioning/destructive action logged to `audit_log` and confirmed in the UI before execution.
