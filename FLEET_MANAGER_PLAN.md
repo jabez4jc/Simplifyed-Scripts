@@ -45,7 +45,7 @@ Before coding starts, the build agent should re-run this same grep against the c
 ## 3. Scope by phase
 
 **Phase 1 — Read-only fleet dashboard**
-Register servers, poll each one's admin API on an interval, cache into local DB, render one dashboard: all servers × all instances, status/health/broker-auth at a glance.
+Login (§6a) is part of Phase 1, not a later add-on — there is no unauthenticated milestone of this app. Register servers, poll each one's admin API on an interval, cache into local DB, render one dashboard: all servers × all instances, status/health/broker-auth at a glance, all behind the login from the first deploy.
 
 **Phase 2 — Actions**
 Proxy restart / stop / start / update / health-check / logs-view through to the right server's admin API. Async jobs tracked via `/api/jobs/<id>` polling, surfaced as a live log/status panel.
@@ -105,6 +105,16 @@ Keep `instances` as a cache table only — never treat it as authoritative; a po
 - Never store broker API keys/secrets in Fleet Manager's own DB beyond what's needed to pass them through once during provisioning; don't display them again in the UI after entry (write-only field).
 - All provisioning actions require confirmation in the UI (these run root-level, hard-to-reverse installs/reboots on remote boxes) — mirror this repo's own convention of confirmation prompts before destructive actions.
 - TLS: run behind Coolify's built-in HTTPS/reverse proxy; don't terminate plaintext HTTP outside localhost.
+
+## 6a. App-level authentication — required from first deploy, not deferred
+
+This is a public URL on Coolify holding SSH keys, per-server admin credentials, and broker API secrets — it must never serve a single page unauthenticated, including during Phase 1 development/staging deploys.
+
+- **Every route requires a valid session**, no exceptions, checked in one shared middleware/dependency (FastAPI `Depends`) applied globally — not sprinkled per-route, where one route can be forgotten. Only `/login`, `/login-submit`, and `/health` (liveness only, returns no data) are exempt.
+- **First-run bootstrap:** `FLEET_ADMIN_BOOTSTRAP_PASSWORD` (§8) is consumed once to create the initial `fleet_users` row, then the app must force a password change before allowing access to anything else — don't leave a long-lived well-known password usable indefinitely.
+- **Login hardening:** rate-limit/lock out after repeated failed attempts per username+IP (in-process counter in Postgres is enough — no external service needed), constant-time password comparison (PBKDF2 compare already gives you this), session cookie `HttpOnly; Secure; SameSite=Lax`, session TTL with re-auth on expiry — mirror `openalgo-restart-api.py`'s existing cookie flags exactly, don't invent weaker ones.
+- **Deploy-time exposure check:** before calling Phase 1 "done," verify from a browser in an incognito/no-cookie state that every page and every `/api/*` route on the deployed Coolify URL redirects to login or 401s — not just that the login page itself exists.
+- Defense in depth, cheap to add: if Coolify supports restricting the app's exposed URL to specific IPs or putting it on a private network reachable only via VPN/tailnet, do that in addition to app-login — app-level auth is the hard requirement, network restriction is a free second layer, not a replacement for it.
 
 ## 7a. Getting the scripts onto the target server (git pull, not SFTP)
 
@@ -191,6 +201,7 @@ Use this to provision a dedicated `fleetmgr` admin account per server (rather th
 
 ## 11. Handoff checklist for the build agent
 
+- [ ] Global auth middleware (§6a) covering every route by default is in place *before* Phase 1 is deployed anywhere reachable from the internet — verified by an incognito-browser check against the live Coolify URL, not just code review.
 - [ ] Confirm the `/api/*` endpoint list and auth flow against a live `openalgo-restart-api.py` instance (not just static grep) before coding the client.
 - [x] `multi-install.sh --config` and `--set-admin-password --password-stdin` non-interactive modes are already implemented (§7) — use them as-is for Phase 3.
 - [ ] Implement the git-sync-then-invoke step (§7a) as a reusable helper in the Fleet Manager's SSH client, not copy-pasted per job type — every provisioning job routes through it.
