@@ -20,6 +20,7 @@ suite_unit() {
     unit_restart_help "$repo_root"
     unit_secure_admin_help "$repo_root"
     unit_invalidate_help "$repo_root"
+    unit_restart_api_self_test "$repo_root"
 
     suite_report
     return $?
@@ -261,5 +262,27 @@ unit_invalidate_help() {
         test_pass "invalidate: contains session invalidation patterns"
     else
         test_fail "invalidate: missing session invalidation patterns"
+    fi
+}
+
+# ────────────────────────────────────────────────
+
+# The admin API takes instance names from HTTP callers and feeds them to
+# systemctl/journalctl and filesystem paths. Its --self-test asserts that
+# validation rejects shell metacharacters and traversal before they get there.
+unit_restart_api_self_test() {
+    local rr="$1"
+    local script="$rr/openalgo-restart-api.py"
+    test_start
+    if [[ ! -f "$script" ]]; then
+        test_skip "openalgo-restart-api.py not found"
+        return
+    fi
+    local output rc=0
+    output=$(run_or_skip 30 "$script" --self-test) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        test_pass "restart-api --self-test: exited 0"
+    else
+        test_fail "restart-api --self-test: exit $rc — $(echo "$output" | tail -3 | tr '\n' ' ')"
     fi
 }

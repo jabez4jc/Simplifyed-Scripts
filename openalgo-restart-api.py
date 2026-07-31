@@ -1118,7 +1118,15 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             return False, f"Auth check failed: {e}", None, None
     def _service_name(self, instance):
-        """Map instance directory to systemd service name."""
+        """Map instance directory to systemd service name.
+
+        Raises ValueError on anything that isn't a real instance name. This is the
+        single choke point every systemctl/journalctl call routes through, so
+        validating here covers all callers instead of each one remembering to.
+        """
+        instance = self._sanitize_instance(instance)
+        if not instance:
+            raise ValueError("Invalid instance name")
         env_file = f"/var/python/openalgo-flask/{instance}/.env"
         domain = None
         if os.path.exists(env_file):
@@ -1128,9 +1136,11 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
                     if m:
                         domain = m.group(1).strip().strip("'\"")
                         break
-        if domain:
-            return f"openalgo-{domain.replace('.', '-')}"
-        return instance
+        name = f"openalgo-{domain.replace('.', '-')}" if domain else instance
+        # DOMAIN comes out of a file on disk, so don't trust it blindly either.
+        if not re.match(r"^[A-Za-z0-9@_.-]+$", name):
+            raise ValueError("Invalid service name")
+        return name
 
     def _sanitize_instance(self, instance):
         if not instance:
@@ -1170,6 +1180,22 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if instance:
             return instance
         return self._resolve_instance_from_host()
+
+    def _instance_arg(self, raw):
+        """Validate an instance name supplied by an API caller.
+
+        Returns the sanitized name, or None after sending a 400. Every /api/* path
+        that takes an instance goes through this - unvalidated names reach both
+        subprocess calls and filesystem paths.
+        """
+        if not raw:
+            self.send_json({"error": "Missing instance parameter"}, 400)
+            return None
+        instance = self._sanitize_instance(raw)
+        if not instance:
+            self.send_json({"error": "Invalid instance name", "instance": raw}, 400)
+            return None
+        return instance
 
     def _require_monitor_instance(self):
         instance = self._resolve_monitor_instance()
@@ -1338,17 +1364,13 @@ body{display:flex;align-items:center;justify-content:center}
         elif self.path == '/health':
             self.handle_health()
         elif self.path.startswith('/api/logs/'):
-            instance = self.path.split('/api/logs/')[1].strip('/')
+            instance = self._instance_arg(self.path.split('/api/logs/')[1].strip('/'))
             if instance:
                 self.handle_instance_logs(instance)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path.startswith('/api/broker-status/'):
-            instance = self.path.split('/api/broker-status/')[1].strip('/')
+            instance = self._instance_arg(self.path.split('/api/broker-status/')[1].strip('/'))
             if instance:
                 self.handle_broker_status(instance)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/scripts-status':
             self.handle_scripts_status()
         elif self.path.startswith('/api/terminal/dbs'):
@@ -1423,31 +1445,23 @@ body{display:flex;align-items:center;justify-content:center}
             else:
                 self.send_json({"error": "Missing instance parameter"}, 400)
         elif path == '/api/reset-admin-user':
-            instance = data.get('instance', '')
+            instance = self._instance_arg(data.get('instance', ''))
             if instance:
                 self.handle_reset_admin_user(instance, data)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/restart-all':
             self.handle_restart_all()
         elif self.path == '/api/restart-instance':
-            instance = data.get('instance', '')
+            instance = self._instance_arg(data.get('instance', ''))
             if instance:
                 self.handle_restart_instance(instance)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/stop-instance':
-            instance = data.get('instance', '')
+            instance = self._instance_arg(data.get('instance', ''))
             if instance:
                 self.handle_stop_instance(instance)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/start-instance':
-            instance = data.get('instance', '')
+            instance = self._instance_arg(data.get('instance', ''))
             if instance:
                 self.handle_start_instance(instance)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif self.path == '/api/reboot-server':
             self.handle_reboot_server()
         elif self.path == '/api/health-check':
@@ -1494,8 +1508,8 @@ body{display:flex;align-items:center;justify-content:center}
                 try:
                     service_name = self._service_name(inst)
                     result = subprocess.run(
-                        f"systemctl is-active {service_name}",
-                        shell=True, capture_output=True, text=True, timeout=2
+                        ["systemctl", "is-active", service_name],
+                        capture_output=True, text=True, timeout=2
                     )
                     status["instances"][inst] = result.stdout.strip()
                 except:
@@ -1570,8 +1584,8 @@ body{display:flex;align-items:center;justify-content:center}
         try:
             service_name = self._service_name(instance)
             result = subprocess.run(
-                f"sudo journalctl -u {service_name} -n 100 --no-pager",
-                shell=True, capture_output=True, text=True, timeout=5
+                ["sudo", "journalctl", "-u", service_name, "-n", "100", "--no-pager"],
+                capture_output=True, text=True, timeout=5
             )
             logs = result.stdout.strip().split('\n') if result.stdout.strip() else []
             self.send_json({
@@ -1894,19 +1908,49 @@ body{display:flex;align-items:center;justify-content:center}
         except Exception as e:
             return {"reachable": False, "status_code": None, "error": str(e)[:120], "url": url}
 
+    def _probe_socket(self, instance):
+        """Does the instance's gunicorn socket actually answer HTTP?
+
+        True = serving, False = wedged (accepts but never responds), None = no socket
+        to probe or the probe itself broke. Any HTTP status counts as healthy; a
+        redirect to the login page is a perfectly good answer.
+        """
+        socket_file = f"/var/python/openalgo-flask/{instance}/openalgo.sock"
+        if not os.path.exists(socket_file):
+            return None
+        try:
+            result = subprocess.run(
+                ["sudo", "-u", "www-data", "curl", "-s", "-m", "5",
+                 "-o", "/dev/null", "-w", "%{http_code}",
+                 "--unix-socket", socket_file, "http://localhost/"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return None
+        code = (result.stdout or "").strip()
+        return bool(code) and code != "000"
+
     def _get_instance_health(self, instance):
         """Get detailed health info for a single instance"""
-        health = {"name": instance, "status": "unknown", "port": None, "database": False, "broker": None, "domain": None, "env_version": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None, "valid_brokers": []}
+        health = {"name": instance, "status": "unknown", "serving": None, "wedged": False, "port": None, "database": False, "broker": None, "domain": None, "env_version": None, "auth_name": None, "auth_status": None, "session_valid": True, "master_contract": None, "git": None, "valid_brokers": []}
 
         try:
             service_name = self._service_name(instance)
             result = subprocess.run(
-                f"systemctl is-active {service_name}",
-                shell=True, capture_output=True, text=True, timeout=2
+                ["systemctl", "is-active", service_name],
+                capture_output=True, text=True, timeout=2
             )
             health["status"] = result.stdout.strip()
         except:
             health["status"] = "unknown"
+
+        # is-active is not liveness. A wedged eventlet worker keeps the process and
+        # the socket alive while every request hangs into an nginx 504, and is-active
+        # says "active" throughout. Only an end-to-end request over the socket sees
+        # it - same probe as check_socket() in oa-health-check.sh.
+        if health["status"] == "active":
+            health["serving"] = self._probe_socket(instance)
+            health["wedged"] = health["serving"] is False
 
         try:
             inst_path = f"/var/python/openalgo-flask/{instance}"
@@ -2005,24 +2049,33 @@ body{display:flex;align-items:center;justify-content:center}
     
     def handle_restart_all(self):
         """Restart all instances"""
-        Thread(target=self._restart_all).start()
+        job_id = self._create_job("restart-all", {})
+        Thread(target=self._restart_all, args=(job_id,), daemon=True).start()
         self.send_json({
-            "status": "success",
+            "status": "queued",
+            "job_id": job_id,
             "message": "Restart triggered for all instances",
             "timestamp": str(datetime.now())
         })
-    
+
     def handle_restart_instance(self, instance):
         """Restart specific instance"""
-        service_name = self._service_name(instance)
+        try:
+            service_name = self._service_name(instance)
+        except ValueError as e:
+            self.send_json({"error": str(e), "instance": instance}, 400)
+            return
+
+        job_id = self._create_job("restart-instance", {"instance": instance})
         Thread(
             target=self._restart_instance_background,
-            args=(instance, service_name),
+            args=(job_id, instance, service_name),
             daemon=True,
         ).start()
 
         self.send_json({
-            "status": "success",
+            "status": "queued",
+            "job_id": job_id,
             "message": f"Restart queued for {instance}",
             "instance": instance,
             "service": service_name,
@@ -2059,67 +2112,110 @@ body{display:flex;align-items:center;justify-content:center}
 
         return deleted
 
-    def _restart_instance_background(self, instance, service_name):
-        """Run restart-related work without blocking the monitor HTTP server."""
-        try:
-            self._invalidate_session(instance)
-        except Exception:
-            pass
+    def _restart_instance_background(self, job_id, instance, service_name):
+        """Run restart-related work without blocking the monitor HTTP server.
+
+        The restart itself decides the job outcome; session-invalidation and log
+        clearing are best-effort housekeeping and only get noted in the output.
+        """
+        self._update_job(job_id, status="running", started_at=self._now_iso())
+        notes = []
+
+        for label, fn in (("invalidate-session", lambda: self._invalidate_session(instance)),
+                          ("clear-logs", lambda: self._clear_instance_logs_quick(instance))):
+            try:
+                fn()
+            except Exception as e:
+                notes.append(f"{label} failed (non-fatal): {e}")
 
         try:
-            self._clear_instance_logs_quick(instance)
-        except Exception:
-            pass
-
-        try:
-            subprocess.run(
+            result = subprocess.run(
                 ["sudo", "systemctl", "restart", service_name],
-                capture_output=True,
-                text=True,
-                timeout=60,
+                capture_output=True, text=True, timeout=60,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            self._update_job(job_id, status="error", error=f"systemctl restart failed: {e}",
+                             output="\n".join(notes), finished_at=self._now_iso())
+            return
+
+        if result.returncode != 0:
+            self._update_job(
+                job_id, status="error", exit_code=result.returncode,
+                error=(result.stderr or "").strip() or f"systemctl restart {service_name} failed",
+                output="\n".join(notes + [(result.stdout or "").strip()]).strip(),
+                finished_at=self._now_iso(),
+            )
+            return
 
         try:
-            subprocess.run(
+            nginx = subprocess.run(
                 ["sudo", "systemctl", "reload", "nginx"],
-                capture_output=True,
-                text=True,
-                timeout=30,
+                capture_output=True, text=True, timeout=30,
             )
-        except Exception:
-            pass
+            if nginx.returncode != 0:
+                notes.append(f"nginx reload failed: {(nginx.stderr or '').strip()}")
+        except Exception as e:
+            notes.append(f"nginx reload failed: {e}")
+
+        self._update_job(
+            job_id, status="success", exit_code=0,
+            output="\n".join(notes + [f"Restarted {service_name}"]).strip(),
+            finished_at=self._now_iso(),
+        )
+
+    def _systemctl(self, instance, verbs, ok_message):
+        """Run systemctl verbs against an instance and report what actually happened.
+
+        Anything that fails is reported as a failure - a caller (the fleet manager,
+        the dashboard) that is told "success" for a no-op cannot manage anything.
+        """
+        try:
+            service_name = self._service_name(instance)
+        except ValueError as e:
+            self.send_json({"error": str(e), "instance": instance}, 400)
+            return
+
+        for verb in verbs:
+            try:
+                result = subprocess.run(
+                    ["sudo", "systemctl", verb, service_name],
+                    capture_output=True, text=True, timeout=30,
+                )
+            except Exception as e:
+                self.send_json({
+                    "status": "error", "instance": instance, "service": service_name,
+                    "error": f"systemctl {verb} failed: {e}",
+                }, 500)
+                return
+
+            if result.returncode != 0:
+                self.send_json({
+                    "status": "error", "instance": instance, "service": service_name,
+                    "exit_code": result.returncode,
+                    "error": (result.stderr or "").strip() or f"systemctl {verb} {service_name} failed",
+                }, 500)
+                return
+
+        self.send_json({
+            "status": "success",
+            "message": ok_message.format(instance=instance),
+            "instance": instance,
+            "service": service_name,
+            "timestamp": str(datetime.now())
+        })
 
     def handle_stop_instance(self, instance):
-        """Stop specific instance"""
-        service_name = self._service_name(instance)
-        subprocess.run(
-            f"sudo systemctl stop {service_name}",
-            shell=True, capture_output=True, timeout=30
-        )
-        
-        self.send_json({
-            "status": "success",
-            "message": f"Stopped {instance}",
-            "instance": instance,
-            "timestamp": str(datetime.now())
-        })
-    
-    def handle_start_instance(self, instance):
-        """Start specific instance"""
-        service_name = self._service_name(instance)
-        subprocess.run(
-            f"sudo systemctl start {service_name}",
-            shell=True, capture_output=True, timeout=30
-        )
+        """Stop specific instance, and keep it stopped across reboots.
 
-        self.send_json({
-            "status": "success",
-            "message": f"Started {instance}",
-            "instance": instance,
-            "timestamp": str(datetime.now())
-        })
+        `stop` alone is undone by the next reboot or by the daily restart-all, so a
+        deliberately stopped instance would silently come back. `disable` makes the
+        intent stick; handle_start_instance re-enables.
+        """
+        self._systemctl(instance, ["disable", "stop"], "Stopped and disabled {instance}")
+
+    def handle_start_instance(self, instance):
+        """Start specific instance and re-enable it at boot."""
+        self._systemctl(instance, ["enable", "start"], "Started and enabled {instance}")
 
     def handle_invalidate_session(self, instance):
         """Invalidate session for a specific instance"""
@@ -2188,10 +2284,50 @@ body{display:flex;align-items:center;justify-content:center}
             "timestamp": str(datetime.now())
         })
 
-    def _restart_all(self):
-        """Background restart all"""
-        subprocess.run(['/usr/local/bin/openalgo-daily-restart.sh'],
-                      capture_output=True, timeout=600)
+    def _restart_all(self, job_id):
+        """Background restart all.
+
+        The daily-restart script only exists if setup-daily-restart.sh was run, so
+        fall back to restarting each instance directly rather than failing.
+        """
+        script = '/usr/local/bin/openalgo-daily-restart.sh'
+        if os.path.exists(script):
+            self._run_script_job(job_id, [script], timeout=600)
+            return
+
+        self._update_job(job_id, status="running", started_at=self._now_iso())
+        lines = [f"{script} not found - restarting each instance directly"]
+        failed = []
+        for inst in self._list_instances():
+            try:
+                service_name = self._service_name(inst)
+                result = subprocess.run(
+                    ["sudo", "systemctl", "restart", service_name],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    lines.append(f"restarted {service_name}")
+                else:
+                    failed.append(inst)
+                    lines.append(f"FAILED {service_name}: {(result.stderr or '').strip()}")
+            except Exception as e:
+                failed.append(inst)
+                lines.append(f"FAILED {inst}: {e}")
+
+        try:
+            subprocess.run(["sudo", "systemctl", "reload", "nginx"],
+                           capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            lines.append(f"nginx reload failed: {e}")
+
+        self._update_job(
+            job_id,
+            status="error" if failed else "success",
+            exit_code=1 if failed else 0,
+            error=f"Failed to restart: {', '.join(failed)}" if failed else None,
+            output="\n".join(lines),
+            finished_at=self._now_iso(),
+        )
 
     def serve_monitor_ui(self):
         """Serve single-instance monitor UI"""
@@ -2368,7 +2504,7 @@ if(btnUpdate){btnUpdate.disabled=!updateOk;btnUpdate.title=updateOk?'':'oa-updat
 function renderInstance(h){
 const inst=h.name||monitorInstance;
 resolvedInstance=inst||resolvedInstance;
-const active=h.status==='active';
+const active=h.status==='active'&&!h.wedged;
 const broker=h.broker||'Unknown';
 const domain=h.domain||'Unknown';
 const authName=h.auth_name||'Unknown';
@@ -2398,7 +2534,7 @@ const dcHtml=domain!=='Unknown'&&h.domain_check!==undefined?`<div class="domain-
 const actions=active
 ?`<button class="btn btn-sm btn-danger" onclick="stopInstance()">Stop</button>`
 :`<button class="btn btn-sm btn-success" onclick="startInstance()">Start</button>`;
-document.getElementById('instance').innerHTML=`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+' Inactive'}</span></div></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div>${dcHtml}<div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="restartInstance()">Restart</button><div class="danger-group">${actions}</div></div></div>`;
+document.getElementById('instance').innerHTML=`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+(h.wedged?' Wedged':' Inactive')}</span></div></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.wedged?'active (wedged - not serving)':(h.status||'unknown')}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div>${dcHtml}<div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs()">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs" class="logs-section"><div class="logs-container" id="logs-content"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="restartInstance()">Restart</button><div class="danger-group">${actions}</div></div></div>`;
 }
 function toggleLogs(){
 const logsSection=document.getElementById('logs');
@@ -2733,12 +2869,12 @@ showAlert('Error: '+e.message,'error');
 }
 }
 function renderInstances(instances, health, initTerminal){
-const running=Object.values(health.instances||{}).filter(i=>i.status==='active').length;
+const running=Object.values(health.instances||{}).filter(i=>i.status==='active'&&!i.wedged).length;
 document.getElementById('summary').innerHTML=`<div class="kpi"><div class="kpi-label">Total Instances</div><div class="kpi-value">${instances.length}</div></div><div class="kpi"><div class="kpi-label">Running</div><div class="kpi-value success">${running}</div></div><div class="kpi"><div class="kpi-label">Stopped</div><div class="kpi-value danger">${instances.length-running}</div></div>`;
 renderSystem(health.system,health.access);
 const html=instances.map(inst=>{
 const h=health.instances?.[inst]||{};
-const active=h.status==='active';
+const active=h.status==='active'&&!h.wedged;
 const broker=h.broker||'Unknown';
 const domain=h.domain||'Unknown';
 const authName=h.auth_name||'Unknown';
@@ -2763,7 +2899,7 @@ const actions=active
 ?`<button class="btn btn-sm btn-danger" onclick="stop('${inst}')">Stop</button>`
 :`<button class="btn btn-sm btn-success" onclick="start('${inst}')">Start</button>`;
 const monitorHref=domain!=='Unknown'?`https://${domain}/monitor`:`/monitor?instance=${inst}`;
-return`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+' Inactive'}</span></div><a class="icon-btn" href="${monitorHref}" target="_blank" rel="noopener" title="Open monitor page for ${inst}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg></a></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.status||'unknown'}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="runHealthCheck('instance','${inst}')">Health</button><button class="btn btn-sm" onclick="updateInstance('${inst}')">Update</button><button class="btn btn-sm" onclick="restart('${inst}')">Restart</button><div class="danger-group"><button class="btn btn-sm" onclick="invalidate('${inst}')">Invalidate</button><button class="btn btn-sm btn-danger" onclick="resetAdminUser('${inst}')">Factory Reset</button>${actions}</div></div></div>`;
+return`<div class="card"><div class="instance-header"><div class="instance-name">${inst}<span class="badge ${active?'badge-active':'badge-inactive'}">${active?ICON_CHECK+' Active':ICON_X+(h.wedged?' Wedged':' Inactive')}</span></div><a class="icon-btn" href="${monitorHref}" target="_blank" rel="noopener" title="Open monitor page for ${inst}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg></a></div><div class="detail-grid"><div class="detail-item"><div class="detail-label">Domain</div><div class="detail-value">${domain!=='Unknown'?`<a href="https://${domain}" target="_blank" rel="noopener">${domain} ↗</a>`:domain}</div></div><div class="detail-item"><div class="detail-label">Env Version</div><div class="detail-value">${h.env_version||'—'}</div></div><div class="detail-item"><div class="detail-label">Status</div><div class="detail-value ${active?'active':'inactive'}">${h.wedged?'active (wedged - not serving)':(h.status||'unknown')}</div></div><div class="detail-item"><div class="detail-label">Flask Port</div><div class="detail-value">${h.port||'N/A'}</div></div><div class="detail-item"><div class="detail-label">Database</div><div class="detail-value status-inline">${h.database?ICON_CHECK+' Present':ICON_X+' Missing'}</div></div><div class="detail-item"><div class="detail-label">Git</div><div class="detail-value mono">${gitSummary}</div></div><div class="detail-item"><div class="detail-label">Code Updated</div><div class="detail-value">${gitUpdated}</div></div></div><div class="subpanel ${isAuthenticated?'ok':'bad'}"><div class="subpanel-title">${authName} | Broker: ${broker} ${brokerAuthBadge}</div></div><div class="subpanel ${mcReady?'ok':'bad'}"><div class="subpanel-title">Master Contract Data ${mcBadge}</div><div class="subpanel-grid"><div><div class="detail-label">Last Updated</div><div class="detail-value">${mcLast}</div></div><div><div class="detail-label">Total Symbols</div><div class="detail-value">${mcSymbols}</div></div><div><div class="detail-label">Broker</div><div class="detail-value">${mcBroker}</div></div><div><div class="detail-label">Message</div><div class="detail-value">${mcMessage}</div></div></div></div><button class="logs-toggle" onclick="toggleLogs('${inst}')">${ICON_LOGS}View Logs${ICON_CHEVRON}</button><div id="logs-${inst}" class="logs-section"><div class="logs-container" id="logs-content-${inst}"><p style="color:var(--text-faint)">Loading logs...</p></div></div><div class="actions"><button class="btn btn-sm" onclick="runHealthCheck('instance','${inst}')">Health</button><button class="btn btn-sm" onclick="updateInstance('${inst}')">Update</button><button class="btn btn-sm" onclick="restart('${inst}')">Restart</button><div class="danger-group"><button class="btn btn-sm" onclick="invalidate('${inst}')">Invalidate</button><button class="btn btn-sm btn-danger" onclick="resetAdminUser('${inst}')">Factory Reset</button>${actions}</div></div></div>`;
 }).join('');
 document.getElementById('instances').innerHTML=html;
 if(initTerminal && !terminalInitialized){
@@ -3040,7 +3176,38 @@ setInterval(loadInstances,30000);
         """Suppress logging"""
         pass
 
+def _self_test():
+    """Verify instance-name validation rejects anything that could reach a shell
+    or escape the instance directory. Runs without root and without a server."""
+    handler = RestartHandler.__new__(RestartHandler)
+
+    rejected = [
+        "openalgo1; rm -rf /", "openalgo1 && reboot", "openalgo1$(id)", "openalgo1`id`",
+        "openalgo1|cat", "../../etc/passwd", "openalgo1/../../root", "open algo1",
+        "openalgo1\nreboot", "", None, "openalgo1'", 'openalgo1"',
+    ]
+    for bad in rejected:
+        assert handler._sanitize_instance(bad) is None, f"should reject: {bad!r}"
+        try:
+            handler._service_name(bad)
+            raise AssertionError(f"_service_name should raise on: {bad!r}")
+        except ValueError:
+            pass
+
+    # Well-formed names still pass. openalgo-<domain> only resolves when the
+    # directory exists, so only the always-valid forms are asserted here.
+    for good in ("openalgo1", "openalgo42", "openalgo-fyers-simplifyed-in"):
+        assert handler._sanitize_instance(good) == good, f"should accept: {good}"
+
+    print("self-test passed: instance-name validation rejects shell metacharacters "
+          "and path traversal")
+
+
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--self-test':
+        _self_test()
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == '--set-admin-password':
         # Non-interactive form for automation (e.g. a Fleet Manager provisioning
         # a dedicated admin account over SSH): --set-admin-password --username X

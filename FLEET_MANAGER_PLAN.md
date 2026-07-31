@@ -17,8 +17,8 @@ Auth: **cookie/session, not API-key**. `POST /login-submit` (form-encoded `usern
 
 ```
 GET  /api/instances              list of instances + basic state
-GET  /api/status                 aggregate status
-GET  /api/health                 aggregate health
+GET  /api/status                 aggregate status (systemd is-active only — see below)
+GET  /api/health                 aggregate health (includes serving/wedged — use this)
 GET  /health                     liveness (no auth path assumed—verify)
 GET  /api/logs/<instance>
 GET  /api/broker-status/<instance>
@@ -37,6 +37,15 @@ POST /api/update
 POST /api/scripts-status
 POST /api/terminal/run
 ```
+
+**Action semantics (confirmed in code, not assumed):**
+
+- `/api/restart-instance` and `/api/restart-all` are **async**: they reply `{"status":"queued","job_id":...}` and the outcome lands in `/api/jobs/<id>` (`status` = `success`/`error`/`timeout`, plus `exit_code`, `output`, `error`). Never treat the 200 on the POST as "it restarted" — poll the job.
+- `/api/stop-instance` and `/api/start-instance` are **synchronous** and return the real result: `200 {"status":"success"}` only when systemctl actually succeeded, `500 {"status":"error","exit_code":N,"error":...}` when it didn't, `400` on an invalid instance name.
+- Stop is `disable` + `stop`; start is `enable` + `start`. A stopped instance therefore stays stopped across reboots and across `restart-all`. If the Fleet Manager wants a temporary stop it must track that intent itself.
+- Instance names are validated server-side against `^openalgo\d+$` / `^openalgo-[A-Za-z0-9-]+$`; anything else gets a 400. Send the directory name (`openalgo2`), not the domain.
+
+**Liveness, not just state:** `/api/status` reports `systemctl is-active`, which says `active` for a wedged worker that answers nothing (the eventlet/WhatsApp bug — see CLAUDE.md). Poll `/api/health` instead: each instance carries `serving` (true/false/null) and `wedged` (bool) from an end-to-end probe over the gunicorn socket. Treat `wedged: true` as down and alert on it — that is the state that produces the 5xx. Note the probe costs up to 5s per unresponsive instance, so size the poll timeout accordingly.
 
 **Implication for the Fleet Manager:** for each registered server it must do a real form login (store `username`/`password`, or better, mint a dedicated fleet-manager admin account per server via `--set-admin-password`), keep the session cookie warm, and re-login on 401/expiry. Store credentials encrypted at rest (see §6).
 
