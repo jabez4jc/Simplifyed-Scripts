@@ -210,6 +210,13 @@ else
     IS_XTS="false"
 fi
 
+# Simplifyed branding is on by default.
+read -p "   Apply Simplifyed branding? (Y/n): " BRANDING_REPLY
+case "$BRANDING_REPLY" in
+    [Nn]*) BRANDING="n" ;;
+    *)     BRANDING="y" ;;
+esac
+
 # Step 4: Install OpenAlgo
 log_message "\n╔════════════════════════════════════╗" "$BLUE"
 log_message "║ Step 4: Install OpenAlgo           ║" "$BLUE"
@@ -225,7 +232,7 @@ log_message "\n📥 Setting up OpenAlgo instance..." "$BLUE"
 
 # Install system dependencies
 log_message "   Installing system packages..." "$BLUE"
-sudo apt-get install -y python3 python3-venv python3-pip python3-full nginx git software-properties-common snapd ufw certbot python3-certbot-nginx > /dev/null 2>&1
+sudo apt-get install -y python3 python3-venv python3-pip python3-full nginx git software-properties-common snapd ufw certbot python3-certbot-nginx brotli > /dev/null 2>&1
 check_status "Failed to install system packages"
 
 # Install uv
@@ -486,6 +493,17 @@ if [ -f "$PATCH_SCRIPT" ]; then
     sudo bash "$PATCH_SCRIPT" "$INSTANCE_DIR"
 else
     log_message "\n⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
+fi
+
+# Brand the pre-built frontend and mark the instance so updates re-brand it.
+if [ "$BRANDING" = "y" ]; then
+    BRAND_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oa-apply-branding.sh"
+    if [ -f "$BRAND_SCRIPT" ]; then
+        log_message "\n🎨 Applying Simplifyed branding..." "$BLUE"
+        sudo bash "$BRAND_SCRIPT" "$INSTANCE_DIR"
+    else
+        log_message "\n⚠ oa-apply-branding.sh not found - branding NOT applied" "$YELLOW"
+    fi
 fi
 
 log_message "\n🔧 Creating systemd service..." "$BLUE"

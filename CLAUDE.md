@@ -85,7 +85,13 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
    - `--self-test` verifies patch logic against synthetic samples without touching any instance
    - See "Known Upstream Issue" section below
 
-12. **oa-secure-admin.sh** - Admin auth retrofit utility
+12. **oa-apply-branding.sh** - Simplifyed rebranding overlay
+   - Patches the **pre-built** `frontend/dist` in place; never runs `npm`
+   - Applied by both installers (branding is opt-out, default on) and re-applied by `oa-update.sh` after every pull
+   - `--self-test` verifies the rewrite rules against a synthetic dist, touching no instance
+   - See "Branding" section below
+
+13. **oa-secure-admin.sh** - Admin auth retrofit utility
    - Sets/resets the admin login via `openalgo-restart-api.py --set-admin-password` (app-owned credential store, not nginx)
    - Removes any leftover `auth_basic` directives from an earlier version of this script, so the app's own login page is the only gate
    - Optionally puts the all-instances manager page behind its own domain + TLS instead of raw `IP:8888`
@@ -184,6 +190,26 @@ It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before f
 **The real fix belongs upstream:** use `eventlet.spawn(_autostart_whatsapp_bot)` instead of `threading.Thread(...)` in `app.py`, or drop the eventlet worker class — gunicorn already warns eventlet is deprecated. Once upstream lands it, the patcher detects the change and skips automatically.
 
 **Adding a future mitigation:** add a `patch_*` function to `oa-patch-known-issues.sh` following the rules in its header, and extend `--self-test` to cover it. Run `./oa-patch-known-issues.sh --self-test` to verify patch logic without touching any instance.
+
+## Branding (oa-apply-branding.sh)
+
+**Why it patches `dist`, not `src`:** OpenAlgo serves a pre-built React app. `blueprints/react_app.py` sets `FRONTEND_DIST = frontend/dist` and serves every route (`/`, `/assets/*`, `/images/*`, `/favicon.ico`, `/logo.png`, `/apple-touch-icon.png`) out of it, and `frontend/dist` is committed upstream. Editing `frontend/src` would require Node 24 + `npm ci` + `vite build` on every server on every update — hundreds of MB per instance and a real OOM risk on 2 GB boxes. So the overlay rewrites the built chunks directly. Nginx proxies everything to gunicorn, so nothing bypasses Flask and no static path escapes the overlay.
+
+**What it changes:** display copy (`OpenAlgo` → `Simplifyed`), outbound links (openalgo.in / GitHub / X / YouTube → `$BRAND_URL`, paths preserved), the logo/favicon/apple-touch/chart-watermark image files, the Home page header lockup, the `<title>`/description in `dist/index.html`, and the terminal banner strings in `app.py`.
+
+**What it deliberately does NOT change:** `docs.openalgo.in` links, the lowercase `openalgo` SDK package name, `OPENALGO_*` env vars, service names, DB paths, API fields, browser storage keys. Only capitalised `OpenAlgo` is treated as display copy — verified against upstream `main`, where all 137 occurrences in `frontend/src` are copy or comments, none are values.
+
+**Compressed siblings:** `serve_assets()` prefers `<asset>.br` / `.gz` when the client advertises the encoding. A stale sibling would ship pre-branding bytes, so every rewritten chunk gets its `.gz` regenerated and its `.br` rebuilt (`brotli` CLI, installed by both installers) or removed — Flask then falls back to `.gz`, then raw.
+
+**Marker file:** branded instances carry an untracked `.simplifyed-branding` file, which survives `git reset --hard`. `oa-update.sh` re-brands only marked instances, and `oa-apply-branding.sh` with no arguments brands every marked instance.
+
+**Turning it off:** interactive installers prompt (default yes); `multi-install.sh --config` accepts `BRANDING=n`. Config files predating this variable get the default, so existing Fleet Manager provisioning keeps working unchanged.
+
+**Value guard:** before writing anything, the script scans the built chunks for `OpenAlgo` used as a *value* rather than copy — compared as a constant, an object/JSON key, a `case` label, a storage key, or inside a URL/path. Any hit aborts the whole overlay with the offending snippets printed, leaving the instance on upstream branding (cosmetic problem) instead of half-rewritten (behavioural problem). One reviewed exception is allowlisted: `usePageTitle`'s `document.title = t === 'OpenAlgo' ? ...`, where both operands are literals in the same chunk and rewrite together. If upstream changes that line, the allowlist entry stops matching and the guard re-arms. When the guard fires, narrow the rewrite rules — don't widen the allowlist without checking both operands.
+
+**Degradation, not breakage:** every rewrite is pattern-matched and idempotent. If upstream changes a pattern (e.g. the Home header markup), that piece is simply not rebranded — the page never breaks. The Home lockup falls back to the square Simplifyed mark.
+
+**AGPL:** rebranding does not remove OpenAlgo's licence, copyright, source-availability or appropriate-legal-notice obligations.
 
 ## Testing & Validation
 

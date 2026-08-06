@@ -5,6 +5,7 @@
 # an instance over SSH). Config file is sourced as shell vars:
 #
 #   CHANGE_TZ=y                        # y/n, whether to switch to IST
+#   BRANDING=y                         # y/n, apply Simplifyed branding (default y)
 #   BRANCH=main                        # git branch to install
 #   INSTANCES=2                        # how many instances in this run
 #   INSTANCE_1_DOMAIN=trade1.example.com
@@ -168,6 +169,23 @@ WS_PORT_BASE=8765
 ZMQ_PORT_BASE=5555
 SELECTED_BRANCH="main"
 
+# Simplifyed branding is on by default. Non-interactive callers (Fleet Manager)
+# can opt out with BRANDING=n in the config file; older config files that
+# predate this variable simply get the default.
+BRANDING="${BRANDING:-y}"
+
+select_branding() {
+    if [ "$NONINTERACTIVE" = true ]; then
+        return
+    fi
+    local reply
+    read -p "Apply Simplifyed branding to these instances? (Y/n): " reply
+    case "$reply" in
+        [Nn]*) BRANDING="n" ;;
+        *)     BRANDING="y" ;;
+    esac
+}
+
 # Function to select git branch
 select_branch() {
     local branch_input
@@ -242,6 +260,7 @@ log_message "Detected $EXISTING_INSTANCES existing OpenAlgo instance(s) under $B
 
 # Select git branch to install
 select_branch
+select_branding
 
 # Arrays to store instance configurations
 declare -a DOMAINS
@@ -374,7 +393,7 @@ log_message "\n=== INSTALLING SYSTEM PACKAGES ===" "$YELLOW"
 sudo apt-get update && sudo apt-get upgrade -y
 check_status "Failed to update system"
 
-sudo apt-get install -y python3 python3-venv python3-pip python3-full nginx git software-properties-common snapd ufw certbot python3-certbot-nginx
+sudo apt-get install -y python3 python3-venv python3-pip python3-full nginx git software-properties-common snapd ufw certbot python3-certbot-nginx brotli
 check_status "Failed to install packages"
 
 # Install uv
@@ -722,6 +741,18 @@ EOL
         sudo bash "$PATCH_SCRIPT" "$INSTANCE_DIR"
     else
         log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
+    fi
+
+    # Apply branding to the pre-built frontend. This also drops a marker file in
+    # the instance so oa-update.sh re-brands it after every git pull.
+    if [ "$BRANDING" = "y" ]; then
+        BRAND_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oa-apply-branding.sh"
+        if [ -f "$BRAND_SCRIPT" ]; then
+            log_message "Applying Simplifyed branding..." "$BLUE"
+            sudo bash "$BRAND_SCRIPT" "$INSTANCE_DIR"
+        else
+            log_message "⚠ oa-apply-branding.sh not found - branding NOT applied" "$YELLOW"
+        fi
     fi
 
     # Create systemd service

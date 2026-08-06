@@ -651,6 +651,20 @@ update_instance() {
         log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
     fi
 
+    # Re-apply branding. The pull (or its reset --hard fallback) restores
+    # upstream's frontend/dist, so this must run on every update or the instance
+    # comes back OpenAlgo-branded. No-op unless the instance carries the marker.
+    if [ -f "$instance_dir/.simplifyed-branding" ]; then
+        local brand_script
+        brand_script=$(find_helper_script "oa-apply-branding.sh")
+        if [ -n "$brand_script" ]; then
+            log_message "  Re-applying Simplifyed branding..." "$BLUE"
+            sudo bash "$brand_script" "$instance_dir" 2>&1 | tee -a "$UPDATE_LOG"
+        else
+            log_message "⚠ oa-apply-branding.sh not found - instance will show OpenAlgo branding" "$YELLOW"
+        fi
+    fi
+
     # One-time migration: eventlet → gthread in systemd service file
     local service_file="/etc/systemd/system/${service_name}.service"
     if [ -f "$service_file" ] && sudo grep -q -- '--worker-class eventlet' "$service_file"; then
@@ -740,7 +754,9 @@ dry_run_update() {
     log_message "\nChanges available:" "$BLUE"
     sudo git log --oneline HEAD..origin/"$default_branch" -20 2>/dev/null | tee -a "$UPDATE_LOG"
     
-    if sudo git diff --quiet HEAD origin/"$default_branch"; then
+    # Compare commits, not working trees: branded instances always have local
+    # modifications to frontend/dist, which is not an available update.
+    if [ "$(git rev-parse HEAD 2>/dev/null)" = "$(git rev-parse origin/"$default_branch" 2>/dev/null)" ]; then
         log_message "\n✓ Already up to date" "$GREEN"
     else
         log_message "\n⚠ Updates available from remote" "$YELLOW"
