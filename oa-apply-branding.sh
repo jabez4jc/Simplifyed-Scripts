@@ -19,9 +19,13 @@
 # API fields, browser storage keys.
 #
 # Usage:
-#   oa-apply-branding.sh                    # all instances marked for branding
-#   oa-apply-branding.sh /path/to/instance  # brand it, and mark it for future updates
+#   oa-apply-branding.sh                    # re-brand instances already marked (update path)
+#   oa-apply-branding.sh all                # retrofit every instance on this server, and mark them
+#   oa-apply-branding.sh /path/to/instance  # brand one instance, and mark it
 #   oa-apply-branding.sh --self-test        # verify patch logic against a synthetic dist
+#
+# Branding takes effect on the next page load: Flask reads frontend/dist per
+# request, so no service restart is needed.
 #
 # AGPL-3.0: OpenAlgo's licence, copyright and source-availability obligations
 # survive rebranding. This changes presentation only.
@@ -364,8 +368,22 @@ case "${1:-}" in
             echo -e "${BLUE}No instances marked for branding${NC}"
         fi
         ;;
+    all)
+        # Retrofit: brand and mark every instance on this server.
+        shopt -s nullglob
+        for dir in "$BASE_DIR"/openalgo[0-9]*; do
+            [ -d "$dir" ] || continue
+            brand_instance "$dir" "mark"
+        done
+        shopt -u nullglob
+        if [ $((BRANDED + SKIPPED + FAILED)) -eq 0 ]; then
+            echo -e "${RED}No instances found in $BASE_DIR${NC}" >&2
+            exit 1
+        fi
+        echo -e "${BLUE}Branded: $BRANDED, skipped: $SKIPPED, failed: $FAILED${NC}"
+        ;;
     -h|--help)
-        sed -n '2,26p' "${BASH_SOURCE[0]}"
+        sed -n '2,30p' "${BASH_SOURCE[0]}"
         exit 0
         ;;
     *)
