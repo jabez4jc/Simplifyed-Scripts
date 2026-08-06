@@ -137,6 +137,8 @@ def rewrite(text):
     text = text.replace("/images/openalgo-glyph.svg", "/images/simplifyed-glyph.png")
     return text
 
+missing = set()
+
 def recompress(path):
     """Refresh the .br/.gz siblings Flask negotiates in serve_assets().
 
@@ -145,14 +147,23 @@ def recompress(path):
     """
     gz = path.with_suffix(path.suffix + ".gz")
     br = path.with_suffix(path.suffix + ".br")
+    # The build emits .br and .gz together, so either one means this asset is
+    # meant to have both. Checking the pair (not just .br) is what lets a re-run
+    # rebuild a .br that an earlier brotli-less run had to delete.
+    want_precompressed = gz.exists() or br.exists()
     if gz.exists():
         with path.open("rb") as fin, gzip.open(gz, "wb", compresslevel=9) as fout:
             shutil.copyfileobj(fin, fout)
     if br.exists():
         br.unlink()
-        # brotli CLI is optional; without it Flask falls back to .gz, then raw.
-        subprocess.run(["brotli", "-q", "11", "-o", str(br), str(path)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    if want_precompressed:
+        # brotli CLI is optional (installers apt-install it, older servers may
+        # not have it). Without it Flask falls back to .gz, then to raw bytes.
+        try:
+            subprocess.run(["brotli", "-q", "11", "-o", str(br), str(path)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except OSError:
+            missing.add("brotli")
 
 targets = sorted((dist / "assets").glob("*.js")) + [dist / "index.html"]
 findings = []
@@ -168,6 +179,7 @@ if findings:
     sys.exit(2)
 
 changed = 0
+repaired = 0
 for path in sorted((dist / "assets").glob("*.js")):
     before = path.read_text(encoding="utf-8")
     after = rewrite(before)
@@ -175,6 +187,13 @@ for path in sorted((dist / "assets").glob("*.js")):
         path.write_text(after, encoding="utf-8")
         recompress(path)
         changed += 1
+    elif (path.with_suffix(path.suffix + ".gz").exists()
+          and not path.with_suffix(path.suffix + ".br").exists()):
+        # Already branded, but a previous run had no brotli CLI and had to drop
+        # the .br. Rebuild it now that brotli is available. Without this branch
+        # idempotency would skip the file forever and .br would never return.
+        recompress(path)
+        repaired += 1
 
 # Public Home page header: swap the square mark + wordmark span for the
 # horizontal lockup. Purely cosmetic — if a future build changes this shape the
@@ -223,7 +242,11 @@ if app.exists():
                         f'"{brand_name} Algorithmic Trading Platform"')
     app.write_text(text, encoding="utf-8")
 
-print(f"  {changed} asset chunk(s) rebranded")
+print(f"  {changed} asset chunk(s) rebranded"
+      + (f", {repaired} brotli variant(s) repaired" if repaired else ""))
+if "brotli" in missing:
+    print("  note: brotli not installed — .br variants removed, Flask falls back to .gz.\n"
+          "        For brotli-compressed assets: apt-get install -y brotli, then re-run.")
 if list(dist.rglob("*")) and "OpenAlgo" in index.read_text(encoding="utf-8"):
     print("  WARNING: index.html still mentions OpenAlgo", file=sys.stderr)
 PY
@@ -323,6 +346,20 @@ EOF
         echo -e "  ${GREEN}✓${NC} idempotent on re-run"
     else
         echo -e "  ${RED}✗${NC} idempotent on re-run"; fails=$((fails+1))
+    fi
+
+    # A run without the brotli CLI has to delete .br. Once brotli is available,
+    # a re-run must rebuild it — even though the text pass is now a no-op.
+    if command -v brotli >/dev/null 2>&1; then
+        rm -f "$misc.br"
+        brand_instance "$tmp" "nomark" >/dev/null 2>&1
+        if [ -f "$misc.br" ] && brotli -dc "$misc.br" | grep -qF "Simplifyed Charts"; then
+            echo -e "  ${GREEN}✓${NC} missing .br rebuilt on re-run, with branded bytes"
+        else
+            echo -e "  ${RED}✗${NC} missing .br rebuilt on re-run"; fails=$((fails+1))
+        fi
+    else
+        echo -e "  ${YELLOW}−${NC} .br rebuild check skipped (brotli not installed)"
     fi
 
     # Guard: a future upstream that uses "OpenAlgo" as a value must abort the
