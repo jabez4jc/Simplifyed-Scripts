@@ -123,9 +123,15 @@ def guard(text, label):
             hits.append(f"    {label}: {reason}\n      ...{text[start:m.end() + 40]}...")
     return hits
 
+brand_host = brand_url.split("://", 1)[-1]
+
 def rewrite(text):
     for old, new in url_map.items():
         text = text.replace(old, new)
+    # Bare hostnames rendered as visible link text (the footer's "www.openalgo.in",
+    # a chart annotation) are not URLs and so are missed by the map above. The
+    # lookbehind spares "docs.openalgo.in", which stays with upstream by policy.
+    text = re.sub(r"(?<![\w.])(?:www\.)?openalgo\.in", brand_host, text)
     # Capitalised "OpenAlgo" is display copy everywhere in this app. Lowercase
     # `openalgo` is left alone: it is the SDK package name and env-var prefix.
     text = text.replace("OpenAlgo", brand_name)
@@ -292,6 +298,9 @@ EOF
 EOF
     cat > "$tmp/frontend/dist/assets/Misc-def456.js" <<'EOF'
 a=`https://openalgo.in/discord`;b=`https://docs.openalgo.in/getting-started`;
+w=(0,B.jsx)(`a`,{href:`https://www.openalgo.in`,children:`www.openalgo.in`});
+v=(0,B.jsx)(`a`,{href:`https://docs.openalgo.in`,children:`docs.openalgo.in`});
+p={text:`openalgo.in`,showarrow:!1};
 c=`OpenAlgo Charts`;d=`/images/openalgo-glyph.svg`;
 e=(0,q.jsx)(`span`,{className:`font-semibold text-sm`,children:`openalgo`});
 f=(0,k.jsx)(`code`,{className:`bg-muted px-1 rounded`,children:`openalgo`});
@@ -320,6 +329,9 @@ EOF
     check        "dark-mode logo style injected"    "sfy-brand-style" "$idx"
     check        "outbound link rebranded, path kept" "https://simplifyed.in/discord" "$misc"
     check        "docs.openalgo.in preserved"       "https://docs.openalgo.in/getting-started" "$misc"
+    check        "footer link label rebranded"      "children:\`simplifyed.in\`" "$misc"
+    check        "bare hostname in chart rebranded" "text:\`simplifyed.in\`" "$misc"
+    check        "docs link label preserved"        "children:\`docs.openalgo.in\`" "$misc"
     check        "display copy rebranded"           "Simplifyed Charts" "$misc"
     check        "chart glyph repointed"            "/images/simplifyed-glyph.png" "$misc"
     check        "lowercase wordmark rebranded"     "text-sm\`,children:\`Simplifyed\`" "$misc"
