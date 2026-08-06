@@ -92,6 +92,78 @@ check_status() {
     return 0
 }
 
+# An update stops the service, then restarts it at the end. Anything that ends
+# the script in between — a dropped SSH session, the Manager utility's request
+# timing out, an unhandled error path — used to leave the instance stopped and
+# nginx serving 502s until a human noticed. This brings it back up on the way
+# out. (A SIGKILL, e.g. the OOM killer, cannot be trapped: check
+# `journalctl -k | grep -i oom` if an instance is still found stopped.)
+PENDING_RESTART_SERVICE=""
+
+restore_stopped_service() {
+    [ -n "$PENDING_RESTART_SERVICE" ] || return 0
+    local svc="$PENDING_RESTART_SERVICE"
+    PENDING_RESTART_SERVICE=""
+    if ! systemctl is-active --quiet "$svc"; then
+        log_message "\n⚠ Update did not finish — restarting $svc so the instance is not left down" "$YELLOW"
+        sudo systemctl start "$svc" 2>&1 | tee -a "$UPDATE_LOG"
+        sleep 2
+        if systemctl is-active --quiet "$svc"; then
+            log_message "✓ $svc restarted" "$GREEN"
+        else
+            log_message "❌ $svc could not be restarted — check: journalctl -u $svc -n 50" "$RED"
+        fi
+    fi
+}
+
+trap restore_stopped_service EXIT INT TERM
+
+# gunicorn is NOT a project dependency — the installers add it separately, so
+# `uv sync` prunes it out of the venv. ExecStart points at venv/bin/gunicorn, so
+# a pruned venv leaves the service unable to start at all (nginx then 502s).
+# Install when missing, downgrade when >=23, leave alone otherwise.
+ensure_gunicorn() {
+    local venv_path="$1"
+    local gunicorn_ver gmajor
+
+    gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+
+    if [ -z "$gunicorn_ver" ]; then
+        log_message "⚠ gunicorn missing from venv (pruned by uv sync). Reinstalling..." "$YELLOW"
+        sudo bash -c "uv pip install --python \"$venv_path/bin/python\" \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
+        if [ -x "$venv_path/bin/gunicorn" ]; then
+            log_message "✓ gunicorn reinstalled" "$GREEN"
+        else
+            log_message "❌ gunicorn still missing — the service will NOT start" "$RED"
+            return 1
+        fi
+        return 0
+    fi
+
+    gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
+    if [ "$gmajor" -ge 23 ]; then
+        log_message "⚠ gunicorn $gunicorn_ver >=23 detected. Downgrading (no-deps)..." "$YELLOW"
+        sudo bash -c "$venv_path/bin/pip install -q --no-deps \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
+        log_message "✓ gunicorn downgraded" "$GREEN"
+    else
+        log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
+    fi
+    return 0
+}
+
+# The eventlet worker class is only needed until the gthread migration runs, but
+# `uv sync` can prune eventlet while the service file still asks for it — same
+# unstartable-service failure as above.
+ensure_worker_class_deps() {
+    local venv_path="$1" service_file="$2"
+    [ -f "$service_file" ] || return 0
+    sudo grep -q -- '--worker-class eventlet' "$service_file" || return 0
+    if ! "$venv_path/bin/python" -c "import eventlet" >/dev/null 2>&1; then
+        log_message "⚠ Service uses eventlet but it was pruned from the venv. Reinstalling..." "$YELLOW"
+        sudo bash -c "uv pip install --python \"$venv_path/bin/python\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+    fi
+}
+
 get_requirements_file() {
     local instance_dir="$1"
 
@@ -440,6 +512,7 @@ update_instance() {
     local was_running=false
     if systemctl is-active --quiet "$service_name"; then
         was_running=true
+        PENDING_RESTART_SERVICE="$service_name"
         log_message "  Stopping service: $service_name" "$BLUE"
         sudo systemctl stop "$service_name"
         check_status "Failed to stop service" || return 1
@@ -503,22 +576,11 @@ update_instance() {
             log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
         fi
 
-        # Check gunicorn version and downgrade only if needed (avoid breaking pinned deps)
+        # Ensure the venv can actually run the service before restarting it.
         local venv_path="$instance_dir/venv"
         if [ -d "$venv_path" ]; then
-            local gunicorn_ver
-            gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-            if [ -n "$gunicorn_ver" ]; then
-                local gmajor
-                gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
-                if [ "$gmajor" -ge 23 ]; then
-                    log_message "⚠ gunicorn $gunicorn_ver >=23 detected. Downgrading (no-deps)..." "$YELLOW"
-                    sudo bash -c "$venv_path/bin/pip install -q --no-deps \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
-                    log_message "✓ gunicorn downgraded" "$GREEN"
-                else
-                    log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
-                fi
-            fi
+            ensure_gunicorn "$venv_path"
+            ensure_worker_class_deps "$venv_path" "/etc/systemd/system/${service_name}.service"
             sudo chown -R www-data:www-data "$venv_path"
         fi
 
@@ -592,20 +654,10 @@ update_instance() {
             log_message "⚠ Dependency sync had issues (non-critical)" "$YELLOW"
         fi
 
-        # Ensure gunicorn<23 — only install/downgrade if actually needed to avoid breaking pinned deps
-        local gunicorn_ver
-        gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        if [ -n "$gunicorn_ver" ]; then
-            local gmajor
-            gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
-            if [ "$gmajor" -ge 23 ]; then
-                log_message "⚠ gunicorn $gunicorn_ver >=23 detected. Downgrading (no-deps)..." "$YELLOW"
-                sudo bash -c "$venv_path/bin/pip install -q --no-deps \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
-                log_message "✓ gunicorn downgraded" "$GREEN"
-            else
-                log_message "✓ gunicorn $gunicorn_ver (OK — no change needed)" "$GREEN"
-            fi
-        fi
+        # `uv sync` above prunes gunicorn (it is not a project dependency), so
+        # this must be able to INSTALL it, not merely version-check it.
+        ensure_gunicorn "$venv_path"
+        ensure_worker_class_deps "$venv_path" "/etc/systemd/system/${service_name}.service"
 
         # Fix permissions
         sudo chown -R www-data:www-data "$venv_path"
@@ -689,6 +741,7 @@ update_instance() {
 
         # Verify service is running
         if systemctl is-active --quiet "$service_name"; then
+            PENDING_RESTART_SERVICE=""
             log_message "✓ Service restarted successfully" "$GREEN"
             sudo systemctl reload nginx
         else

@@ -14,6 +14,7 @@ suite_unit() {
     unit_multi_install_brokers "$repo_root"
     unit_health_check_exit_codes "$repo_root"
     unit_update_env_version "$repo_root"
+    unit_update_restart_trap "$repo_root"
     unit_backup_paths "$repo_root"
     unit_quick_setup_args "$repo_root"
     unit_clear_logs_dry_run "$repo_root"
@@ -47,6 +48,57 @@ unit_patch_self_test() {
 }
 
 # ────────────────────────────────────────────────
+
+# The EXIT trap only fires on failure paths, so it is never exercised by a
+# normal run — exactly the code that rots unnoticed. Mock systemctl, stop a
+# service, die before the restart, and assert it came back.
+unit_update_restart_trap() {
+    local rr="$1"
+    local script="$rr/oa-update.sh"
+    test_start
+    if [[ ! -f "$script" ]]; then
+        test_skip "oa-update.sh not found"
+        return
+    fi
+
+    local tmp; tmp=$(mktemp -d)
+    local state="$tmp/state"; echo active > "$state"
+    mkdir -p "$tmp/bin"
+    cat > "$tmp/bin/systemctl" <<'MOCK'
+#!/bin/bash
+case "$1 $2" in
+  "is-active --quiet") [ "$(cat "$STATE")" = active ] ;;
+  "stop "*) echo inactive > "$STATE" ;;
+  "start "*) echo active > "$STATE" ;;
+  *) : ;;
+esac
+MOCK
+    printf '#!/bin/bash\nexec "$@"\n' > "$tmp/bin/sudo"
+    chmod +x "$tmp/bin/systemctl" "$tmp/bin/sudo"
+
+    cat > "$tmp/harness.sh" <<'HARNESS'
+export PATH="$(dirname "$0")/bin:$PATH"
+UPDATE_LOG=/dev/null
+RED=; GREEN=; YELLOW=; BLUE=; NC=
+log_message(){ :; }
+eval "$(sed -n '/^PENDING_RESTART_SERVICE=""/,/^trap restore_stopped_service/p' "$1")"
+PENDING_RESTART_SERVICE=openalgo-test
+systemctl stop openalgo-test
+[ "$(cat "$STATE")" = inactive ] || { echo "mock did not stop"; exit 9; }
+exit 3
+HARNESS
+
+    local rc=0
+    STATE="$state" bash "$tmp/harness.sh" "$script" >/dev/null 2>&1 || rc=$?
+    local final; final=$(cat "$state")
+    rm -rf "$tmp"
+
+    if [[ $rc -eq 3 && "$final" == "active" ]]; then
+        test_pass "update: EXIT trap restarts a service left stopped (exit code preserved)"
+    else
+        test_fail "update: EXIT trap did not restore service (exit=$rc, state=$final)"
+    fi
+}
 
 unit_branding_self_test() {
     local rr="$1"
