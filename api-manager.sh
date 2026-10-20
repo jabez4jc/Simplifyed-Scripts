@@ -178,6 +178,15 @@ setup_admin_login() {
         return 0
     fi
 
+    # `oa install`: no questions - generate a strong password, show it at the end
+    if [ -n "${OA_NO_MENU:-}" ]; then
+        local pw
+        pw=$(python3 -c "import secrets; print(secrets.token_urlsafe(12))")
+        printf '%s\n' "$pw" | python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password --password-stdin >/dev/null
+        ADMIN_NOTE="Login: admin / $pw   (change it with: oa admin -> Change Admin Password)"
+        return 0
+    fi
+
     echo -e "${BLUE}No admin login set yet - this protects the dashboard's Factory Reset,${NC}"
     echo -e "${BLUE}Reboot Server, and other destructive actions behind a login page.${NC}"
     python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password
@@ -207,6 +216,7 @@ setup_update() {
     script_dir="$(cd "$(dirname "$0")" && pwd)"
     if [ -d "$script_dir" ]; then
         ln -sf "$script_dir/"*.sh /usr/local/bin/ 2>/dev/null
+        ln -sf "$script_dir/oa.sh" /usr/local/bin/oa 2>/dev/null
         echo -e "${GREEN}✅ Scripts linked${NC}"
     else
         echo -e "${RED}❌ Script directory not found${NC}"
@@ -266,15 +276,16 @@ EOF
     echo -e "${BLUE}   Check results: systemctl list-units --failed | grep openalgo${NC}"
     echo ""
 
-    install_api || { read -p "Press Enter to continue..."; menu_main; }
+    install_api || { back_to_menu 1; return; }
     echo ""
     setup_admin_login
     echo ""
-    setup_service || { read -p "Press Enter to continue..."; menu_main; }
+    setup_service || { back_to_menu 1; return; }
     echo ""
     setup_firewall
     echo ""
-    run_secure_admin_domain_only
+    # Optional; `oa install` leaves it for later (oa admin -> option 5)
+    [ -n "${OA_NO_MENU:-}" ] || run_secure_admin_domain_only
     echo ""
     show_status
 }
@@ -330,8 +341,16 @@ show_status() {
     echo ""
     echo -e "${YELLOW}Access the dashboard:${NC}"
     echo -e "  ${GREEN}http://$SERVER_IP:8888${NC}"
+    [ -n "${ADMIN_NOTE:-}" ] && echo -e "  ${YELLOW}$ADMIN_NOTE${NC}"
     echo ""
     
+    back_to_menu 0
+}
+
+# `api-manager.sh setup` (used by `oa install`) runs Setup / Update once and
+# exits instead of returning to the menu.
+back_to_menu() {
+    [ -n "${OA_NO_MENU:-}" ] && exit "$1"
     read -p "Press Enter to continue..."
     menu_main
 }
@@ -350,6 +369,12 @@ show_logs() {
     fi
     menu_main
 }
+
+if [ "${1:-}" = "setup" ]; then
+    OA_NO_MENU=1
+    setup_update
+    exit 0
+fi
 
 # Start the menu
 menu_main

@@ -54,7 +54,7 @@ brand_instance() {
         return 0
     fi
 
-    for a in favicon.ico apple-touch-icon.png mark-192.png home-logo.png; do
+    for a in favicon.ico favicon-16.png favicon-32.png apple-touch-icon.png mark-192.png mark-512.png home-logo.png; do
         if [ ! -f "$ASSET_DIR/$a" ]; then
             echo -e "${RED}✗ Missing branding asset: $ASSET_DIR/$a${NC}"
             FAILED=$((FAILED + 1))
@@ -71,15 +71,16 @@ from pathlib import Path
 root, brand_url, brand_name = Path(sys.argv[1]), sys.argv[2].rstrip("/"), sys.argv[3]
 dist = root / "frontend" / "dist"
 
-# Outbound destinations only. docs.openalgo.in is NOT in this map and does not
-# match any key, so documentation links stay with upstream.
+# Outbound destinations only. Social/repo links keep their path on brand_url.
 url_map = {
-    "https://www.openalgo.in": brand_url,
-    "https://openalgo.in": brand_url,
     "https://github.com/marketcalls/openalgo": brand_url,
     "https://x.com/openalgoHQ": brand_url,
     "https://www.youtube.com/@openalgo": brand_url,
 }
+# The openalgo.in HOMEPAGE becomes brand_url, but any openalgo.in page
+# (/learn, /discord, /roadmap) and docs.openalgo.in stay upstream: those are
+# OpenAlgo's documentation and community, with no simplifyed.in equivalent.
+home_link = re.compile(r"https://(?:www\.)?openalgo\.in(?![\w-]|[./][\w-])")
 
 # This overlay assumes capitalised "OpenAlgo" is ALWAYS display copy — true of
 # every occurrence in upstream today. If upstream ever uses it as a VALUE (a
@@ -128,10 +129,11 @@ brand_host = brand_url.split("://", 1)[-1]
 def rewrite(text):
     for old, new in url_map.items():
         text = text.replace(old, new)
+    text = home_link.sub(brand_url, text)
     # Bare hostnames rendered as visible link text (the footer's "www.openalgo.in",
-    # a chart annotation) are not URLs and so are missed by the map above. The
-    # lookbehind spares "docs.openalgo.in", which stays with upstream by policy.
-    text = re.sub(r"(?<![\w.])(?:www\.)?openalgo\.in", brand_host, text)
+    # a chart annotation) are not URLs and so are missed above. The lookarounds
+    # spare docs.openalgo.in, //openalgo.in/... URLs and "openalgo.in/<path>".
+    text = re.sub(r"(?<![\w./])(?:www\.)?openalgo\.in(?![\w-]|[./][\w-])", brand_host, text)
     # Capitalised "OpenAlgo" is display copy everywhere in this app. Lowercase
     # `openalgo` is left alone: it is the SDK package name and env-var prefix.
     text = text.replace("OpenAlgo", brand_name)
@@ -221,13 +223,20 @@ for path in sorted((dist / "assets").glob("Home-*.js")):
 
 index = dist / "index.html"
 text = rewrite(index.read_text(encoding="utf-8"))
-text = text.replace(
-    f'content="{brand_name} - Open Source Algorithmic Trading Platform"',
-    f'content="{brand_name} - Algorithmic Trading Platform"')
+text = re.sub(r'(<meta name="description" content=")' + re.escape(brand_name) + r' - [^"]*"',
+              r'\g<1>' + brand_name + ' - Algorithmic Trading Platform"', text)
 # Browsers cache /favicon.ico hard. A stable query string forces one refetch.
 if "?v=sfy1" not in text:
     text = text.replace('href="/favicon.ico"', 'href="/favicon.ico?v=sfy1"')
     text = text.replace('href="/apple-touch-icon.png"', 'href="/apple-touch-icon.png?v=sfy1"')
+# Sized favicons + PWA manifest. Flask serves only three root-level files, so
+# these live under /images/, which serve_images() exposes from dist/images.
+if "/images/favicon-32.png" not in text:
+    text = text.replace('<link rel="apple-touch-icon"',
+        '<link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16.png?v=sfy1" />\n'
+        '    <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png?v=sfy1" />\n'
+        '    <link rel="manifest" href="/images/site.webmanifest?v=sfy1" />\n'
+        '    <link rel="apple-touch-icon"', 1)
 # The grayscale lockup is dark ink; invert it on dark backgrounds. Tailwind's
 # dark:invert utility is not in the built CSS, so ship the rule inline.
 if "sfy-brand-style" not in text:
@@ -271,6 +280,20 @@ PY
     install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/images/android-chrome-192x192.png"
     install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/images/simplifyed-glyph.png"
     install -Dm0644 "$ASSET_DIR/home-logo.png"        "$dist/images/simplifyed-home-logo.png"
+    install -Dm0644 "$ASSET_DIR/favicon-16.png"       "$dist/images/favicon-16.png"
+    install -Dm0644 "$ASSET_DIR/favicon-32.png"       "$dist/images/favicon-32.png"
+    install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/images/favicon-192.png"
+    install -Dm0644 "$ASSET_DIR/mark-512.png"         "$dist/images/favicon-512.png"
+    cat > "$dist/images/site.webmanifest" <<EOF
+{
+  "name": "$BRAND_NAME",
+  "short_name": "$BRAND_NAME",
+  "icons": [
+    {"src": "/images/favicon-192.png?v=sfy1", "sizes": "192x192", "type": "image/png"},
+    {"src": "/images/favicon-512.png?v=sfy1", "sizes": "512x512", "type": "image/png"}
+  ]
+}
+EOF
 
     [ "$mark_it" = "mark" ] && touch "$dir/$MARKER_FILE"
     chown -R www-data:www-data "$dist" 2>/dev/null
@@ -289,7 +312,7 @@ self_test() {
 <!doctype html><html><head>
 <link rel="icon" href="/favicon.ico" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-<meta name="description" content="OpenAlgo - Open Source Algorithmic Trading Platform" />
+<meta name="description" content="OpenAlgo - Open Source, Self-Hosted Trading Platform for Algo, Options and Discretionary Traders" />
 <title>OpenAlgo</title>
 </head><body></body></html>
 EOF
@@ -298,6 +321,8 @@ EOF
 EOF
     cat > "$tmp/frontend/dist/assets/Misc-def456.js" <<'EOF'
 a=`https://openalgo.in/discord`;b=`https://docs.openalgo.in/getting-started`;
+l=`https://www.openalgo.in/learn`;r=`https://openalgo.in/roadmap`;h=`https://openalgo.in`;
+gh=`https://github.com/marketcalls/openalgo`;
 w=(0,B.jsx)(`a`,{href:`https://www.openalgo.in`,children:`www.openalgo.in`});
 v=(0,B.jsx)(`a`,{href:`https://docs.openalgo.in`,children:`docs.openalgo.in`});
 p={text:`openalgo.in`,showarrow:!1};
@@ -326,8 +351,16 @@ EOF
     check        "title rebranded"                  "<title>Simplifyed</title>" "$idx"
     check        "description rebranded"            "Simplifyed - Algorithmic Trading Platform" "$idx"
     check        "favicon cache-buster added"       "/favicon.ico?v=sfy1" "$idx"
+    check        "sized favicon linked"             "/images/favicon-32.png?v=sfy1" "$idx"
+    check        "manifest linked"                  "/images/site.webmanifest?v=sfy1" "$idx"
+    check        "manifest written"                 "/images/favicon-512.png" "$tmp/frontend/dist/images/site.webmanifest"
     check        "dark-mode logo style injected"    "sfy-brand-style" "$idx"
-    check        "outbound link rebranded, path kept" "https://simplifyed.in/discord" "$misc"
+    check        "homepage link rebranded"          "h=\`https://simplifyed.in\`" "$misc"
+    check        "repo link rebranded"              "gh=\`https://simplifyed.in\`" "$misc"
+    check        "openalgo.in/discord preserved"    "https://openalgo.in/discord" "$misc"
+    check        "openalgo.in/learn preserved"      "https://www.openalgo.in/learn" "$misc"
+    check        "openalgo.in/roadmap preserved"    "https://openalgo.in/roadmap" "$misc"
+    check_absent "no docs.simplifyed.in"            "docs.simplifyed" "$misc"
     check        "docs.openalgo.in preserved"       "https://docs.openalgo.in/getting-started" "$misc"
     check        "footer link label rebranded"      "children:\`simplifyed.in\`" "$misc"
     check        "bare hostname in chart rebranded" "text:\`simplifyed.in\`" "$misc"

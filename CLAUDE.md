@@ -8,6 +8,14 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 ## Architecture
 
+**Entry points (what operators run):**
+
+- **install.sh** - one-line bootstrap (`curl -fsSL .../install.sh | sudo bash`). Clones/updates this repo at `/root/Simplifyed-Scripts` (the first path `openalgo-restart-api.py` looks in), links `/usr/local/bin/oa`, then runs `oa install` with stdin from `/dev/tty`. On a server that already has instances it only links `oa`.
+- **oa.sh** (`oa`) - thin dispatcher over the scripts below; no logic of its own beyond defaults. `oa install`/`oa add` = swap if none (4 GB) + `OA_DEFAULTS=1 multi-install.sh` (asks only per-instance details) + `api-manager.sh setup` if the dashboard isn't running. `oa update` self-updates the repo (`git pull --ff-only`, then re-execs), refreshes the dashboard copy in /usr/local/bin, and runs `oa-update.sh` with `OA_UPDATE_TAG` = newest GitHub release (`--main` for tip of main). The individual scripts stay callable directly - Fleet Manager and the dashboard use them.
+- **oa-auto-update.sh** - opt-in per instance via an untracked `.simplifyed-autoupdate` marker (`daily` or `sunday`). systemd timer `oa-auto-update.timer` at 03:30 IST, `Persistent=false` (a missed run must never fire at boot mid-session); `run` also refuses outside 03:00-06:00 IST without `--force`. Installs the newest GitHub **Release** that is >= `SOAK_HOURS` (72) old, never moves an instance backwards (`merge-base --is-ancestor`), updates instances one at a time, auto-rolls back a failure and stops the rollout. Telegram notices (config `/etc/simplifyed/auto-update.conf`, 600; token passed to curl via `-K -`, never argv): once per new release (with install dates) and after each run that did something. `--self-test` covers release selection and scheduling. Crypto instances trade 24/7: anything that restarts instances unattended must stay opt-in.
+
+**oa-update.sh contract used by the above:** `OA_UPDATE_TAG=<tag>` targets a release instead of `origin/<default>`; the pre-update backup (`/tmp/openalgo_backup_<inst>_<ts>`) records `COMMIT`; `rollback` restores code (`reset --hard COMMIT`), dependencies, overlays, `.env` and databases, then health-checks; the exit status is non-zero on any failure.
+
 **Core Components:**
 
 1. **quick-setup.sh** - Single instance setup script
@@ -146,10 +154,7 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 ## Common Tasks
 
-**Add support for a new broker:**
-1. Add broker name to `valid_brokers` variable in multi-install.sh
-2. If XTS-based, add to `xts_brokers` variable
-3. Test broker credential validation
+**Add support for a new broker:** nothing to do. The broker list comes from upstream's `.sample.env` (`VALID_BROKERS`): installers fetch it from GitHub for the selected branch before validating (the hardcoded `VALID_BROKERS` in multi-install.sh/quick-setup.sh is only an offline fallback), and `oa-update.sh` re-syncs each instance's `.env` from the freshly pulled `.sample.env`. XTS brokers (which also need market data credentials) are read from https://docs.openalgo.in/connect-brokers/brokers.md - any broker whose display name there contains "XTS" - and added to the built-in `XTS_BROKERS` list, which acts as a floor (the page does not label `ibulls`, whose plugin still reads `BROKER_API_KEY_MARKET`). Offline, the built-in list is used.
 
 **Debug installation failures:**
 1. Check latest log: `tail -f logs/install_multi_*.log`
@@ -177,7 +182,17 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 **Modify port allocation strategy:**
 Update the port calculation formulas in the instance loop (lines 272-274 in multi-install.sh)
 
+## Web server: gthread via upstream's launcher
+
+Since OpenAlgo 2.0.2.7, systemd starts gunicorn through upstream's `install/openalgo-gunicorn.sh`, which reads `OPENALGO_WORKER_CLASS` from `.env` at every start (gthread: 64 threads, `install/lib/gunicorn_hooks.py` drain on stop, keep-alive 75). Upstream defaults to eventlet; this fleet runs gthread.
+
+- **Installers** write `OPENALGO_WORKER_CLASS = 'gthread'` to `.env` and an ExecStart that calls the launcher (with an `# OPENALGO_LAUNCHER=1` marker that upstream's `switch-worker.sh` recognises). gunicorn/eventlet pins come from the instance's `requirements-nginx.txt` (currently `gunicorn>=25.0,<26`, `eventlet==0.41.2`).
+- **oa-update.sh** adds `OPENALGO_WORKER_CLASS = 'gthread'` when `.env` doesn't choose (an explicit `'eventlet'` is respected), then, after its own health gate, runs upstream's `install/switch-worker.sh --service <svc> --yes --force`. That script backs up the unit, rewrites ExecStart, restarts, checks page + Socket.IO + running worker class, and restores the old unit itself on failure. It also fixes old nginx site configs once (adds the `/socket.io/` upgrade block, sends `Connection ""` on `/` — upstream issue #1807), restoring the original if `nginx -t` fails.
+- **Switch one instance back:** set `OPENALGO_WORKER_CLASS = 'eventlet'` in its `.env` and restart. oa-update will not override it, and `oa-patch-known-issues.sh` re-applies the WhatsApp mitigation below for it.
+
 ## Known Upstream Issue: WhatsApp auto-start wedges the eventlet worker
+
+**Applies to eventlet only.** `oa-patch-known-issues.sh` skips instances whose `.env` selects gthread, so WhatsApp auto-reconnects there.
 
 **Symptom:** instance returns nginx 504 while `systemctl is-active` says `active` and the process is running. `oa-health-check.sh` reports "Socket accepts but does not respond - worker wedged".
 
@@ -195,9 +210,9 @@ It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before f
 
 **Why it patches `dist`, not `src`:** OpenAlgo serves a pre-built React app. `blueprints/react_app.py` sets `FRONTEND_DIST = frontend/dist` and serves every route (`/`, `/assets/*`, `/images/*`, `/favicon.ico`, `/logo.png`, `/apple-touch-icon.png`) out of it, and `frontend/dist` is committed upstream. Editing `frontend/src` would require Node 24 + `npm ci` + `vite build` on every server on every update — hundreds of MB per instance and a real OOM risk on 2 GB boxes. So the overlay rewrites the built chunks directly. Nginx proxies everything to gunicorn, so nothing bypasses Flask and no static path escapes the overlay.
 
-**What it changes:** display copy (`OpenAlgo` → `Simplifyed`), outbound links (openalgo.in / GitHub / X / YouTube → `$BRAND_URL`, paths preserved), bare hostnames rendered as visible text (the footer's `www.openalgo.in` label, a chart annotation — these are not URLs, so the link map misses them), the logo/favicon/apple-touch/chart-watermark image files, the Home page header lockup, the `<title>`/description in `dist/index.html`, and the terminal banner strings in `app.py`.
+**What it changes:** display copy (`OpenAlgo` → `Simplifyed`), outbound links (the openalgo.in **homepage**, GitHub / X / YouTube → `$BRAND_URL`), bare hostnames rendered as visible text (the footer's `www.openalgo.in` label, a chart annotation — these are not URLs, so the link map misses them), the logo/favicon/apple-touch/chart-watermark image files, 16/32 px favicons and a `site.webmanifest` (under `/images/`, the only non-root static path Flask serves), the Home page header lockup, the `<title>`/description in `dist/index.html`, and the terminal banner strings in `app.py`.
 
-**What it deliberately does NOT change:** `docs.openalgo.in` links, the lowercase `openalgo` SDK package name, `OPENALGO_*` env vars, service names, DB paths, API fields, browser storage keys. Only capitalised `OpenAlgo` is treated as display copy — verified against upstream `main`, where all 137 occurrences in `frontend/src` are copy or comments, none are values.
+**What it deliberately does NOT change:** `docs.openalgo.in` links and every `openalgo.in/<path>` page (`/learn`, `/discord`, `/roadmap` — OpenAlgo's docs and community, with no simplifyed.in equivalent; rewriting them sent users to dead simplifyed.in pages), the lowercase `openalgo` SDK package name, `OPENALGO_*` env vars, service names, DB paths, API fields, browser storage keys. Only capitalised `OpenAlgo` is treated as display copy — verified against upstream `main`, where all 137 occurrences in `frontend/src` are copy or comments, none are values.
 
 **Compressed siblings:** `serve_assets()` prefers `<asset>.br` / `.gz` when the client advertises the encoding. A stale sibling would ship pre-branding bytes, so every rewritten chunk gets its `.gz` regenerated and its `.br` rebuilt (`brotli` CLI, installed by both installers) or removed — Flask then falls back to `.gz`, then raw.
 
@@ -276,7 +291,7 @@ See `AGENTS.md` for the complete fix loop workflow. In brief:
 ## External Dependencies
 
 - **OpenAlgo repository**: Cloned from https://github.com/marketcalls/openalgo.git
-- **Python packages**: uv (installed via snap), gunicorn, eventlet, synced via `uv sync`
+- **Python packages**: uv (installed via snap), synced via `uv sync`; gunicorn + eventlet installed separately from the pins in `requirements-nginx.txt` (`uv sync` prunes them)
 - **System tools**: nginx, certbot, systemd, timedatectl, sed, awk, grep, curl, ss, df, du
 - **Optional tools**: gpg (for backup encryption), git (for updates)
 

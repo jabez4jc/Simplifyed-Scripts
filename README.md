@@ -6,7 +6,69 @@ A collection of simplified bash scripts for managing OpenAlgo trading platform i
 
 These scripts automate the installation, configuration, and maintenance of one or more OpenAlgo instances running on a single server. Each instance can be configured for a different broker and domain, with independent Flask ports, WebSocket endpoints, and databases.
 
-## Scripts
+## Installation Requirements
+
+- Ubuntu 20.04 LTS or later (Debian-based)
+- Root/sudo access
+- Domain names with DNS pointing to your server
+- Broker API credentials for each instance
+
+## Quick Start
+
+On a fresh Ubuntu server (DNS for your domains already pointing at it):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jabez4jc/Simplifyed-Scripts/main/install.sh | sudo bash
+```
+
+It installs the scripts at `/root/Simplifyed-Scripts`, adds the `oa` command, sets
+up 4 GB swap (if none), the IST timezone, the admin dashboard on port 8888, and
+OpenAlgo with Simplifyed branding.
+
+It asks only what it cannot guess: how many instances (Enter = 1), then the
+domain, broker, API key and secret for each (plus the market data key/secret for
+XTS brokers). The dashboard's admin password is generated and shown once at the
+end; change it, or give the dashboard its own domain, later with `oa admin`.
+
+Options: `... | sudo bash -s -- --no-branding --swap 8`
+
+On a server that already has instances, the same line just adds the `oa` command.
+
+## Everyday Commands
+
+```bash
+oa add                     # add more instances
+oa update                  # update scripts, then every instance to the newest OpenAlgo release
+oa update openalgo2        # just one instance (--main: tip of main instead of a release)
+oa status                  # health check of every instance
+oa restart                 # restart instances
+oa rollback BACKUP INST    # undo an update (code, dependencies, .env, databases)
+oa backup | oa remove | oa brand | oa swap | oa admin
+oa help
+```
+
+## Automatic Updates (opt-in)
+
+New OpenAlgo **releases** (not every commit) can install themselves at 03:30 IST,
+once a release has been public for 72 hours:
+
+```bash
+oa auto-update enable all                  # equity/F&O/MCX instances: daily at 03:30 IST
+oa auto-update enable openalgo3 --sundays  # crypto instances: Sundays at 03:30 IST only
+oa auto-update telegram                    # release notices + results on Telegram
+oa auto-update status
+```
+
+Instances update one at a time. A failed update is rolled back automatically and
+the rollout stops. A Telegram notice goes out when a release is first published
+(with its install date and release notes - check them for behaviour changes),
+and after each run. Off unless enabled; `oa auto-update disable INSTANCE` turns
+it off.
+
+The 8 AM IST daily restart is separate and also opt-in (`oa daily-restart`) -
+do not enable it on crypto instances.
+
+## Scripts (reference)
 
 ### `quick-setup.sh`
 **Single instance quick setup with 4GB swap**
@@ -579,71 +641,6 @@ sudo ./oa-update.sh rollback BACKUP_DIR openalgo1  # Rollback from backup
 ```
 
 **Update log:** Saved to `/tmp/update_TIMESTAMP.log`
-
-## Installation Requirements
-
-- Ubuntu 20.04 LTS or later (Debian-based)
-- Root/sudo access
-- Domain names with DNS pointing to your server
-- Broker API credentials for each instance
-
-## Quick Start (Single Instance)
-
-For a simple single instance setup with 4GB swap, use the quick-setup script:
-
-```bash
-sudo apt update && sudo apt install -y git
-rm -rf Simplifyed-Scripts
-git clone https://github.com/jabez4jc/Simplifyed-Scripts
-cd Simplifyed-Scripts
-chmod +x quick-setup.sh
-sudo ./quick-setup.sh
-```
-
-This will:
-- Update system packages
-- Configure 4GB swap
-- Clone OpenAlgo repository
-- Install all dependencies
-- Set up SSL certificate (Let's Encrypt)
-- Create systemd service
-- Configure Nginx
-- Configure firewall
-
-## Standard Installation Steps (Multiple Instances)
-
-1. **System preparation:**
-   ```bash
-   sudo apt update && sudo apt install -y git nano
-   sudo apt upgrade -y
-   rm -rf Simplifyed-Scripts
-   git clone https://github.com/jabez4jc/Simplifyed-Scripts
-   cd Simplifyed-Scripts
-   ```
-
-2. **Make all scripts executable:**
-   ```bash
-   chmod +x make-executable.sh
-   sudo ./make-executable.sh
-   ```
-   This will find and make all `.sh` scripts executable in the repository.
-
-3. **Configure swap:**
-   ```bash
-   sudo ./update_swap_2gb.sh
-   ```
-   Or use custom size:
-   ```bash
-   sudo ./oa-configure-swap.sh
-   ```
-
-4. **Install OpenAlgo instances:**
-   ```bash
-   sudo ./multi-install.sh
-   ```
-   - Select number of instances
-   - Provide domain, broker, and credentials for each
-   - Script handles SSL, Nginx, and systemd services
 
 ## Instance Management
 

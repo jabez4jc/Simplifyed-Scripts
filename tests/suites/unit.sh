@@ -11,6 +11,7 @@ suite_unit() {
 
     unit_patch_self_test "$repo_root"
     unit_branding_self_test "$repo_root"
+    unit_auto_update_self_test "$repo_root"
     unit_multi_install_brokers "$repo_root"
     unit_health_check_exit_codes "$repo_root"
     unit_update_env_version "$repo_root"
@@ -118,6 +119,23 @@ unit_branding_self_test() {
 }
 
 # ────────────────────────────────────────────────
+
+unit_auto_update_self_test() {
+    local rr="$1"
+    local script="$rr/oa-auto-update.sh"
+    test_start
+    if [[ ! -f "$script" ]]; then
+        test_skip "oa-auto-update.sh not found"
+        return
+    fi
+    local output rc=0
+    output=$(run_or_skip 30 "$script" --self-test) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        test_pass "auto-update --self-test: exited 0"
+    else
+        test_fail "auto-update --self-test: exit $rc — $(echo "$output" | grep '✗' | tr '\n' ' ')"
+    fi
+}
 
 unit_multi_install_brokers() {
     local rr="$1"

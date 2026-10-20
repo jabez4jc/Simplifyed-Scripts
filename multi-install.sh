@@ -21,6 +21,10 @@
 #
 # Any field left unset/blank still fails the same validation the
 # interactive prompts use, it just exits instead of re-prompting.
+#
+# OA_DEFAULTS=1 (set by `oa install` / `oa add`): interactive, but only asks
+# for the per-instance details. Timezone becomes IST, branch is $BRANCH or
+# main, branding is $BRANDING or y.
 CONFIG_FILE=""
 if [[ "$1" == "--config" ]]; then
     CONFIG_FILE="$2"
@@ -87,6 +91,35 @@ generate_hex() {
     python3 -c "import secrets; print(secrets.token_hex(32))"
 }
 
+# Broker list comes from upstream's .sample.env (the source of truth), fetched
+# before the clone because brokers are validated up front. The list above is
+# only the fallback for when GitHub cannot be reached.
+fetch_valid_brokers() {
+    local list
+    list=$(curl -fsSL -m 15 "https://raw.githubusercontent.com/marketcalls/openalgo/${1:-main}/.sample.env" 2>/dev/null \
+        | grep -E "^VALID_BROKERS *=" | head -1 | cut -d= -f2- | tr -d "' \"\r")
+    if [[ "$list" =~ ^[a-z0-9_,]+$ ]]; then
+        VALID_BROKERS="$list"
+    else
+        log_message "⚠ Could not fetch the broker list from GitHub - using the built-in list" "$YELLOW"
+    fi
+}
+
+# XTS brokers also need market data credentials. The OpenAlgo docs broker list
+# (always current) labels them "XTS"; anything found there is added to the list
+# above. That list is a floor, not replaced: the page omits the label for
+# ibulls, whose plugin still reads BROKER_API_KEY_MARKET.
+fetch_xts_brokers() {
+    local found
+    found=$(curl -fsSL -m 15 "https://docs.openalgo.in/connect-brokers/brokers.md" 2>/dev/null | tr -d '\r' \
+        | grep -E '^[0-9]+\. \[[^]]*XTS[^]]*\]' | grep -oE '\(`[a-z0-9_]+`\)$' | tr -d '()`' | paste -sd, -)
+    if [ -n "$found" ]; then
+        XTS_BROKERS=$(printf '%s\n' ${XTS_BROKERS//,/ } ${found//,/ } | sort -u | paste -sd, -)
+    else
+        log_message "⚠ Could not read the XTS broker list from docs.openalgo.in - using the built-in list" "$YELLOW"
+    fi
+}
+
 # Function to validate broker name
 validate_broker() {
     local broker=$1
@@ -121,6 +154,8 @@ check_timezone() {
     log_message "Server is not set to IST timezone." "$YELLOW"
     if [ "$NONINTERACTIVE" = true ]; then
         change_tz="${CHANGE_TZ:-n}"
+    elif [ "${OA_DEFAULTS:-}" = 1 ]; then
+        change_tz=y
     else
         read -p "Would you like to change the timezone to IST? (y/n): " change_tz
     fi
@@ -150,7 +185,8 @@ if [ "$NONINTERACTIVE" = true ]; then
     fi
 else
     while true; do
-        read -p "How many OpenAlgo instances do you want to set up? " INSTANCES
+        read -p "How many OpenAlgo instances do you want to set up? [1]: " INSTANCES
+        INSTANCES="${INSTANCES:-1}"
         if [[ "$INSTANCES" =~ ^[0-9]+$ ]] && [ "$INSTANCES" -gt 0 ]; then
             break
         else
@@ -175,7 +211,7 @@ SELECTED_BRANCH="main"
 BRANDING="${BRANDING:-y}"
 
 select_branding() {
-    if [ "$NONINTERACTIVE" = true ]; then
+    if [ "$NONINTERACTIVE" = true ] || [ "${OA_DEFAULTS:-}" = 1 ]; then
         return
     fi
     local reply
@@ -191,7 +227,7 @@ select_branch() {
     local branch_input
     local -a branches
 
-    if [ "$NONINTERACTIVE" = true ]; then
+    if [ "$NONINTERACTIVE" = true ] || [ "${OA_DEFAULTS:-}" = 1 ]; then
         SELECTED_BRANCH="${BRANCH:-main}"
         log_message "Using branch: $SELECTED_BRANCH" "$GREEN"
         return
@@ -261,6 +297,8 @@ log_message "Detected $EXISTING_INSTANCES existing OpenAlgo instance(s) under $B
 # Select git branch to install
 select_branch
 select_branding
+fetch_valid_brokers "$SELECTED_BRANCH"
+fetch_xts_brokers
 
 # Arrays to store instance configurations
 declare -a DOMAINS
@@ -482,8 +520,11 @@ for ((n=1; n<=INSTANCES; n++)); do
     sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$VENV_PATH\" uv sync"
     check_status "Failed to sync dependencies"
 
-    # Ensure gunicorn
-    sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$VENV_PATH/bin/python\" \"gunicorn<23\""
+    # gunicorn/eventlet are not project deps (uv sync prunes them); take
+    # upstream's production pins from requirements-nginx.txt
+    WSGI_PINS=$(grep -oE '^(gunicorn|eventlet)[=<>~!][^[:space:]#]*' "$INSTANCE_DIR/requirements-nginx.txt" 2>/dev/null | sed "s/.*/'&'/" | tr '\n' ' ')
+    [ -n "$WSGI_PINS" ] || WSGI_PINS="'gunicorn>=25.0,<26' 'eventlet==0.41.2'"
+    sudo bash -c "cd $INSTANCE_DIR && uv pip install --python \"$VENV_PATH/bin/python\" $WSGI_PINS"
     check_status "Failed to install gunicorn"
     
     # Fix permissions for venv
@@ -523,9 +564,8 @@ for ((n=1; n<=INSTANCES; n++)); do
 
     # 1. Replace broker placeholder first
     sudo sed -i "s|<broker>|$BROKER|g" "$ENV_FILE"
-    if sudo grep -q -E "^VALID_BROKERS[[:space:]]*=" "$ENV_FILE"; then
-        sudo sed -i -E "s|^VALID_BROKERS[[:space:]]*=.*|VALID_BROKERS = '$VALID_BROKERS'|g" "$ENV_FILE"
-    else
+    # The cloned template already carries upstream's VALID_BROKERS
+    if ! sudo grep -q -E "^VALID_BROKERS[[:space:]]*=" "$ENV_FILE"; then
         echo "VALID_BROKERS = '$VALID_BROKERS'" | sudo tee -a "$ENV_FILE" > /dev/null
     fi
 
@@ -552,8 +592,15 @@ for ((n=1; n<=INSTANCES; n++)); do
     sudo sed -i "s|YOUR_BROKER_API_SECRET|$API_SECRET|g" "$ENV_FILE"
 
     # 7. Update security keys
-    sudo sed -i "s|3daa0403ce2501ee7432b75bf100048e3cf510d63d2754f952e93d88bf07ea84|$APP_KEY|g" "$ENV_FILE"
-    sudo sed -i "s|a25d94718479b170c16278e321ea6c989358bf499a658fd20c90033cef8ce772|$API_KEY_PEPPER|g" "$ENV_FILE"
+    # Matched by key, not value: upstream's template placeholders change over time
+    sudo sed -i -E "s|^APP_KEY *=.*|APP_KEY = '$APP_KEY'|" "$ENV_FILE"
+    sudo sed -i -E "s|^API_KEY_PEPPER *=.*|API_KEY_PEPPER = '$API_KEY_PEPPER'|" "$ENV_FILE"
+
+    # Behind nginx: trust X-Forwarded-For so IP-based features see real clients
+    sudo sed -i "s|TRUST_PROXY_HEADERS = 'FALSE'|TRUST_PROXY_HEADERS = 'TRUE'|g" "$ENV_FILE"
+
+    # gthread web server; read by install/openalgo-gunicorn.sh at every start
+    echo "OPENALGO_WORKER_CLASS = 'gthread'" | sudo tee -a "$ENV_FILE" > /dev/null
 
     # 8. Update database paths (unique per instance)
     sudo sed -i "s|DATABASE_URL = '.*'|DATABASE_URL = '$DB_PATH'|g" "$ENV_FILE"
@@ -709,6 +756,21 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
+    # Socket.IO (Flask-SocketIO real-time events)
+    location /socket.io/ {
+        proxy_pass http://unix:$SOCKET_FILE;
+        proxy_http_version 1.1;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
     # Main app via Unix socket
     location / {
         proxy_pass http://unix:$SOCKET_FILE;
@@ -719,8 +781,10 @@ server {
         proxy_connect_timeout 300s;
         proxy_send_timeout 300s;
 
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        # Plain HTTP only: /ws, /ws/ and /socket.io/ have their own blocks.
+        # "Connection: upgrade" on ordinary requests breaks HTTP/1.1 keep-alive
+        # to gunicorn (truncated assets / 5xx, upstream issue #1807).
+        proxy_set_header Connection "";
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -781,14 +845,9 @@ Environment="OMP_NUM_THREADS=2"
 Environment="MKL_NUM_THREADS=2"
 Environment="NUMEXPR_NUM_THREADS=2"
 Environment="NUMBA_NUM_THREADS=2"
-ExecStart=/bin/bash -c 'source $VENV_PATH/bin/activate && $VENV_PATH/bin/gunicorn \\
-    --worker-class gthread \\
-    -w 1 \\
-    --threads 4 \\
-    --timeout 120 \\
-    --bind unix:$SOCKET_FILE \\
-    --log-level info \\
-    app:app'
+# OPENALGO_LAUNCHER=1 started through install/openalgo-gunicorn.sh, which reads
+# OPENALGO_WORKER_CLASS from .env (gthread: 64 threads, drain on stop).
+ExecStart=/bin/bash $INSTANCE_DIR/install/openalgo-gunicorn.sh --venv $VENV_PATH --bind unix:$SOCKET_FILE --proxy-mode subprocess --log-level info --timeout 300
 Restart=always
 RestartSec=5
 TimeoutSec=300

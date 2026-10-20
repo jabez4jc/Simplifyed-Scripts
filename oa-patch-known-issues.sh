@@ -90,6 +90,13 @@ apply_to_instance() {
         echo -e "${YELLOW}⚠ $name: app.py not found, skipping${NC}"; return 0
     fi
 
+    # Patch 1 is an eventlet-hub bug. Under gthread the auto-start is harmless
+    # and is what keeps WhatsApp connected across restarts, so leave app.py be.
+    if sudo grep -qE "^[[:space:]]*(export[[:space:]]+)?OPENALGO_WORKER_CLASS[[:space:]]*=[[:space:]]*['\"]?gthread" "$instance_dir/.env" 2>/dev/null; then
+        echo -e "${BLUE}· $name: gthread worker - eventlet-only mitigations not needed${NC}"
+        SKIPPED=$((SKIPPED + 1)); return 0
+    fi
+
     local backup="$app_py.oa-patch.bak"
     sudo cp "$app_py" "$backup"
 

@@ -11,7 +11,6 @@ NC='\033[0m' # No Color
 BASE_DIR="/var/python/openalgo-flask"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 UPDATE_LOG="/tmp/update_${TIMESTAMP}.log"
-SUPPORTED_BROKERS="fivepaisa,fivepaisaxts,aliceblue,angel,arrow,compositedge,dhan,dhan_sandbox,definedge,deltaexchange,firstock,flattrade,fyers,groww,ibulls,iifl,iiflcapital,indmoney,jainamxts,kotak,motilal,mstock,nubra,paytm,pocketful,rmoney,samco,shoonya,tradejini,upstox,wisdom,zebu,zerodha"
 
 # Function to log messages
 log_message() {
@@ -118,49 +117,176 @@ restore_stopped_service() {
 
 trap restore_stopped_service EXIT INT TERM
 
-# gunicorn is NOT a project dependency — the installers add it separately, so
-# `uv sync` prunes it out of the venv. ExecStart points at venv/bin/gunicorn, so
-# a pruned venv leaves the service unable to start at all (nginx then 502s).
-# Install when missing, downgrade when >=23, leave alone otherwise.
+# gunicorn and eventlet are NOT project dependencies — the installers add them
+# separately, so `uv sync` prunes them out of the venv and the service cannot
+# start at all (nginx then 502s). (Re)install upstream's production pins from
+# requirements-nginx.txt when either is missing or gunicorn predates 25.
+# eventlet stays installed so OPENALGO_WORKER_CLASS = 'eventlet' still works.
 ensure_gunicorn() {
-    local venv_path="$1"
-    local gunicorn_ver gmajor
+    local venv_path="$1" gunicorn_ver pins
 
     gunicorn_ver=$("$venv_path/bin/gunicorn" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-
-    if [ -z "$gunicorn_ver" ]; then
-        log_message "⚠ gunicorn missing from venv (pruned by uv sync). Reinstalling..." "$YELLOW"
-        sudo bash -c "uv pip install --python \"$venv_path/bin/python\" \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
-        if [ -x "$venv_path/bin/gunicorn" ]; then
-            log_message "✓ gunicorn reinstalled" "$GREEN"
-        else
-            log_message "❌ gunicorn still missing — the service will NOT start" "$RED"
-            return 1
-        fi
+    if [ -n "$gunicorn_ver" ] && [ "${gunicorn_ver%%.*}" -ge 25 ] \
+        && "$venv_path/bin/python" -c "import eventlet" >/dev/null 2>&1; then
+        log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
         return 0
     fi
 
-    gmajor=$(echo "$gunicorn_ver" | cut -d. -f1)
-    if [ "$gmajor" -ge 23 ]; then
-        log_message "⚠ gunicorn $gunicorn_ver >=23 detected. Downgrading (no-deps)..." "$YELLOW"
-        sudo bash -c "$venv_path/bin/pip install -q --no-deps \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
-        log_message "✓ gunicorn downgraded" "$GREEN"
+    pins=$(grep -oE '^(gunicorn|eventlet)[=<>~!][^[:space:]#]*' "$(dirname "$venv_path")/requirements-nginx.txt" 2>/dev/null | sed "s/.*/'&'/" | tr '\n' ' ')
+    [ -n "$pins" ] || pins="'gunicorn>=25.0,<26' 'eventlet==0.41.2'"
+    log_message "⚠ gunicorn ${gunicorn_ver:-missing} / eventlet not as pinned. Installing $pins..." "$YELLOW"
+    sudo bash -c "uv pip install --python \"$venv_path/bin/python\" $pins" 2>&1 | tee -a "$UPDATE_LOG"
+    if [ -x "$venv_path/bin/gunicorn" ]; then
+        log_message "✓ gunicorn installed" "$GREEN"
     else
-        log_message "✓ gunicorn $gunicorn_ver (OK)" "$GREEN"
+        log_message "❌ gunicorn still missing — the service will NOT start" "$RED"
+        return 1
     fi
     return 0
 }
 
-# The eventlet worker class is only needed until the gthread migration runs, but
-# `uv sync` can prune eventlet while the service file still asks for it — same
-# unstartable-service failure as above.
-ensure_worker_class_deps() {
-    local venv_path="$1" service_file="$2"
-    [ -f "$service_file" ] || return 0
-    sudo grep -q -- '--worker-class eventlet' "$service_file" || return 0
-    if ! "$venv_path/bin/python" -c "import eventlet" >/dev/null 2>&1; then
-        log_message "⚠ Service uses eventlet but it was pruned from the venv. Reinstalling..." "$YELLOW"
-        sudo bash -c "uv pip install --python \"$venv_path/bin/python\" eventlet" 2>&1 | tee -a "$UPDATE_LOG"
+# Upstream's launcher (install/openalgo-gunicorn.sh, OpenAlgo 2.0.2.7+) picks
+# the web server from OPENALGO_WORKER_CLASS in .env and defaults to eventlet.
+# This fleet runs gthread, so add it when .env does not choose; an explicit
+# 'eventlet' is left alone. Runs before the known-issue patcher, which keys on it.
+ensure_worker_class_env() {
+    local env_file="$1/.env"
+    sudo test -f "$env_file" || return 0
+    sudo grep -qE '^[[:space:]]*(export[[:space:]]+)?OPENALGO_WORKER_CLASS[[:space:]]*=' "$env_file" && return 0
+    echo "OPENALGO_WORKER_CLASS = 'gthread'" | sudo tee -a "$env_file" > /dev/null
+    log_message "  ✓ OPENALGO_WORKER_CLASS = 'gthread' added to .env" "$GREEN"
+}
+
+# Older installers sent "Connection: upgrade" on every request and had no
+# /socket.io/ block. Under gthread's HTTP/1.1 keep-alive that shows up as
+# truncated assets and 5xx (upstream issue #1807). Bring such a site config in
+# line with the installers once; put the old file back if nginx -t rejects it.
+fix_nginx_proxy_headers() {
+    local instance_dir="$1" domain conf
+    domain=$(sudo grep -E '^DOMAIN *=' "$instance_dir/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\" \r")
+    conf="/etc/nginx/sites-available/$domain"
+    { [ -n "$domain" ] && sudo test -f "$conf"; } || return 0
+    sudo grep -q 'location /socket.io/' "$conf" && return 0
+
+    sudo cp "$conf" "$conf.pre-gthread"
+    sudo python3 - "$conf" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+s = open(path).read()
+for m in re.finditer(r'^([ \t]*)location / \{\n(.*?)^\1\}\n', s, re.S | re.M):
+    body = m.group(2)
+    pp = re.search(r'proxy_pass (http://unix:\S+);', body)
+    if not pp:
+        continue  # the port-80 redirect block
+    ind, i2 = m.group(1), m.group(1) + "    "
+    body = re.sub(r'(?m)^[ \t]*proxy_set_header Upgrade \$http_upgrade;\n', '', body)
+    body = body.replace('proxy_set_header Connection "upgrade";', 'proxy_set_header Connection "";')
+    lines = [f"proxy_pass {pp.group(1)};", "proxy_http_version 1.1;",
+             "proxy_read_timeout 86400s;", "proxy_send_timeout 86400s;", "proxy_buffering off;",
+             "proxy_set_header Upgrade $http_upgrade;", 'proxy_set_header Connection "upgrade";',
+             "proxy_set_header Host $host;", "proxy_set_header X-Real-IP $remote_addr;",
+             "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+             "proxy_set_header X-Forwarded-Proto $scheme;"]
+    sio = f"{ind}location /socket.io/ {{\n" + "".join(f"{i2}{l}\n" for l in lines) + f"{ind}}}\n\n"
+    s = s[:m.start()] + sio + f"{ind}location / {{\n{body}{ind}}}\n" + s[m.end():]
+    open(path, "w").write(s)
+    break
+PYEOF
+    if sudo nginx -t >/dev/null 2>&1; then
+        sudo systemctl reload nginx
+        log_message "  ✓ nginx: /socket.io/ block added, plain keep-alive on / ($conf)" "$GREEN"
+    else
+        sudo cp "$conf.pre-gthread" "$conf"
+        log_message "  ⚠ nginx proxy-header fix failed nginx -t; original config restored" "$YELLOW"
+    fi
+}
+
+# Point the service at upstream's launcher. Upstream's own switch-worker.sh
+# does it: backs up the unit, rewrites ExecStart, restarts, checks the page,
+# Socket.IO and the running worker class, and restores the old unit by itself
+# if any check fails. --force: oa-update is already a deliberate restart.
+adopt_gthread_launcher() {
+    local instance_dir="$1" service_name="$2"
+    local switch="$instance_dir/install/switch-worker.sh"
+    [ -f "$switch" ] || return 0   # checkout predates the launcher
+    # --check: exit 0 only when .env asks for gthread and the unit isn't switched yet
+    sudo bash "$switch" --check --service "$service_name" >/dev/null 2>&1 || return 0
+
+    log_message "  Switching $service_name to the upstream gunicorn launcher (gthread)..." "$BLUE"
+    sudo bash "$switch" --service "$service_name" --yes --force 2>&1 | tee -a "$UPDATE_LOG"
+    case ${PIPESTATUS[0]} in
+        0) log_message "✓ $service_name runs through install/openalgo-gunicorn.sh" "$GREEN" ;;
+        1) log_message "⚠ Launcher switch failed its checks; previous service file restored and running" "$YELLOW" ;;
+        2) log_message "❌ $service_name is not running after the launcher switch: journalctl -u $service_name -n 100" "$RED"
+           return 1 ;;
+        *) log_message "⚠ Launcher switch refused (see above); $service_name keeps its current service file" "$YELLOW" ;;
+    esac
+    return 0
+}
+
+sync_dependencies() {
+    local instance_dir="$1"
+    log_message "  Syncing dependencies with uv..." "$BLUE"
+
+    local venv_path="$instance_dir/venv"
+    if [ -d "$venv_path" ]; then
+        local req_file
+        req_file=$(get_requirements_file "$instance_dir")
+
+        if [ -n "$req_file" ]; then
+            # requirements-nginx.txt carries upstream's gunicorn/eventlet pins
+            sudo bash -c "uv pip install --python \"$venv_path/bin/python\" -r \"$req_file\"" 2>&1 | tee -a "$UPDATE_LOG"
+            local deps_status=${PIPESTATUS[0]}
+        else
+            # pyproject.toml-only project: sync first; ensure_gunicorn below adds gunicorn
+            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv sync" 2>&1 | tee -a "$UPDATE_LOG"
+            local deps_status=${PIPESTATUS[0]}
+        fi
+
+        if [ $deps_status -eq 0 ]; then
+            log_message "✓ Dependencies updated" "$GREEN"
+        else
+            log_message "⚠ Dependency sync had issues (non-critical)" "$YELLOW"
+        fi
+
+        # `uv sync` above prunes gunicorn (it is not a project dependency), so
+        # this must be able to INSTALL it, not merely version-check it.
+        ensure_gunicorn "$venv_path"
+
+        # Fix permissions
+        sudo chown -R www-data:www-data "$venv_path"
+    else
+        log_message "⚠ Virtual environment not found, skipping dependency sync" "$YELLOW"
+    fi
+}
+
+# The git pull/reset reverts both overlays, so they must be re-applied after
+# every code change (update or rollback).
+reapply_overlays() {
+    local instance_dir="$1"
+    # Re-apply known-issue mitigations. The git pull above reverts them, so this
+    # must run on every update or the instance comes back with the upstream bug.
+    local patch_script
+    patch_script=$(find_helper_script "oa-patch-known-issues.sh")
+    if [ -n "$patch_script" ]; then
+        log_message "  Applying known-issue mitigations..." "$BLUE"
+        sudo bash "$patch_script" "$instance_dir" 2>&1 | tee -a "$UPDATE_LOG"
+    else
+        log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
+    fi
+
+    # Re-apply branding. The pull (or its reset --hard fallback) restores
+    # upstream's frontend/dist, so this must run on every update or the instance
+    # comes back OpenAlgo-branded. No-op unless the instance carries the marker.
+    if [ -f "$instance_dir/.simplifyed-branding" ]; then
+        local brand_script
+        brand_script=$(find_helper_script "oa-apply-branding.sh")
+        if [ -n "$brand_script" ]; then
+            log_message "  Re-applying Simplifyed branding..." "$BLUE"
+            sudo bash "$brand_script" "$instance_dir" 2>&1 | tee -a "$UPDATE_LOG"
+        else
+            log_message "⚠ oa-apply-branding.sh not found - instance will show OpenAlgo branding" "$YELLOW"
+        fi
     fi
 }
 
@@ -243,7 +369,10 @@ backup_before_update() {
     if [ -d "$instance_dir/db" ]; then
         sudo cp -r "$instance_dir/db" "$backup_dir/"
     fi
-    
+
+    # The code to return to on rollback
+    sudo git -C "$instance_dir" rev-parse HEAD 2>/dev/null | sudo tee "$backup_dir/COMMIT" > /dev/null
+
     # Set readable permissions
     sudo chown -R "$(whoami)" "$backup_dir"
 
@@ -417,18 +546,22 @@ ensure_historify_db() {
     sudo chmod 644 "$file_path"
 }
 
+# VALID_BROKERS tracks upstream: take it from the .sample.env just pulled, so
+# brokers added upstream become selectable without a change to these scripts.
+# (refresh_env_from_sample would otherwise carry the old list forward.)
 sync_supported_brokers() {
-    local env_file="$1"
-
-    if [ ! -f "$env_file" ]; then
-        return 0
-    fi
+    local env_file="$1" brokers
+    local sample_env; sample_env="$(dirname "$env_file")/.sample.env"
+    sudo test -f "$env_file" || return 0
+    brokers=$(sudo grep -E "^VALID_BROKERS *=" "$sample_env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "' \"\r")
+    [[ "$brokers" =~ ^[a-z0-9_,]+$ ]] || return 0
 
     if sudo grep -q -E "^VALID_BROKERS[[:space:]]*=" "$env_file"; then
-        sudo sed -i -E "s|^VALID_BROKERS[[:space:]]*=.*|VALID_BROKERS = '$SUPPORTED_BROKERS'|g" "$env_file"
+        sudo sed -i -E "s|^VALID_BROKERS[[:space:]]*=.*|VALID_BROKERS = '$brokers'|g" "$env_file"
     else
-        echo "VALID_BROKERS = '$SUPPORTED_BROKERS'" | sudo tee -a "$env_file" > /dev/null
+        echo "VALID_BROKERS = '$brokers'" | sudo tee -a "$env_file" > /dev/null
     fi
+    log_message "  ✓ VALID_BROKERS synced from .sample.env ($(tr ',' '\n' <<< "$brokers" | wc -l | tr -d ' ') brokers)" "$GREEN"
 }
 
 ensure_instance_runtime_layout() {
@@ -540,6 +673,21 @@ update_instance() {
     fi
     log_message "  Using remote default branch: $default_branch" "$BLUE"
 
+    # OA_UPDATE_TAG (set by oa-auto-update.sh / `oa update`) pins the update to a
+    # GitHub release tag instead of the tip of the default branch. Resolved to a
+    # commit: merging an annotated tag would never fast-forward.
+    local target="origin/$default_branch"
+    if [ -n "${OA_UPDATE_TAG:-}" ]; then
+        sudo git fetch --force origin "refs/tags/$OA_UPDATE_TAG:refs/tags/$OA_UPDATE_TAG" 2>&1 | tee -a "$UPDATE_LOG"
+        target=$(git rev-parse --verify --quiet "refs/tags/$OA_UPDATE_TAG^{commit}")
+        if [ -z "$target" ]; then
+            log_message "❌ Release tag $OA_UPDATE_TAG not found" "$RED"
+            [ "$was_running" = true ] && sudo systemctl start "$service_name"
+            return 1
+        fi
+        log_message "  Target release: $OA_UPDATE_TAG ($(git rev-parse --short "$target"))" "$BLUE"
+    fi
+
     # Ensure we are on the default branch
     local current_branch
     current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -553,12 +701,10 @@ update_instance() {
         fi
     fi
 
-    # Skip if already up to date
+    # Skip if HEAD already contains the target (never move an instance backwards)
     local current_hash
-    local latest_hash
     current_hash=$(git rev-parse --short HEAD 2>/dev/null)
-    latest_hash=$(git rev-parse --short "origin/$default_branch" 2>/dev/null)
-    if [ -n "$current_hash" ] && [ -n "$latest_hash" ] && [ "$current_hash" = "$latest_hash" ]; then
+    if [ -n "$current_hash" ] && git merge-base --is-ancestor "$target" HEAD 2>/dev/null; then
         local dirty=""
         if ! git diff --quiet || ! git diff --cached --quiet; then
             dirty=" (local changes present)"
@@ -567,6 +713,8 @@ update_instance() {
         log_message "  Refreshing .env configuration..." "$BLUE"
         refresh_env_from_sample "$instance_dir" "$backup_dir"
         sync_env_version "$instance_dir"
+        ensure_worker_class_env "$instance_dir"
+        fix_nginx_proxy_headers "$instance_dir"
         sync_supported_brokers "$env_file"
         ensure_historify_db "$instance_dir"
         log_message "  Ensuring runtime directories and permissions..." "$BLUE"
@@ -580,7 +728,6 @@ update_instance() {
         local venv_path="$instance_dir/venv"
         if [ -d "$venv_path" ]; then
             ensure_gunicorn "$venv_path"
-            ensure_worker_class_deps "$venv_path" "/etc/systemd/system/${service_name}.service"
             sudo chown -R www-data:www-data "$venv_path"
         fi
 
@@ -591,6 +738,7 @@ update_instance() {
             if systemctl is-active --quiet "$service_name"; then
                 log_message "✓ Service restarted successfully" "$GREEN"
                 sudo systemctl reload nginx
+                adopt_gthread_launcher "$instance_dir" "$service_name" || return 1
             else
                 log_message "❌ Service failed to restart" "$RED"
             fi
@@ -600,16 +748,16 @@ update_instance() {
     
     # Show available updates
     log_message "\n  Available updates:" "$BLUE"
-    sudo git log --oneline HEAD..origin/"$default_branch" -10 2>/dev/null | while read -r line; do
+    sudo git log --oneline HEAD.."$target" -10 2>/dev/null | while read -r line; do
         log_message "    $line" "$BLUE"
     done
     
     # Merge/rebase latest changes
     log_message "  Pulling latest changes..." "$BLUE"
-    sudo git pull origin "$default_branch" --ff-only 2>&1 | tee -a "$UPDATE_LOG"
+    sudo git merge --ff-only "$target" 2>&1 | tee -a "$UPDATE_LOG"
     local pull_status=${PIPESTATUS[0]}
     if [ $pull_status -ne 0 ]; then
-        log_message "⚠ Fast-forward pull failed. Forcing reset to origin/$default_branch (local changes will be discarded)." "$YELLOW"
+        log_message "⚠ Fast-forward failed. Forcing reset to $target (local changes will be discarded)." "$YELLOW"
         sudo git fetch --prune origin 2>&1 | tee -a "$UPDATE_LOG"
         local refetch_status=${PIPESTATUS[0]}
         if [ $refetch_status -ne 0 ]; then
@@ -617,7 +765,7 @@ update_instance() {
             [ "$was_running" = true ] && sudo systemctl start "$service_name"
             return 1
         fi
-        sudo git reset --hard "origin/$default_branch" 2>&1 | tee -a "$UPDATE_LOG"
+        sudo git reset --hard "$target" 2>&1 | tee -a "$UPDATE_LOG"
         local reset_status=${PIPESTATUS[0]}
         if [ $reset_status -ne 0 ]; then
             log_message "❌ Force reset failed. Backup saved at: $backup_dir" "$RED"
@@ -630,45 +778,14 @@ update_instance() {
     local new_commit; new_commit=$(git rev-parse --short HEAD 2>/dev/null)
     log_message "✓ Updated to commit: $new_commit" "$GREEN"
     
-    # Update dependencies
-    log_message "  Syncing dependencies with uv..." "$BLUE"
+    sync_dependencies "$instance_dir"
 
-    local venv_path="$instance_dir/venv"
-    if [ -d "$venv_path" ]; then
-        local req_file
-        req_file=$(get_requirements_file "$instance_dir")
-
-        if [ -n "$req_file" ]; then
-            # Install from requirements file, resolving gunicorn<23 together in one pass
-            sudo bash -c "uv pip install --python \"$venv_path/bin/python\" -r \"$req_file\" \"gunicorn<23\"" 2>&1 | tee -a "$UPDATE_LOG"
-            local deps_status=${PIPESTATUS[0]}
-        else
-            # pyproject.toml-only project: sync first, then pin gunicorn
-            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv sync" 2>&1 | tee -a "$UPDATE_LOG"
-            local deps_status=${PIPESTATUS[0]}
-        fi
-
-        if [ $deps_status -eq 0 ]; then
-            log_message "✓ Dependencies updated" "$GREEN"
-        else
-            log_message "⚠ Dependency sync had issues (non-critical)" "$YELLOW"
-        fi
-
-        # `uv sync` above prunes gunicorn (it is not a project dependency), so
-        # this must be able to INSTALL it, not merely version-check it.
-        ensure_gunicorn "$venv_path"
-        ensure_worker_class_deps "$venv_path" "/etc/systemd/system/${service_name}.service"
-
-        # Fix permissions
-        sudo chown -R www-data:www-data "$venv_path"
-    else
-        log_message "⚠ Virtual environment not found, skipping dependency sync" "$YELLOW"
-    fi
-    
     # Merge .env file changes
     log_message "  Refreshing .env configuration..." "$BLUE"
     refresh_env_from_sample "$instance_dir" "$backup_dir"
     sync_env_version "$instance_dir"
+    ensure_worker_class_env "$instance_dir"
+    fix_nginx_proxy_headers "$instance_dir"
     sync_supported_brokers "$env_file"
     ensure_historify_db "$instance_dir"
 
@@ -692,32 +809,10 @@ update_instance() {
         log_message "⚠ Migration script not found, skipping" "$YELLOW"
     fi
 
-    # Re-apply known-issue mitigations. The git pull above reverts them, so this
-    # must run on every update or the instance comes back with the upstream bug.
-    local patch_script
-    patch_script=$(find_helper_script "oa-patch-known-issues.sh")
-    if [ -n "$patch_script" ]; then
-        log_message "  Applying known-issue mitigations..." "$BLUE"
-        sudo bash "$patch_script" "$instance_dir" 2>&1 | tee -a "$UPDATE_LOG"
-    else
-        log_message "⚠ oa-patch-known-issues.sh not found - upstream mitigations NOT applied" "$YELLOW"
-    fi
+    reapply_overlays "$instance_dir"
 
-    # Re-apply branding. The pull (or its reset --hard fallback) restores
-    # upstream's frontend/dist, so this must run on every update or the instance
-    # comes back OpenAlgo-branded. No-op unless the instance carries the marker.
-    if [ -f "$instance_dir/.simplifyed-branding" ]; then
-        local brand_script
-        brand_script=$(find_helper_script "oa-apply-branding.sh")
-        if [ -n "$brand_script" ]; then
-            log_message "  Re-applying Simplifyed branding..." "$BLUE"
-            sudo bash "$brand_script" "$instance_dir" 2>&1 | tee -a "$UPDATE_LOG"
-        else
-            log_message "⚠ oa-apply-branding.sh not found - instance will show OpenAlgo branding" "$YELLOW"
-        fi
-    fi
-
-    # One-time migration: eventlet → gthread in systemd service file
+    # Interim eventlet → raw gthread flags, so this restart never boots eventlet
+    # (WhatsApp wedge). adopt_gthread_launcher below then moves it to the launcher.
     local service_file="/etc/systemd/system/${service_name}.service"
     if [ -f "$service_file" ] && sudo grep -q -- '--worker-class eventlet' "$service_file"; then
         log_message "  Migrating systemd service from eventlet → gthread..." "$BLUE"
@@ -770,6 +865,11 @@ update_instance() {
         else
             log_message "⚠ oa-health-check.sh not found - could not verify the app serves" "$YELLOW"
         fi
+    fi
+
+    # After the health gate, so a failed switch is judged against a known-good start
+    if [ "$was_running" = true ]; then
+        adopt_gthread_launcher "$instance_dir" "$service_name" || return 1
     fi
 
     log_message "✓ Instance updated successfully" "$GREEN"
@@ -884,6 +984,7 @@ update_all_instances() {
     log_message "Successfully updated: $success instance(s)" "$GREEN"
     if [ $failed -gt 0 ]; then
         log_message "Failed to update: $failed instance(s)" "$RED"
+        return 1
     fi
 }
 
@@ -948,6 +1049,20 @@ rollback_instance() {
         sleep 2
     fi
     
+    # Restore the code the backup was taken from, with its dependencies and
+    # overlays. Without this a "rollback" left the new code on the old database.
+    if [ -f "$backup_dir/COMMIT" ]; then
+        local commit; commit=$(cat "$backup_dir/COMMIT")
+        sudo git config --global --add safe.directory "$instance_dir" 2>/dev/null
+        log_message "  Restoring code to ${commit:0:7}..." "$BLUE"
+        sudo git -C "$instance_dir" reset --hard "$commit" 2>&1 | tee -a "$UPDATE_LOG"
+        [ "${PIPESTATUS[0]}" -eq 0 ] || log_message "❌ Could not reset code to $commit" "$RED"
+        sync_dependencies "$instance_dir"
+        reapply_overlays "$instance_dir"
+    else
+        log_message "⚠ Backup has no COMMIT record - restoring data only, code unchanged" "$YELLOW"
+    fi
+
     # Restore .env if available
     if [ -f "$backup_dir/.env" ]; then
         log_message "  Restoring .env..." "$BLUE"
@@ -967,13 +1082,22 @@ rollback_instance() {
     sudo systemctl start "$service_name"
     sleep 2
     
-    if systemctl is-active --quiet "$service_name"; then
-        log_message "✓ Rollback completed successfully" "$GREEN"
-        return 0
-    else
+    if ! systemctl is-active --quiet "$service_name"; then
         log_message "❌ Service failed to restart after rollback" "$RED"
         return 1
     fi
+    local health_script
+    health_script=$(find_helper_script "oa-health-check.sh")
+    if [ -n "$health_script" ]; then
+        sleep 20
+        sudo bash "$health_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
+        if [ "${PIPESTATUS[0]}" -eq 2 ]; then
+            log_message "❌ Rolled back, but $instance_name is still not serving requests" "$RED"
+            return 1
+        fi
+    fi
+    log_message "✓ Rollback completed successfully" "$GREEN"
+    return 0
 }
 
 # Main execution
@@ -995,23 +1119,24 @@ main() {
     fi
     
     # Show menu if no arguments
+    local rc=0
     if [ $# -eq 0 ]; then
         show_menu
     else
         local command="$1"
         case $command in
-            update-all) update_all_instances ;;
+            update-all) update_all_instances || rc=1 ;;
             dry-run) show_dry_run_menu ;;
             rollback)
                 if [ -z "$2" ] || [ -z "$3" ]; then
                     log_message "Usage: $0 rollback <backup_dir> <instance_name>" "$YELLOW"
                     exit 1
                 fi
-                rollback_instance "$2" "$3"
+                rollback_instance "$2" "$3" || rc=1
                 ;;
             *)
                 if [ -d "$BASE_DIR/$command" ]; then
-                    update_instance "$command"
+                    update_instance "$command" || rc=1
                 else
                     log_message "Usage: $0 [update-all|dry-run|rollback BACKUP_DIR INSTANCE|INSTANCE_NAME]" "$YELLOW"
                     exit 1
@@ -1021,6 +1146,9 @@ main() {
     fi
     
     log_message "\nUpdate log saved to: $UPDATE_LOG" "$BLUE"
+    # Exit status matters: oa-auto-update.sh rolls back on non-zero
+    return $rc
 }
 
 main "$@"
+exit $?
