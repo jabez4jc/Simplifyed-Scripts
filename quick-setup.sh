@@ -667,6 +667,15 @@ log_message "   Restart instance: sudo systemctl restart $SERVICE_NAME" "$BLUE"
 log_message "   Stop instance: sudo systemctl stop $SERVICE_NAME" "$BLUE"
 log_message "   Start instance: sudo systemctl start $SERVICE_NAME" "$BLUE"
 
+# Verify the instance end to end (databases, ownership, service) and fix what
+# can be fixed. OpenAlgo creates its databases on first start.
+REPAIR_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oa-repair.sh"
+if [ -f "$REPAIR_SCRIPT" ]; then
+    log_message "\n🔍 Verifying the instance..." "$BLUE"
+    sleep 20
+    sudo bash "$REPAIR_SCRIPT" "$(basename "$INSTANCE_DIR")"
+fi
+
 log_message "\n🎉 OpenAlgo is ready to use!" "$GREEN"
 log_message "   Access at: https://$DOMAIN" "$GREEN"
 

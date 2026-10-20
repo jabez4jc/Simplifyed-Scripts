@@ -873,6 +873,17 @@ done
 log_message "\nReloading Nginx..." "$BLUE"
 sudo systemctl reload nginx
 
+# Verify every new instance end to end (databases, ownership, service) and fix
+# what can be fixed. OpenAlgo creates its databases on first start.
+REPAIR_SCRIPT="$SCRIPT_DIR/oa-repair.sh"
+if [ -f "$REPAIR_SCRIPT" ]; then
+    log_message "\nVerifying the new instances..." "$BLUE"
+    sleep 20
+    for ((n=1; n<=INSTANCES; n++)); do
+        sudo bash "$REPAIR_SCRIPT" "openalgo$((EXISTING_INSTANCES + n))" 2>&1 | tee -a "$LOG_FILE"
+    done
+fi
+
 # Summary
 log_message "\n╔════════════════════════════════════════════════════════╗" "$GREEN"
 log_message "║          MULTI-INSTANCE INSTALLATION COMPLETE          ║" "$GREEN"

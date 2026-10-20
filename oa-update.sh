@@ -260,6 +260,25 @@ sync_dependencies() {
     fi
 }
 
+# Upstream's migrations, run as www-data with the instance venv, as upstream's
+# own update.sh does. Run as root they left root-owned DB/-wal/-shm files the
+# app (www-data) cannot write: "attempt to write a readonly database".
+run_migrations() {
+    local instance_dir="$1"
+    if [ ! -f "$instance_dir/upgrade/migrate_all.py" ]; then
+        log_message "⚠ Migration script not found, skipping" "$YELLOW"
+        return 0
+    fi
+    log_message "  Running migrations..." "$BLUE"
+    sudo -u www-data env HOME="$instance_dir/tmp" \
+        bash -c "cd '$instance_dir' && '$instance_dir/venv/bin/python' upgrade/migrate_all.py" 2>&1 | tee -a "$UPDATE_LOG"
+    if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+        log_message "✓ Migrations completed" "$GREEN"
+    else
+        log_message "⚠ Migration script reported issues" "$YELLOW"
+    fi
+}
+
 # The git pull/reset reverts both overlays, so they must be re-applied after
 # every code change (update or rollback).
 reapply_overlays() {
@@ -539,11 +558,15 @@ ensure_historify_db() {
     local dir_path
     dir_path=$(dirname "$file_path")
     sudo mkdir -p "$dir_path"
-    if [ ! -f "$file_path" ]; then
-        sudo touch "$file_path"
+    sudo chown www-data:www-data "$dir_path"
+    # A zero-byte file is not a valid DuckDB database - OpenAlgo creates a
+    # proper one itself when the file is absent, so never leave an empty one.
+    if sudo test -f "$file_path" && ! sudo test -s "$file_path"; then
+        sudo rm -f "$file_path"
+        log_message "  ✓ Removed empty $(basename "$file_path") (OpenAlgo recreates it)" "$GREEN"
+    elif sudo test -f "$file_path"; then
+        sudo chown www-data:www-data "$file_path"
     fi
-    sudo chown www-data:www-data "$file_path"
-    sudo chmod 644 "$file_path"
 }
 
 # VALID_BROKERS tracks upstream: take it from the .sample.env just pulled, so
@@ -796,18 +819,7 @@ update_instance() {
         log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
     fi
     
-    # Run migration script (UV-only flow)
-    if [ -d "$instance_dir/upgrade" ] && [ -f "$instance_dir/upgrade/migrate_all.py" ]; then
-        log_message "  Running migrations with uv..." "$BLUE"
-        sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv run upgrade/migrate_all.py" 2>&1 | tee -a "$UPDATE_LOG"
-        if [ $? -eq 0 ]; then
-            log_message "✓ Migrations completed" "$GREEN"
-        else
-            log_message "⚠ Migration script reported issues (non-critical)" "$YELLOW"
-        fi
-    else
-        log_message "⚠ Migration script not found, skipping" "$YELLOW"
-    fi
+    run_migrations "$instance_dir"
 
     reapply_overlays "$instance_dir"
 
@@ -845,25 +857,24 @@ update_instance() {
             return 1
         fi
 
-        # systemd reporting "active" is NOT proof the app serves - a wedged
-        # eventlet worker stays "active" while every request hangs into a 504.
-        # Only an end-to-end probe catches that, so gate success on the health
-        # check's exit code (2 = critical) rather than on systemctl.
-        local health_script
-        health_script=$(find_helper_script "oa-health-check.sh")
-        if [ -n "$health_script" ]; then
-            log_message "  Verifying instance actually serves requests..." "$BLUE"
-            sleep 20   # the known wedge lands ~6s after boot; don't declare too early
-            sudo bash "$health_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
-            local health_rc=${PIPESTATUS[0]}
-            if [ "$health_rc" -eq 2 ]; then
+        # systemd reporting "active" is NOT proof the app serves, and a damaged
+        # or root-owned database only shows once the app touches it. oa-repair.sh
+        # checks the databases, ownership and an end-to-end request, fixes what
+        # it can, and exits 2 only if the instance is still broken.
+        local repair_script
+        repair_script=$(find_helper_script "oa-repair.sh")
+        if [ -n "$repair_script" ]; then
+            log_message "  Verifying databases and service..." "$BLUE"
+            sleep 20   # let the app open its databases before judging
+            sudo bash "$repair_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
+            if [ "${PIPESTATUS[0]}" -eq 2 ]; then
                 log_message "❌ Update left $instance_name NOT serving requests!" "$RED"
                 log_message "   Roll back: sudo ./oa-update.sh rollback $backup_dir $instance_name" "$YELLOW"
                 return 1
             fi
-            log_message "✓ Instance verified serving" "$GREEN"
+            log_message "✓ Instance verified" "$GREEN"
         else
-            log_message "⚠ oa-health-check.sh not found - could not verify the app serves" "$YELLOW"
+            log_message "⚠ oa-repair.sh not found - could not verify the instance" "$YELLOW"
         fi
     fi
 
@@ -1086,11 +1097,11 @@ rollback_instance() {
         log_message "❌ Service failed to restart after rollback" "$RED"
         return 1
     fi
-    local health_script
-    health_script=$(find_helper_script "oa-health-check.sh")
-    if [ -n "$health_script" ]; then
+    local repair_script
+    repair_script=$(find_helper_script "oa-repair.sh")
+    if [ -n "$repair_script" ]; then
         sleep 20
-        sudo bash "$health_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
+        sudo bash "$repair_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
         if [ "${PIPESTATUS[0]}" -eq 2 ]; then
             log_message "❌ Rolled back, but $instance_name is still not serving requests" "$RED"
             return 1

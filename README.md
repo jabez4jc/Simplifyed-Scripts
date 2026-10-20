@@ -41,11 +41,28 @@ oa add                     # add more instances
 oa update                  # update scripts, then every instance to the newest OpenAlgo release
 oa update openalgo2        # just one instance (--main: tip of main instead of a release)
 oa status                  # health check of every instance
+oa repair                  # check databases + services and fix what is broken
 oa restart                 # restart instances
 oa rollback BACKUP INST    # undo an update (code, dependencies, .env, databases)
 oa backup | oa remove | oa brand | oa swap | oa admin
 oa help
 ```
+
+## Self-Repair
+
+After every install, update and rollback, each instance is checked
+automatically (`oa repair` runs the same check on demand):
+
+- **Databases**: every SQLite and DuckDB database is integrity-checked. A
+  damaged one is moved to `db/damaged-<time>/` (deleted after 7 days) and the
+  instance restarted, so OpenAlgo recreates it. After an update, a healthy copy
+  from the pre-update backup is restored instead, so users, API keys and broker
+  logins are kept. A database that is merely in use is never touched.
+- **Ownership**: database files not owned by `www-data` are fixed (the app
+  cannot write them otherwise - "readonly database" errors).
+- **Service**: enabled, running and answering requests; restarted if not.
+
+Anything fixed, or still broken, is reported on Telegram if it is set up.
 
 ## Automatic Updates (opt-in)
 

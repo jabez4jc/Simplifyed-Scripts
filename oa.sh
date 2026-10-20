@@ -8,6 +8,7 @@
 #   oa auto-update enable INSTANCE|all [--sundays]   install releases automatically, 03:30 IST
 #   oa auto-update disable|status|telegram
 #   oa status [INSTANCE]                     health check (default: all)
+#   oa repair [INSTANCE]                     check DBs + services, fix what is broken
 #   oa restart                               restart instances
 #   oa rollback BACKUP_DIR INSTANCE          undo an update
 #   oa backup ...  | oa remove  | oa brand ...  | oa swap [GB]
@@ -91,6 +92,7 @@ EOF
         ;;
     auto-update)   run oa-auto-update.sh "$@" ;;
     status)        run oa-health-check.sh "${@:-all}" ;;
+    repair)        run oa-repair.sh "${@:-all}" ;;
     restart)       run oa-restart.sh "$@" ;;
     rollback)      run oa-update.sh rollback "$@" ;;
     backup)        run oa-backup.sh "$@" ;;
@@ -99,6 +101,6 @@ EOF
     swap)          run oa-configure-swap.sh "$@" ;;
     daily-restart) run setup-daily-restart.sh "$@" ;;
     admin)         run api-manager.sh "$@" ;;
-    help|-h|--help) sed -n '2,17p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \{0,1\}//' ;;
+    help|-h|--help) sed -n '2,18p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \{0,1\}//' ;;
     *) echo "Unknown command: $cmd"; echo "Run: oa help"; exit 1 ;;
 esac
