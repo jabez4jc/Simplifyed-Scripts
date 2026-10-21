@@ -765,6 +765,13 @@ update_instance() {
             else
                 log_message "❌ Service failed to restart" "$RED"
             fi
+            # Same check-and-fix as after a real update (DBs, .env DB paths, service)
+            local repair_script
+            repair_script=$(find_helper_script "oa-repair.sh")
+            if [ -n "$repair_script" ]; then
+                sudo bash "$repair_script" "$instance_name" 2>&1 | tee -a "$UPDATE_LOG"
+                [ "${PIPESTATUS[0]}" -ne 2 ] || return 1
+            fi
         fi
         return 0
     fi
