@@ -129,6 +129,10 @@ It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before f
 
 **Adding a future mitigation:** add a `patch_*` function to `oa-patch-known-issues.sh` following the rules in its header, and extend `--self-test` to cover it. Run `./oa-patch-known-issues.sh --self-test` to verify patch logic without touching any instance.
 
+## Known Upstream Issue: Safari / Orion show a blank page
+
+`serve_assets()` in `blueprints/react_app.py` sends `<asset>.gz` with `Content-Encoding: gzip`, but Flask also labels it `Content-Disposition: inline; filename=<asset>.js.gz`. WebKit reads the `.gz` filename as a gzip file (`application/x-gzip`) and refuses the module script, so the page stays blank; Chrome/Firefox ignore the label. Since upstream stopped shipping `.br` (only `.gz` is generated at startup, Oct 2026), every WebKit visitor hits it. `oa-patch-known-issues.sh` (patch 2, all worker classes) pops the header on the compressed branch; it needs a service restart, which `oa update` does (it re-applies patches and branding even when an instance is already current). Report upstream: pass `download_name=filename` or drop the header.
+
 ## Branding (oa-apply-branding.sh)
 
 **Why it patches `dist`, not `src`:** OpenAlgo serves a pre-built React app. `blueprints/react_app.py` sets `FRONTEND_DIST = frontend/dist` and serves every route (`/`, `/assets/*`, `/images/*`, `/favicon.ico`, `/logo.png`, `/apple-touch-icon.png`) out of it, and `frontend/dist` is committed upstream. Editing `frontend/src` would require Node 24 + `npm ci` + `vite build` on every server on every update — hundreds of MB per instance and a real OOM risk on 2 GB boxes. So the overlay rewrites the built chunks directly. Nginx proxies everything to gunicorn, so nothing bypasses Flask and no static path escapes the overlay.

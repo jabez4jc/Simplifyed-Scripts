@@ -751,6 +751,9 @@ update_instance() {
             log_message "⚠ Failed to refresh runtime directories/permissions" "$YELLOW"
         fi
 
+        # New mitigations and branding fixes reach current instances too
+        reapply_overlays "$instance_dir"
+
         # Ensure the venv can actually run the service before restarting it.
         local venv_path="$instance_dir/venv"
         if [ -d "$venv_path" ]; then

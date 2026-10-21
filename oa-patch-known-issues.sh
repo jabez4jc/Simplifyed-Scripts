@@ -2,8 +2,8 @@
 # OpenAlgo Utility - Apply mitigations for known upstream bugs
 #
 # Upstream OpenAlgo ships bugs that break instances under this deployment's
-# gunicorn/eventlet configuration. Installers and oa-update.sh call this after
-# any git clone/pull, because a pull silently reverts these patches.
+# gunicorn configuration or in some browsers. Installers and oa-update.sh call
+# this after any git clone/pull, because a pull silently reverts these patches.
 #
 # Every patch here MUST be:
 #   - idempotent (safe to run repeatedly)
@@ -81,32 +81,72 @@ print("PATCHED whatsapp auto-start disabled")
 PYEOF
 }
 
-apply_to_instance() {
-    local instance_dir="$1"
-    local name; name="$(basename "$instance_dir")"
-    local app_py="$instance_dir/app.py"
+# Patch 2: Safari / Orion (WebKit) load a blank page.
+#
+# serve_assets() sends <asset>.gz with Content-Encoding: gzip, but Flask's
+# send_from_directory also labels it "Content-Disposition: inline;
+# filename=<asset>.js.gz". WebKit takes the .gz filename to mean a gzip file,
+# reports the type as application/x-gzip and refuses to run the module script.
+# Chrome and Firefox ignore the label. Since upstream stopped shipping .br
+# variants (only gzip is generated at startup), every WebKit visitor hits it.
+#
+# Mitigation: drop Content-Disposition on the compressed branch. Assets are
+# never downloads, so the header carries nothing. Takes effect on restart.
+ASSET_MARKER="OA-PATCH: asset-content-disposition"
 
-    if [ ! -f "$app_py" ]; then
-        echo -e "${YELLOW}⚠ $name: app.py not found, skipping${NC}"; return 0
-    fi
+patch_asset_disposition() {
+    local py="$1"
 
-    # Patch 1 is an eventlet-hub bug. Under gthread the auto-start is harmless
-    # and is what keeps WhatsApp connected across restarts, so leave app.py be.
-    if sudo grep -qE "^[[:space:]]*(export[[:space:]]+)?OPENALGO_WORKER_CLASS[[:space:]]*=[[:space:]]*['\"]?gthread" "$instance_dir/.env" 2>/dev/null; then
-        echo -e "${BLUE}· $name: gthread worker - eventlet-only mitigations not needed${NC}"
-        SKIPPED=$((SKIPPED + 1)); return 0
-    fi
+    python3 - "$py" "$ASSET_MARKER" <<'PYEOF'
+import pathlib, re, sys, py_compile, tempfile, os
 
-    local backup="$app_py.oa-patch.bak"
-    sudo cp "$app_py" "$backup"
+path, marker = pathlib.Path(sys.argv[1]), sys.argv[2]
+src = path.read_text()
+
+if marker in src:
+    print("SKIP already patched"); sys.exit(0)
+
+pattern = re.compile(r'^(?P<indent>[ \t]+)response\.headers\["Content-Encoding"\] = encoding[ \t]*$',
+                     re.MULTILINE)
+m = pattern.search(src)
+if not m:
+    print("SKIP pattern absent (upstream changed or already fixed)"); sys.exit(0)
+
+# Upstream fixed it if serve_assets already handles the header itself.
+if "Content-Disposition" in src[max(0, m.start() - 1500):m.end() + 1500]:
+    print("SKIP serve_assets already sets Content-Disposition"); sys.exit(0)
+
+patched = (src[:m.end()] + f'\n{m.group("indent")}response.headers.pop("Content-Disposition", None)  # {marker}'
+           + src[m.end():])
+
+with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False) as tmp:
+    tmp.write(patched); tmp_path = tmp.name
+try:
+    tmp_cfile = tempfile.mkstemp(suffix='.pyc')[1]
+    py_compile.compile(tmp_path, doraise=True, cfile=tmp_cfile)
+    os.unlink(tmp_cfile)
+except py_compile.PyCompileError as e:
+    os.unlink(tmp_path); print(f"FAIL patched file does not compile: {e}"); sys.exit(1)
+os.unlink(tmp_path)
+
+path.write_text(patched)
+print("PATCHED Safari/WebKit asset loading fixed (restart to apply)")
+PYEOF
+}
+
+# run_patch NAME FUNCTION FILE - back up FILE, run the patch, restore on failure.
+run_patch() {
+    local name="$1" fn="$2" file="$3"
+    local backup="$file.oa-patch.bak"
+    sudo cp "$file" "$backup"
 
     local out
-    out=$(sudo -E bash -c "$(declare -f patch_whatsapp_autostart); WHATSAPP_MARKER='$WHATSAPP_MARKER'; patch_whatsapp_autostart '$app_py'" 2>&1)
+    out=$(sudo -E bash -c "$(declare -f "$fn"); WHATSAPP_MARKER='$WHATSAPP_MARKER'; ASSET_MARKER='$ASSET_MARKER'; $fn '$file'" 2>&1)
 
     case "$out" in
         PATCHED*)
             echo -e "${GREEN}✓ $name: ${out#PATCHED }${NC}"
-            sudo chown www-data:www-data "$app_py" 2>/dev/null || true
+            sudo chown www-data:www-data "$file" 2>/dev/null || true
             PATCHED=$((PATCHED + 1))
             ;;
         SKIP*)
@@ -116,12 +156,37 @@ apply_to_instance() {
             ;;
         *)
             echo -e "${RED}✗ $name: $out${NC}"
-            sudo cp "$backup" "$app_py"   # restore, never leave it broken
+            sudo cp "$backup" "$file"   # restore, never leave it broken
             FAILED=$((FAILED + 1))
             return 1
             ;;
     esac
     return 0
+}
+
+apply_to_instance() {
+    local instance_dir="$1"
+    local name; name="$(basename "$instance_dir")"
+    local app_py="$instance_dir/app.py" react_py="$instance_dir/blueprints/react_app.py"
+    local rc=0
+
+    if [ -f "$react_py" ]; then
+        run_patch "$name" patch_asset_disposition "$react_py" || rc=1
+    fi
+
+    if [ ! -f "$app_py" ]; then
+        echo -e "${YELLOW}⚠ $name: app.py not found, skipping${NC}"; return $rc
+    fi
+
+    # Patch 1 is an eventlet-hub bug. Under gthread the auto-start is harmless
+    # and is what keeps WhatsApp connected across restarts, so leave app.py be.
+    if sudo grep -qE "^[[:space:]]*(export[[:space:]]+)?OPENALGO_WORKER_CLASS[[:space:]]*=[[:space:]]*['\"]?gthread" "$instance_dir/.env" 2>/dev/null; then
+        echo -e "${BLUE}· $name: gthread worker - eventlet-only mitigations not needed${NC}"
+        SKIPPED=$((SKIPPED + 1)); return $rc
+    fi
+
+    run_patch "$name" patch_whatsapp_autostart "$app_py" || rc=1
+    return $rc
 }
 
 self_test() {
@@ -171,6 +236,28 @@ EOF
     echo "print('hello')" > "$tmp/other.py"
     out=$(patch_whatsapp_autostart "$tmp/other.py")
     [[ "$out" == SKIP\ pattern* ]] || { echo "FAIL: matched an unrelated file ($out)"; fails=1; }
+
+    # Patch 2: vulnerable serve_assets, mirrors upstream react_app.py
+    cat > "$tmp/react_app.py" <<'EOF'
+def serve_assets(filename):
+    for ext, encoding in _PRECOMPRESSED_ENCODINGS:
+        if ok:
+            response = send_from_directory(assets_dir, filename + ext, conditional=False)
+            response.headers["Content-Encoding"] = encoding
+            response.headers["Accept-Ranges"] = "none"
+            break
+EOF
+    out=$(patch_asset_disposition "$tmp/react_app.py")
+    [[ "$out" == PATCHED* ]] || { echo "FAIL: serve_assets not patched ($out)"; fails=1; }
+    grep -q '^            response.headers.pop("Content-Disposition", None)' "$tmp/react_app.py" || { echo "FAIL: header pop missing or mis-indented"; fails=1; }
+    python3 -B -c "import ast; ast.parse(open('$tmp/react_app.py').read())" || { echo "FAIL: react_app result does not compile"; fails=1; }
+    out=$(patch_asset_disposition "$tmp/react_app.py")
+    [[ "$out" == SKIP\ already* ]] || { echo "FAIL: asset patch not idempotent ($out)"; fails=1; }
+
+    # Upstream-fixed sample: serve_assets sets the header itself - leave alone
+    sed 's/"Accept-Ranges"\] = "none"/"Content-Disposition"] = "inline"/' "$tmp/react_app.py" | grep -v OA-PATCH > "$tmp/react_fixed.py"
+    out=$(patch_asset_disposition "$tmp/react_fixed.py")
+    [[ "$out" == SKIP\ serve_assets* ]] || { echo "FAIL: patched an already-fixed serve_assets ($out)"; fails=1; }
 
     [ "$fails" -eq 0 ] && echo -e "${GREEN}✓ self-test passed${NC}" || echo -e "${RED}✗ self-test failed${NC}"
     return "$fails"
