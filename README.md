@@ -50,6 +50,11 @@ oa backup | oa remove | oa brand | oa swap | oa admin
 oa help
 ```
 
+Every `oa` command first pulls the latest scripts from GitHub, so a script fix
+reaches a server the next time you run any `oa` command - usually just
+`oa update` (or `oa repair` to fix without updating OpenAlgo). Instances with
+auto-update pick fixes up at 03:30 IST on their own.
+
 ## Self-Repair
 
 After every install, update and rollback, each instance is checked

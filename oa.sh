@@ -27,10 +27,10 @@ run() { local s="$1"; shift; bash "$SCRIPT_DIR/$s" "$@"; }
 
 # Pull the latest scripts, then carry on with them.
 self_update() {
-    [ -z "${OA_NO_SELF_UPDATE:-}" ] || return 0
+    [ -z "${OA_NO_SELF_UPDATE:-}" ] || { refresh_dashboard; return 0; }
     git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1 || return 0
     local before; before=$(git -C "$SCRIPT_DIR" rev-parse HEAD)
-    git -C "$SCRIPT_DIR" pull -q --ff-only || echo "⚠ Could not update the scripts repo; using the current copy"
+    timeout 60 git -C "$SCRIPT_DIR" pull -q --ff-only || echo "⚠ Could not update the scripts repo; using the current copy"
     if [ "$(git -C "$SCRIPT_DIR" rev-parse HEAD)" != "$before" ]; then
         OA_NO_SELF_UPDATE=1 exec bash "$SCRIPT_DIR/oa.sh" "$@"
     fi
@@ -47,6 +47,9 @@ refresh_dashboard() {
 }
 
 cmd="${1:-help}"; shift 2>/dev/null
+# Every command first picks up the latest scripts, so a fix pushed to GitHub
+# reaches the server the next time any `oa` command runs.
+case "$cmd" in help|-h|--help) ;; *) self_update "$cmd" "$@" ;; esac
 case "$cmd" in
     install|add)
         BRANDING=y; SWAP_GB=4
@@ -77,7 +80,6 @@ Done. Optional next steps:
 EOF
         ;;
     update)
-        self_update update "$@"
         target="update-all"; main=0
         for a in "$@"; do
             case "$a" in --main) main=1 ;; *) target="$a" ;; esac
