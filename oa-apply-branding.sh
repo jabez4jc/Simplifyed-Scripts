@@ -54,7 +54,7 @@ brand_instance() {
         return 0
     fi
 
-    for a in favicon.ico favicon-16.png favicon-32.png apple-touch-icon.png mark-192.png mark-512.png home-logo.png; do
+    for a in favicon.ico favicon-16.png favicon-32.png apple-touch-icon.png mark-192.png mark-512.png; do
         if [ ! -f "$ASSET_DIR/$a" ]; then
             echo -e "${RED}✗ Missing branding asset: $ASSET_DIR/$a${NC}"
             FAILED=$((FAILED + 1))
@@ -209,24 +209,6 @@ for path in sorted((dist / "assets").glob("*.js")):
         recompress(path)
         repaired += 1
 
-# Public Home page header: swap the square mark + wordmark span for the
-# horizontal lockup. Purely cosmetic — if a future build changes this shape the
-# pattern stops matching and the header keeps the (already rebranded) square mark.
-home_pat = re.compile(
-    r"\(`img`,\{src:`/logo\.png`,alt:`" + re.escape(brand_name) + r"`,className:`h-8 w-8`\}\),"
-    r"\(0,[A-Za-z_$][\w$]*\.jsx\)\(`span`,\{className:`text-xl [^`]*`,children:`"
-    + re.escape(brand_name) + r"`\}\)"
-)
-lockup = ("(`img`,{src:`/images/simplifyed-home-logo.png`,alt:`" + brand_name
-          + "`,className:`h-8 w-auto sfy-logo`})")
-for path in sorted((dist / "assets").glob("Home-*.js")):
-    before = path.read_text(encoding="utf-8")
-    after, n = home_pat.subn(lockup, before)
-    if n:
-        path.write_text(after, encoding="utf-8")
-        recompress(path)
-        print(f"  home lockup applied ({n} header(s))")
-
 index = dist / "index.html"
 text = rewrite(index.read_text(encoding="utf-8"))
 text = re.sub(r'(<meta name="description" content=")' + re.escape(brand_name) + r' - [^"]*"',
@@ -243,11 +225,6 @@ if "/images/favicon-32.png" not in text:
         '    <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32.png?v=sfy1" />\n'
         '    <link rel="manifest" href="/images/site.webmanifest?v=sfy1" />\n'
         '    <link rel="apple-touch-icon"', 1)
-# The grayscale lockup is dark ink; invert it on dark backgrounds. Tailwind's
-# dark:invert utility is not in the built CSS, so ship the rule inline.
-if "sfy-brand-style" not in text:
-    text = text.replace("</head>",
-        '  <style id="sfy-brand-style">.dark .sfy-logo{filter:invert(1)}</style>\n  </head>')
 index.write_text(text, encoding="utf-8")
 for stale in (dist / "index.html.gz", dist / "index.html.br"):
     if stale.exists():
@@ -285,7 +262,6 @@ PY
     install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/logo.png"
     install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/images/android-chrome-192x192.png"
     install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/images/simplifyed-glyph.png"
-    install -Dm0644 "$ASSET_DIR/home-logo.png"        "$dist/images/simplifyed-home-logo.png"
     install -Dm0644 "$ASSET_DIR/favicon-16.png"       "$dist/images/favicon-16.png"
     install -Dm0644 "$ASSET_DIR/favicon-32.png"       "$dist/images/favicon-32.png"
     install -Dm0644 "$ASSET_DIR/mark-192.png"         "$dist/images/favicon-192.png"
@@ -361,7 +337,6 @@ EOF
     check        "sized favicon linked"             "/images/favicon-32.png?v=sfy1" "$idx"
     check        "manifest linked"                  "/images/site.webmanifest?v=sfy1" "$idx"
     check        "manifest written"                 "/images/favicon-512.png" "$tmp/frontend/dist/images/site.webmanifest"
-    check        "dark-mode logo style injected"    "sfy-brand-style" "$idx"
     check        "homepage link rebranded"          "h=\`https://simplifyed.in\`" "$misc"
     check        "repo link rebranded"              "gh=\`https://simplifyed.in\`" "$misc"
     check        "openalgo.in/discord preserved"    "https://openalgo.in/discord" "$misc"
@@ -379,8 +354,7 @@ EOF
     check        "SDK package name still openalgo"  "rounded\`,children:\`openalgo\`" "$misc"
     check        "env var preserved"                "OPENALGO_API_KEY" "$misc"
     check        "storage key preserved"            "openalgo_theme" "$misc"
-    check        "home lockup applied"              "/images/simplifyed-home-logo.png" "$home"
-    check_absent "home square mark replaced"        "src=\`/logo.png\`" "$home"
+    check        "home wordmark is text, rebranded" "children:\`Simplifyed\`" "$home"
     check        "OpenAlgo MCP kept"                "\`OpenAlgo MCP\`" "$home"
     check        "OpenAlgo Skills kept"             "\`OpenAlgo Skills\`" "$home"
     check        "other Home copy rebranded"        "Connect your Simplifyed account" "$home"
