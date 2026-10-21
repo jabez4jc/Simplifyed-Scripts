@@ -387,6 +387,7 @@ sudo mkdir -p "$INSTANCE_DIR/keys"
 sudo chown -R www-data:www-data "$INSTANCE_DIR"
 sudo chmod -R 755 "$INSTANCE_DIR"
 sudo chmod 700 "$INSTANCE_DIR/keys"
+sudo chmod 600 "$INSTANCE_DIR/.env"   # broker secrets: owner-only, not 755 from the line above
 
 # Step 6: Configure Nginx
 log_message "\n╔════════════════════════════════════╗" "$BLUE"

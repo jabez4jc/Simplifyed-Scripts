@@ -755,7 +755,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             )
     def _db_has_table(self, db_file, table_name):
         try:
-            conn = sqlite3.connect(db_file)
+            conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)  # never create files as root
             cur = conn.cursor()
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             found = cur.fetchone() is not None
@@ -949,7 +949,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
             }
 
         try:
-            conn = sqlite3.connect(db_file)
+            conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)  # never create files as root
             cur = conn.cursor()
             cur.execute(
                 "SELECT broker, message, last_updated, total_symbols, is_ready "
@@ -1104,7 +1104,7 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if not db_file:
             return False, "User Not Setup", None, None
         try:
-            conn = sqlite3.connect(db_file)
+            conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)  # never create files as root
             cur = conn.cursor()
             cur.execute("SELECT is_revoked, broker, name FROM auth LIMIT 1")
             row = cur.fetchone()
@@ -1866,7 +1866,7 @@ body{display:flex;align-items:center;justify-content:center}
             if not shutil.which("sqlite3"):
                 self.send_json({"error": "sqlite3 not installed"}, 400)
                 return
-            cmd = ["sqlite3", db_path, "-header", "-column", query]
+            cmd = ["sqlite3", "-readonly", db_path, "-header", "-column", query]
 
         if not cmd:
             self.send_json({"error": "Command not available"}, 400)

@@ -35,7 +35,7 @@ bash tests/oa-test.sh --all
 |-------|---------|-------------|--------|---------|
 | syntax | `--suite syntax` | `bash -n` + `python -m py_compile` on all scripts | ✓ | ✓ |
 | shellcheck | `--suite shellcheck` | ShellCheck static analysis at warning level | ✓ | ✓ |
-| unit | `--suite unit` | Logic tests for critical scripts (patch, brokers, exit codes, env versions, backup) | ✓ | ✓ |
+| unit | `--suite unit` | Self-tests (patch, branding, auto-update, repair, dashboard) + logic checks (brokers, exit codes, update features, backup) | ✓ | ✓ |
 | integration | `--suite integration` | SSH connectivity, repo push, remote checks, tool availability | ✗ | ✓ |
 
 ## Automated Fix Loop

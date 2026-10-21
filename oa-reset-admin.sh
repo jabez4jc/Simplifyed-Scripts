@@ -135,7 +135,7 @@ find_table_db() {
   fi
   for entry in "$db_dir"/*.db; do
     [ -e "$entry" ] || continue
-    if sqlite3 "$entry" "SELECT name FROM sqlite_master WHERE type='table' AND name='$table_name';" 2>/dev/null | grep -qx "$table_name"; then
+    if sqlite3 -readonly "$entry" "SELECT name FROM sqlite_master WHERE type='table' AND name='$table_name';" 2>/dev/null | grep -qx "$table_name"; then
       echo "$entry"
       return 0
     fi
@@ -347,10 +347,10 @@ if [[ "$SKIP_AUTH" -ne 1 ]]; then
   }
 fi
 
-USER_COUNT=$(sqlite3 "$USERS_DB" "SELECT COUNT(*) FROM users;")
+USER_COUNT=$(sqlite3 -readonly "$USERS_DB" "SELECT COUNT(*) FROM users;")
 AUTH_COUNT=0
 if [[ -n "$AUTH_DB" ]]; then
-  AUTH_COUNT=$(sqlite3 "$AUTH_DB" "SELECT COUNT(*) FROM auth;")
+  AUTH_COUNT=$(sqlite3 -readonly "$AUTH_DB" "SELECT COUNT(*) FROM auth;")
 fi
 
 log_message "Instance:   $INSTANCE" "$BLUE"
@@ -415,6 +415,10 @@ if [[ -n "$AUTH_DB" && "$AUTH_COUNT" -gt 0 ]]; then
   sqlite3 "$AUTH_DB" "DELETE FROM auth;"
   log_message "Deleted all rows from auth table (broker credentials cleared)." "$GREEN"
 fi
+
+# These writes ran as root with the service stopped: any -wal/-shm they left
+# would be root-owned and stop OpenAlgo (www-data) from opening the database.
+chown www-data:www-data "$(dirname "$USERS_DB")"/* 2>/dev/null || true
 
 if [[ -n "$BROKER" ]]; then
   if update_redirect_url_broker "$ENV_FILE" "$BROKER"; then

@@ -10,8 +10,8 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 **Entry points (what operators run):**
 
-- **install.sh** - one-line bootstrap (`curl -fsSL .../install.sh | sudo bash`). Clones/updates this repo at `/root/Simplifyed-Scripts` (the first path `openalgo-restart-api.py` looks in), links `/usr/local/bin/oa`, then runs `oa install` with stdin from `/dev/tty`. On a server that already has instances it only links `oa`.
-- **oa.sh** (`oa`) - thin dispatcher over the scripts below; no logic of its own beyond defaults. `oa install`/`oa add` = swap if none (4 GB) + `OA_DEFAULTS=1 multi-install.sh` (asks only per-instance details) + `api-manager.sh setup` if the dashboard isn't running. `oa update` self-updates the repo (`git pull --ff-only`, then re-execs), refreshes the dashboard copy in /usr/local/bin, and runs `oa-update.sh` with `OA_UPDATE_TAG` = newest GitHub release (`--main` for tip of main). The individual scripts stay callable directly - Fleet Manager and the dashboard use them.
+- **install.sh** - one-line bootstrap (`curl -fsSL .../install.sh | sudo bash`). Clones/updates this repo at `/root/Simplifyed-Scripts` (the first path `openalgo-restart-api.py` looks in), links `/usr/local/bin/oa`, then runs `oa install` with stdin from `/dev/tty`. On a server that already has instances it only updates the repo and links `oa` - it never installs.
+- **oa.sh** (`oa`) - thin dispatcher over the scripts below; no logic of its own beyond defaults. `oa install`/`oa add` = swap if none (4 GB) + `OA_DEFAULTS=1 multi-install.sh` (asks only: instance count, then domain/broker/key/secret per instance) + `api-manager.sh setup` if the dashboard isn't running (non-menu mode: generates the admin password and shows it once, skips the optional manager-domain step). Keep installs to necessary questions only - default everything else. `oa update` self-updates the repo (`git pull --ff-only`, then re-execs), refreshes the dashboard copy in /usr/local/bin, and runs `oa-update.sh` with `OA_UPDATE_TAG` = newest GitHub release (`--main` for tip of main). The individual scripts stay callable directly - Fleet Manager and the dashboard use them.
 - **oa-auto-update.sh** - opt-in per instance via an untracked `.simplifyed-autoupdate` marker (`daily` or `sunday`). systemd timer `oa-auto-update.timer` at 03:30 IST, `Persistent=false` (a missed run must never fire at boot mid-session); `run` also refuses outside 03:00-06:00 IST without `--force`. Installs the newest GitHub **Release** that is >= `SOAK_HOURS` (72) old, never moves an instance backwards (`merge-base --is-ancestor`), updates instances one at a time, auto-rolls back a failure and stops the rollout. Telegram notices (config `/etc/simplifyed/auto-update.conf`, 600; token passed to curl via `-K -`, never argv): once per new release (with install dates) and after each run that did something. `--self-test` covers release selection and scheduling. Crypto instances trade 24/7: anything that restarts instances unattended must stay opt-in.
 
 - **oa-repair.sh** (`oa repair`) - verify-and-fix, run automatically after installs (new instances only), as oa-update.sh's post-restart gate, and after rollbacks. Checks every SQLite (`PRAGMA quick_check`, read-only) and DuckDB (read-only open) file in `db/` or named in `.env`; "locked"/"busy" = in use, never damage; ambiguous errors (e.g. DuckDB version mismatch) are reported and left alone. Damaged DBs: service stopped, file + `-wal/-shm/-journal` moved to `db/damaged-<ts>/` (purged after 7 days - quarantined, not deleted, because openalgo.db holds users/API keys/broker logins), a healthy copy from the latest `/tmp/openalgo_backup_<inst>_*` restored (+ migrations) when there is one, else OpenAlgo recreates it on start. Also fixes db/ ownership and a stopped/disabled/non-serving service (one retry). Exit 0 healthy / 1 repaired / 2 still broken. `--self-test` covers the classifier.
@@ -20,106 +20,31 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 **Core Components:**
 
-1. **quick-setup.sh** - Single instance setup script
-   - Automated complete setup in one command
-   - Configures 4GB swap automatically
-   - Includes all system packages, dependencies, SSL, Nginx, systemd service
-   - Interactive prompts for domain, broker, and credentials
-   - Best for single instance deployments and quick testing
-
-2. **multi-install.sh** - Main orchestration script
-   - Validates system prerequisites (Python 3, pip, uv)
-   - Manages system-wide dependencies (nginx, certbot, firewall)
-   - Creates isolated instance directories at `/var/python/openalgo-flask/openalgo<N>/`
-   - Generates unique configurations per instance (ports, domains, databases)
-   - Creates systemd services and Nginx reverse proxy configs
-   - Handles SSL certificate generation via Let's Encrypt
-   - `/monitor` is a plain reverse proxy to the admin API - login is handled by openalgo-restart-api.py itself, not nginx
-
-3. **update_swap_2gb.sh** - Fixed swap utility
-   - Creates or replaces fixed 4GB swap space to prevent OOM during broker authentication
-
-4. **oa-configure-swap.sh** - Flexible swap utility
-   - Interactive or command-line driven swap configuration (1-512 GB)
-   - Validates disk space before allocation
-   - Displays current swap configuration and filesystem usage
-   - Includes confirmation prompts and safe reconfiguration
-
-5. **oa-restart.sh** - Instance management (manual)
-   - Discovers running instances via systemd
-   - Provides interactive menu for restarting single or all instances
-   - Auto-reloads Nginx after restart
-
-5a. **setup-daily-restart.sh** - Automated restart scheduler
-   - Sets up cron job for daily automatic restart at 8 AM IST
-   - Creates restart script at `/usr/local/bin/openalgo-daily-restart.sh`
-   - Creates log file at `/var/log/openalgo-daily-restart.log`
-   - Verifies/sets system timezone to Asia/Kolkata
-   - Provides easy modification commands for restart time
-
-6. **oa-uninstaller.sh** - Cleanup utility
-   - Removes instances with full cleanup (service, directories, SSL certs, nginx config)
-   - Includes confirmation prompts to prevent accidental deletion
-
-7. **oa-health-check.sh** - Monitoring utility
-   - Multi-category health checks (service, ports, configuration, databases, filesystem, logs, connectivity)
-   - System-wide health assessment (Nginx, firewall, swap, load)
-   - Exit codes for automation (0=healthy, 1=warning, 2=critical)
-   - Supports single instance, all instances, or system-only checks
-
-8. **oa-backup.sh** - Backup & restore utility
-   - Quick backups (env + databases + configs) with optional GPG encryption
-   - Full backups (complete instance archive)
-   - Selective restore with current data preservation
-   - Automatic cleanup of old backups (configurable retention)
-   - Supports single instance, all instances, or specific backup operations
-
-9. **oa-update.sh** - Smart update utility
-   - Version-aware .env merging using `ENV_CONFIG_VERSION` field
-   - Selective updates (only merge .env when version changes)
-   - Pre-update automatic backup
-   - Dependency updates via `uv sync`
-   - Dry-run mode to preview updates
-   - Rollback capability to pre-update backup
-
-10. **make-executable.sh** - Setup utility
-   - Finds all `.sh` files in repository automatically
-   - Makes them executable with single command
-   - Reports success/failure for each script
-   - Provides summary and lists all available scripts
-   - Simplifies initial setup process
-
-11. **oa-patch-known-issues.sh** - Upstream bug mitigation applier
-   - Idempotent, pattern-matched patches for known OpenAlgo bugs that break under this deployment's gunicorn/eventlet setup
-   - Called automatically by both installers (before first start) and by `oa-update.sh` (after `git pull` reverts them)
-   - `--self-test` verifies patch logic against synthetic samples without touching any instance
-   - See "Known Upstream Issue" section below
-
-12. **oa-apply-branding.sh** - Simplifyed rebranding overlay
-   - Patches the **pre-built** `frontend/dist` in place; never runs `npm`
-   - Applied by both installers (branding is opt-out, default on) and re-applied by `oa-update.sh` after every pull
-   - `--self-test` verifies the rewrite rules against a synthetic dist, touching no instance
-   - See "Branding" section below
-
-13. **oa-secure-admin.sh** - Admin auth retrofit utility
-   - Sets/resets the admin login via `openalgo-restart-api.py --set-admin-password` (app-owned credential store, not nginx)
-   - Removes any leftover `auth_basic` directives from an earlier version of this script, so the app's own login page is the only gate
-   - Optionally puts the all-instances manager page behind its own domain + TLS instead of raw `IP:8888`
-   - Sets `MANAGER_DOMAIN` for openalgo-restart-api.py via a systemd drop-in so in-app links use the new domain
-   - Optionally closes public access to port 8888 and binds the API to localhost once nginx is confirmed working
-   - Safe to re-run: detects an already-configured domain and leaves it alone unless you choose to reconfigure
+- **multi-install.sh** - the installer behind `oa install`/`oa add`. Numbers new instances after existing ones (`openalgo<N>`), clones OpenAlgo, venv via `uv`, writes `.env` (keys matched by key name, `OPENALGO_WORKER_CLASS = 'gthread'`, `TRUST_PROXY_HEADERS = 'TRUE'`, `.env` chmod 600), nginx + Let's Encrypt, systemd unit on upstream's launcher, branding, known-issue patches, then `oa-repair.sh` per new instance. `--config FILE` = non-interactive (Fleet Manager). `/monitor` is a plain reverse proxy to the admin API - login is handled by openalgo-restart-api.py itself, not nginx.
+- **quick-setup.sh** - older single-instance installer, kept working (same fixes as multi-install) but superseded by `oa install`.
+- **oa-update.sh** (`oa update`) - see the contract above. `.env` is always rebuilt from the new `.sample.env` with every old value overlaid except `ENV_CONFIG_VERSION` and the Historify path keys (no version-skip, no MD5); `sync_supported_brokers` then takes `VALID_BROKERS` from `.sample.env`. Dependencies from `requirements-nginx.txt` (or `uv sync`), then `ensure_gunicorn`. `dry-run` previews.
+- **oa-health-check.sh** (`oa status`) - read-only; exit 0 healthy / 1 warnings / 2 critical; probes the gunicorn socket end to end (detects a wedged worker that systemd calls active).
+- **oa-backup.sh** (`oa backup`) - quick (env, GPG-encrypted when gpg exists; databases; nginx + unit) or full archives to `/var/backups/openalgo` (`OA_BACKUP_DIR` overrides; `$1` is the command, never the folder).
+- **oa-restart.sh**, **oa-uninstaller.sh** (`oa remove`: service, files, nginx, certificate), **oa-configure-swap.sh** (`oa swap`, 1-512 GB; asks to confirm - `oa install` pipes `y`), **update_swap_2gb.sh** (fixed 4 GB despite the name).
+- **setup-daily-restart.sh** (`oa daily-restart`) - opt-in 8 AM IST cron restart of ALL instances; never default (crypto instances).
+- **api-manager.sh** (`oa admin`) - installs the dashboard (`openalgo-restart-api.py` copied to /usr/local/bin - a copy, refreshed by `oa update`/auto-update), its service, firewall rule for 8888, the 03:10 cleanup and 07:00/19:00 health-check timers. `api-manager.sh setup` runs that once without the menu.
+- **oa-secure-admin.sh** - manager domain + TLS for the dashboard, `MANAGER_DOMAIN` drop-in, optionally closes 8888 / binds the API to localhost; removes legacy nginx `auth_basic`. Safe to re-run.
+- **oa-reset-admin.sh** (dashboard Factory Reset) and **oa-invalidate-session.sh** (dashboard Invalidate) - write to an instance's SQLite DB; reads are `sqlite3 -readonly`, and reset re-chowns `db/` after writing as root.
+- **oa-clear-logs.sh** - log/temp cleanup (03:10 timer). Note `/tmp` cleanup and reboots remove the `/tmp/openalgo_backup_*` rollback backups.
+- **oa-patch-known-issues.sh** - upstream bug mitigations (see below). **oa-apply-branding.sh** - branding overlay (see below).
+- **make-executable.sh** - obsolete: git stores every `.sh` as 100755.
 
 ## Key Implementation Patterns
 
 **Instance Isolation:**
-- Each instance uses a unique port range (Flask: 5000+N, WebSocket: 8765+N, ZMQ: 5555+N)
-- Separate SQLite databases per instance (openalgo{N}.db, latency{N}.db, logs{N}.db)
+- Each instance uses unique ports: base + N - 1 (instance 1: Flask 5000, WebSocket 8765, ZMQ 5555)
+- Separate databases per instance: openalgo{N}.db, latency{N}.db, logs{N}.db (named by the installer); health.db, sandbox.db, historify.duckdb (upstream defaults, created by OpenAlgo inside the instance's own db/)
 - Unique session/CSRF cookie names (session{N}, csrf_token{N}) to prevent cross-instance pollution
-- Individual systemd services with separate Unix sockets. **Service names are derived from the domain, not the index**: `openalgo-<domain with dots as dashes>` (e.g. `fyers.simplifyed.in` → `openalgo-fyers-simplifyed-in`). See multi-install.sh:334-335. `openalgo{N}` is the *directory* name under /var/python/openalgo-flask/ — `systemctl status openalgo2` will always report "unit could not be found".
+- Individual systemd services with separate Unix sockets. **Service names are derived from the domain, not the index**: `openalgo-<domain with dots as dashes>` (e.g. `fyers.simplifyed.in` → `openalgo-fyers-simplifyed-in`). See `SERVICE_NAME=` in multi-install.sh. `openalgo{N}` is the *directory* name under /var/python/openalgo-flask/ — `systemctl status openalgo2` will always report "unit could not be found".
 
 **Broker Integration:**
-- Validates broker names against hardcoded list (30 supported brokers)
-- Special handling for XTS-based brokers that require market data API credentials
+- Broker list and XTS list come from upstream at install/update time (see "Add support for a new broker")
+- XTS brokers are also asked for market data API credentials
 - Broker credentials injected via `.env` file during installation
 
 **Configuration Management:**
@@ -134,13 +59,10 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 
 ## Key Features
 
-**Version-Aware .env Updates (oa-update.sh):**
-- Reads `ENV_CONFIG_VERSION = 'X.Y.Z'` from both old and new `.sample.env`
-- If versions match: skips merge (code-only updates)
-- If versions differ: intelligently merges configuration
-- Preserves instance-specific settings: ports, broker, credentials, keys, cookies
-- Includes custom variables not in template
-- Falls back to MD5 hash comparison if version field missing
+**.env Updates (oa-update.sh):**
+- Every update rebuilds `.env` from the new `.sample.env`, so new settings appear
+- Every old value is overlaid on top (ports, broker, credentials, keys, cookies, custom variables not in the template), except `ENV_CONFIG_VERSION` and the Historify path keys, which track upstream
+- `VALID_BROKERS` is then taken from `.sample.env`; `OPENALGO_WORKER_CLASS = 'gthread'` is added if `.env` doesn't choose
 
 **Health Check Exit Codes (oa-health-check.sh):**
 - 0: All checks passed (healthy)
@@ -166,9 +88,8 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 4. View Flask app logs: `sudo journalctl -u openalgo-<domain-with-dashes> -n 50`
 
 **Monitor instance health:**
-1. Run health check: `sudo ./oa-health-check.sh all`
-2. Check specific instance: `sudo ./oa-health-check.sh openalgo1`
-3. Integrate with monitoring: Use exit codes for alerting
+1. Read-only report: `sudo oa status` (or `oa status openalgo1`); exit codes for alerting
+2. Check and fix databases + services: `sudo oa repair`
 
 **Backup before major changes:**
 1. Quick backup: `sudo ./oa-backup.sh all quick`
@@ -176,13 +97,13 @@ This is a comprehensive collection of bash scripts for managing OpenAlgo trading
 3. List backups: `sudo ./oa-backup.sh list`
 
 **Update instances safely:**
-1. Dry-run first: `sudo ./oa-update.sh dry-run`
-2. Update single: `sudo ./oa-update.sh openalgo1`
-3. Update all: `sudo ./oa-update.sh update-all`
-4. Rollback if needed: `sudo ./oa-update.sh rollback /path/to/backup openalgo1`
+1. Preview: `sudo ./oa-update.sh dry-run`
+2. One instance first, outside market hours: `sudo oa update openalgo1`
+3. Then all: `sudo oa update` (newest release; `--main` for tip of main)
+4. Rollback if needed: `sudo oa rollback /tmp/openalgo_backup_<inst>_<ts> openalgo1` (printed by the update)
 
 **Modify port allocation strategy:**
-Update the port calculation formulas in the instance loop (lines 272-274 in multi-install.sh)
+Update the `FLASK_PORT=`/`WS_PORT=`/`ZMQ_PORT=` formulas in the instance loop of multi-install.sh
 
 ## Web server: gthread via upstream's launcher
 
@@ -202,7 +123,7 @@ Since OpenAlgo 2.0.2.7, systemd starts gunicorn through upstream's `install/open
 
 **Mitigation (automated):** `oa-patch-known-issues.sh` forces the `is_paired` gate in `app.py` false so the bot never auto-starts. The bot still starts manually from the UI; pairing and session blob are untouched. The patch is pattern-matched (not line-numbered), idempotent, self-skipping once upstream fixes the bug, and auto-reverted if the result doesn't compile.
 
-It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before first start) and by `oa-update.sh` (after `git pull`, which reverts it). `oa-update.sh` then gates success on `oa-health-check.sh`'s exit code rather than on `systemctl is-active`, which cannot detect a wedged worker.
+It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before first start) and by `oa-update.sh` (after `git pull`, which reverts it). `oa-update.sh` then gates success on `oa-repair.sh` (which ends with `oa-health-check.sh`'s end-to-end probe) rather than on `systemctl is-active`, which cannot detect a wedged worker.
 
 **The real fix belongs upstream:** use `eventlet.spawn(_autostart_whatsapp_bot)` instead of `threading.Thread(...)` in `app.py`, or drop the eventlet worker class — gunicorn already warns eventlet is deprecated. Once upstream lands it, the patcher detects the change and skips automatically.
 
@@ -247,7 +168,7 @@ bash tests/oa-test.sh --suite <name>  # run specific suite
 |-------|----------------|
 | `syntax` | `bash -n` on all `.sh`, `python -m py_compile` on `.py` |
 | `shellcheck` | ShellCheck at warning level (requires shellcheck) |
-| `unit` | Logic tests: patch self-test, broker validation, health exit codes, env version parsing |
+| `unit` | Self-tests of oa-patch-known-issues, oa-apply-branding, oa-auto-update, oa-repair, openalgo-restart-api; broker list, health exit codes, update features |
 | `integration` | SSH connectivity, repo push, tool availability, remote checks |
 
 ### EC2 Remote Testing Workflow
@@ -312,14 +233,14 @@ See `AGENTS.md` for the complete fix loop workflow. In brief:
 - Timezone validated as IST (Asia/Kolkata) for Indian stock market compatibility
 
 **Security:**
-- WebSocket/ZMQ ports bound to localhost; external access only through Nginx SSL
-- Firewall configured to allow SSH, HTTP, HTTPS only
+- WebSocket/ZMQ listen on 0.0.0.0 (installers set `WEBSOCKET_HOST`/`ZMQ_HOST`) but ufw denies them; clients reach them only through nginx (`/ws`)
+- Firewall (ufw) allows SSH and 'Nginx Full', plus 8888 for the dashboard until oa-secure-admin.sh closes it
+- `.env` is 600 (installers and every update)
 - File permissions restrict instance directories to www-data user
 - Keys directory (700 permissions) holds sensitive authentication data
 - All scripts require sudo; no security bypass mechanisms
-- The admin dashboard (`openalgo-restart-api.py`, port 8888 - Factory Reset, Reboot Server, per-instance restart/stop/start, SQL terminal) requires login: a styled page + PBKDF2-hashed credentials in `/etc/openalgo/admin-auth.json` + an in-memory session cookie, gating both `/` (manager) and `/monitor` (per-instance). Set/change credentials with `sudo python3 openalgo-restart-api.py --set-admin-password` (also offered by `api-manager.sh` on first install and via its menu, and by `oa-secure-admin.sh`). This intentionally replaces nginx `auth_basic` so the login prompt is stylable rather than the browser's native dialog - don't reintroduce `auth_basic` alongside it, that stacks two logins.
+- The admin dashboard (`openalgo-restart-api.py`, port 8888 - Factory Reset, Reboot Server, per-instance restart/stop/start, SQL terminal) requires login: a styled page + PBKDF2-hashed credentials in `/etc/openalgo/admin-auth.json` + an in-memory session cookie, gating both `/` (manager) and `/monitor` (per-instance). Set/change credentials with `sudo python3 openalgo-restart-api.py --set-admin-password` (`oa install` generates one and shows it once; also via `api-manager.sh`'s menu and `oa-secure-admin.sh`). This intentionally replaces nginx `auth_basic` so the login prompt is stylable rather than the browser's native dialog - don't reintroduce `auth_basic` alongside it, that stacks two logins.
 
 **Version Management:**
-- OpenAlgo devs increment `ENV_CONFIG_VERSION` ONLY when `.env` structure changes
-- This enables smart updates: code-only changes skip .env processing
-- Version mismatch detection prevents configuration drift across instances
+- OpenAlgo's version lives in `utils/version.py` (`VERSION = "x.y.z.w"`); releases are GitHub Releases with descriptive tag names (not semver)
+- `ENV_CONFIG_VERSION` in `.sample.env` changes when the `.env` structure changes; updates copy it from `.sample.env`

@@ -633,6 +633,7 @@ for ((n=1; n<=INSTANCES; n++)); do
     sudo chmod -R 755 "$INSTANCE_DIR"
     # Set more restrictive permissions for sensitive directories
     sudo chmod 700 "$INSTANCE_DIR/keys"
+    sudo chmod 600 "$INSTANCE_DIR/.env"   # broker secrets: owner-only, not 755 from the line above
     [ -S "$SOCKET_FILE" ] && sudo rm -f "$SOCKET_FILE"
 
     # Configure Nginx (initial for SSL)

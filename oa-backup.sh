@@ -9,7 +9,9 @@ NC='\033[0m' # No Color
 
 # Configuration
 BASE_DIR="/var/python/openalgo-flask"
-BACKUP_DIR="${1:-/var/backups/openalgo}"
+# Not $1: that is the command (single|all|restore|...), which used to become
+# the backup folder - e.g. ./all/ in whatever directory the script ran from.
+BACKUP_DIR="${OA_BACKUP_DIR:-/var/backups/openalgo}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_LOG="$BACKUP_DIR/backup_${TIMESTAMP}.log"
 

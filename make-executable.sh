@@ -112,8 +112,5 @@ for script in "$SCRIPT_DIR"/*.sh; do
 done
 
 log_message "\n✅ All scripts are now executable!" "$GREEN"
-log_message "\n💡 You can now run scripts directly:" "$YELLOW"
-log_message "   sudo ./oa-health-check.sh" "$YELLOW"
-log_message "   sudo ./oa-backup.sh" "$YELLOW"
-log_message "   sudo ./oa-update.sh" "$YELLOW"
-log_message "   etc." "$YELLOW"
+log_message "\n💡 Everyday commands go through 'oa' (see: sudo ./oa.sh help)," "$YELLOW"
+log_message "   e.g. sudo ./oa.sh status, sudo ./oa.sh update, sudo ./oa.sh repair" "$YELLOW"
