@@ -216,7 +216,10 @@ setup_update() {
     script_dir="$(cd "$(dirname "$0")" && pwd)"
     if [ -d "$script_dir" ]; then
         ln -sf "$script_dir/"*.sh /usr/local/bin/ 2>/dev/null
-        ln -sf "$script_dir/oa.sh" /usr/local/bin/oa 2>/dev/null
+        # Wrapper, not a symlink: the repo usually lives under /root (700)
+        rm -f /usr/local/bin/oa
+        printf '#!/bin/bash\n[ "$EUID" -eq 0 ] || exec sudo "$0" "$@"\nexec bash \"%s/oa.sh\" "$@"\n' "$script_dir" > /usr/local/bin/oa
+        chmod 755 /usr/local/bin/oa
         echo -e "${GREEN}✅ Scripts linked${NC}"
     else
         echo -e "${RED}❌ Script directory not found${NC}"

@@ -92,12 +92,17 @@ do not enable it on crypto instances.
 
 1. **Once:** get the current scripts and the `oa` command with the install line
    above. On a server with instances it only updates `/root/Simplifyed-Scripts`.
-2. **Try one instance first, outside market hours:**
+2. **Once, if the instances were branded before `oa` existed:** `sudo oa brand all`.
+   Updates re-brand only instances carrying the `.simplifyed-branding` marker;
+   this brands every instance and marks it, with no restart needed (hard-refresh
+   the browser). Skip it to keep instances on OpenAlgo's own branding, or brand
+   one: `sudo oa brand /var/python/openalgo-flask/openalgo2`.
+3. **Try one instance first, outside market hours:**
    ```bash
    sudo oa update openalgo1
    sudo oa status openalgo1
    ```
-3. **Then the rest:** `sudo oa update`
+4. **Then the rest:** `sudo oa update`
 
 `oa update` installs the newest OpenAlgo **release**; an instance already on newer
 code from `main` is never moved backwards. `oa update --main` follows the tip of
@@ -107,7 +112,9 @@ The first update of an older server also, each with its own checks:
 - switches the instance to the **gthread** web server (upstream's launcher,
   64 request threads) - see [Web Server](#web-server);
 - fixes the instance's nginx config (`/socket.io/` block, plain keep-alive);
-- runs `oa repair`, which fixes database ownership.
+- runs `oa repair`, which fixes database ownership and gives the health,
+  sandbox and Historify databases back their own files (earlier installs
+  pointed them at the main `openalgo<N>.db`).
 
 Every update first backs up `.env`, the databases and the current code
 version to `/tmp/openalgo_backup_<instance>_<time>` (the latest one per
@@ -169,7 +176,8 @@ gunicorn/eventlet), rebuild `.env` from the new `.sample.env` (new settings
 appear; every existing value - ports, credentials, keys, cookies, your own
 variables - is carried over; `ENV_CONFIG_VERSION` and the broker list follow
 upstream), run upstream's migrations as `www-data`, re-apply
-branding and patches, start, then `oa repair`. A failure exits non-zero.
+branding (marked instances only - see `oa brand all` above) and patches, start,
+then `oa repair`. A failure exits non-zero.
 
 ```bash
 sudo ./oa-update.sh                          # menu

@@ -24,7 +24,11 @@ else
     [ -e "$DIR" ] && mv "$DIR" "$DIR.old.$(date +%s)"
     git clone -q "$REPO_URL" "$DIR"
 fi
-ln -sf "$DIR/oa.sh" /usr/local/bin/oa
+# A wrapper, not a symlink: /root is 700, so a link into it is a dead end for
+# non-root users ("oa: command not found").
+rm -f /usr/local/bin/oa
+printf '#!/bin/bash\n[ "$EUID" -eq 0 ] || exec sudo "$0" "$@"\nexec bash \"%s/oa.sh\" "$@"\n' "$DIR" > /usr/local/bin/oa
+chmod 755 /usr/local/bin/oa
 
 # Existing server: just make the `oa` command available.
 if compgen -G "/var/python/openalgo-flask/openalgo[0-9]*" >/dev/null; then

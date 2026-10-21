@@ -603,9 +603,9 @@ for ((n=1; n<=INSTANCES; n++)); do
     echo "OPENALGO_WORKER_CLASS = 'gthread'" | sudo tee -a "$ENV_FILE" > /dev/null
 
     # 8. Update database paths (unique per instance)
-    sudo sed -i "s|DATABASE_URL = '.*'|DATABASE_URL = '$DB_PATH'|g" "$ENV_FILE"
-    sudo sed -i "s|LATENCY_DATABASE_URL = '.*'|LATENCY_DATABASE_URL = '$LATENCY_DB'|g" "$ENV_FILE"
-    sudo sed -i "s|LOGS_DATABASE_URL = '.*'|LOGS_DATABASE_URL = '$LOGS_DB'|g" "$ENV_FILE"
+    sudo sed -i "s|^DATABASE_URL = '.*'|DATABASE_URL = '$DB_PATH'|g" "$ENV_FILE"
+    sudo sed -i "s|^LATENCY_DATABASE_URL = '.*'|LATENCY_DATABASE_URL = '$LATENCY_DB'|g" "$ENV_FILE"
+    sudo sed -i "s|^LOGS_DATABASE_URL = '.*'|LOGS_DATABASE_URL = '$LOGS_DB'|g" "$ENV_FILE"
 
     # 9. Update session/CSRF cookies (CRITICAL for instance isolation)
     sudo sed -i "s|SESSION_COOKIE_NAME = '.*'|SESSION_COOKIE_NAME = '$SESSION_COOKIE'|g" "$ENV_FILE"

@@ -105,6 +105,28 @@ for p in paths:
     print("%s\t%s\t%s" % (status, p, detail.replace("\t", " ").replace("\n", " ")))
 '
 
+# Prints the *_DATABASE_URL keys it reset (env file, sample file).
+ENVFIX='
+import re, sys
+env, sample = sys.argv[1], sys.argv[2]
+line = re.compile(r"^([A-Z_]+_DATABASE_URL|DATABASE_URL)\s*=\s*[\x27\"]?([^\x27\"#\s]*).*$", re.M)
+text = open(env).read()
+vals = {k: v for k, v in line.findall(text)}
+defaults = {k: v for k, v in line.findall(open(sample).read())}
+main = vals.get("DATABASE_URL")
+fixed = []
+def sub(m):
+    k = m.group(1)
+    if main and k != "DATABASE_URL" and m.group(2) == main and defaults.get(k) not in (None, "", main):
+        fixed.append(k)
+        return "%s = \x27%s\x27" % (k, defaults[k])
+    return m.group(0)
+new = line.sub(sub, text)
+if fixed:
+    open(env, "w").write(new)  # rewrite in place: keeps owner and 600
+    print(", ".join(fixed))
+'
+
 check_dbs() {  # python, then dir or files
     local py="$1"; shift
     "$py" -c "$CHECKER" "$@"
@@ -129,6 +151,16 @@ repair_instance() {
     inst=$(basename "$dir"); svc=$(service_name_of "$dir")
     py="$dir/venv/bin/python"; [ -x "$py" ] || py=python3
     say "\n── $inst ($svc)" "$BLUE"
+
+    # 0. .env: an old installer sed (unanchored "DATABASE_URL = ...") pointed
+    # HEALTH/SANDBOX/HISTORIFY_DATABASE_URL at the main DB. Updates carry the
+    # values over, so put them back to the .sample.env defaults here.
+    local envfix
+    if [ -f "$dir/.sample.env" ] && envfix=$(python3 -c "$ENVFIX" "$dir/.env" "$dir/.sample.env") && [ -n "$envfix" ]; then
+        say "  ✓ .env: $envfix no longer share the main database" "$GREEN"
+        FIXED+=("$inst: $envfix pointed at the main database - reset to OpenAlgo's defaults")
+        restart=1
+    fi
 
     # 1. Databases
     local damaged=()
@@ -251,6 +283,18 @@ PY
     kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
     if [ "$(cut -f1 <<< "$got")" = "INUSE" ]; then say "  ✓ locked database -> INUSE (left alone)" "$GREEN"
     else say "  ✗ locked database: want INUSE, got: $got" "$RED"; fails=$((fails + 1)); fi
+    # .env with the old installer's shared-DB paths gets the defaults back.
+    printf "DATABASE_URL = 'sqlite:///db/openalgo3.db'\nLOGS_DATABASE_URL = 'sqlite:///db/logs3.db'\nSANDBOX_DATABASE_URL = 'sqlite:///db/openalgo3.db'  # sandbox\nHISTORIFY_DATABASE_URL = 'sqlite:///db/openalgo3.db'\n" > "$t/bad.env"
+    printf "DATABASE_URL = 'sqlite:///db/openalgo.db'\nLOGS_DATABASE_URL = 'sqlite:///db/logs.db'\nSANDBOX_DATABASE_URL = 'sqlite:///db/sandbox.db'\nHISTORIFY_DATABASE_URL = 'db/historify.duckdb'\n" > "$t/sample.env"
+    got=$(python3 -c "$ENVFIX" "$t/bad.env" "$t/sample.env")
+    if [ "$got" = "SANDBOX_DATABASE_URL, HISTORIFY_DATABASE_URL" ] \
+        && grep -q "^SANDBOX_DATABASE_URL = 'sqlite:///db/sandbox.db'$" "$t/bad.env" \
+        && grep -q "^HISTORIFY_DATABASE_URL = 'db/historify.duckdb'$" "$t/bad.env" \
+        && grep -q "^DATABASE_URL = 'sqlite:///db/openalgo3.db'$" "$t/bad.env" \
+        && grep -q "^LOGS_DATABASE_URL = 'sqlite:///db/logs3.db'$" "$t/bad.env" \
+        && [ -z "$(python3 -c "$ENVFIX" "$t/bad.env" "$t/sample.env")" ]; then
+        say "  ✓ .env shared-DB paths reset, others kept, second run no-op" "$GREEN"
+    else say "  ✗ .env fix: got '$got'; $(cat "$t/bad.env")" "$RED"; fails=$((fails + 1)); fi
     [ "$fails" -eq 0 ] && { say "Self-test passed" "$GREEN"; return 0; }
     say "Self-test failed: $fails check(s)" "$RED"; return 1
 }
