@@ -141,7 +141,7 @@ It is applied automatically by `multi-install.sh` and `quick-setup.sh` (before f
 
 **What it deliberately does NOT change:** the Home page's "OpenAlgo MCP" / "OpenAlgo Skills" card titles (OpenAlgo's own products), `docs.openalgo.in` links and every `openalgo.in/<path>` page (`/learn`, `/discord`, `/roadmap` — OpenAlgo's docs and community, with no simplifyed.in equivalent; rewriting them sent users to dead simplifyed.in pages), the lowercase `openalgo` SDK package name, `OPENALGO_*` env vars, service names, DB paths, API fields, browser storage keys. Only capitalised `OpenAlgo` is treated as display copy — verified against upstream `main`, where all 137 occurrences in `frontend/src` are copy or comments, none are values.
 
-**Compressed siblings:** `serve_assets()` prefers `<asset>.br` / `.gz` when the client advertises the encoding. A stale sibling would ship pre-branding bytes, so every rewritten chunk gets its `.gz` regenerated and its `.br` rebuilt (`brotli` CLI, installed by both installers) or removed — Flask then falls back to `.gz`, then raw.
+**Compressed siblings:** `serve_assets()` prefers `<asset>.gz` (upstream generates only gzip at startup, from file mtimes) when the client advertises gzip. A stale sibling would ship pre-branding bytes until the next restart, so every rewritten chunk gets its `.gz` regenerated, and any leftover `.br` from older builds is removed.
 
 **Marker file:** branded instances carry an untracked `.simplifyed-branding` file, which survives `git reset --hard`. `oa-update.sh` re-brands only marked instances, and `oa-apply-branding.sh` with no arguments brands every marked instance.
 
