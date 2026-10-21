@@ -385,8 +385,12 @@ backup_before_update() {
         sudo cp "$instance_dir/.sample.env" "$backup_dir/"
     fi
     
+    # Top-level DB files only: skips damaged-*/backup_before_restore_* folders
+    # and Historify's DuckDB (often GBs of re-downloadable market data, which a
+    # rollback then leaves as it is).
     if [ -d "$instance_dir/db" ]; then
-        sudo cp -r "$instance_dir/db" "$backup_dir/"
+        sudo mkdir -p "$backup_dir/db"
+        sudo find "$instance_dir/db" -maxdepth 1 -type f ! -name '*.duckdb*' -exec cp -p {} "$backup_dir/db/" \;
     fi
 
     # The code to return to on rollback
@@ -1090,8 +1094,15 @@ rollback_instance() {
     # Restore database if available
     if [ -d "$backup_dir/db" ]; then
         log_message "  Restoring database..." "$BLUE"
-        sudo rm -rf "$instance_dir/db"
-        sudo cp -r "$backup_dir/db" "$instance_dir/"
+        # Replace only what was backed up (Historify's DuckDB is not), together
+        # with the live -wal/-shm that belong to the files being replaced.
+        sudo mkdir -p "$instance_dir/db"
+        local f
+        for f in "$backup_dir"/db/*; do
+            [ -f "$f" ] || continue
+            sudo rm -f "$instance_dir/db/$(basename "$f")"{,-wal,-shm,-journal}
+        done
+        sudo cp -p "$backup_dir"/db/* "$instance_dir/db/" 2>/dev/null
         sudo chown -R www-data:www-data "$instance_dir/db"
     fi
     

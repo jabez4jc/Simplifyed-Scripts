@@ -68,7 +68,9 @@ automatically (`oa repair` runs the same check on demand):
 - **Ownership**: database files (including `-wal`/`-shm`) not owned by
   `www-data` are given back. Files left by a root process were the usual cause
   of a broken `sandbox.db` ("attempt to write a readonly database").
-- **Service**: enabled, running and answering requests; restarted if not.
+- **Service**: enabled, running and answering requests; restarted only if not.
+- **Disk**: at 85% full or more it clears logs, the journal, old temp files and
+  `oa backup` archives older than 14 days, and lists what is still big.
 
 Anything fixed, or still broken, is reported on Telegram if it is set up.
 
@@ -125,6 +127,8 @@ Every update first backs up `.env`, the databases and the current code
 version to `/tmp/openalgo_backup_<instance>_<time>` (the latest one per
 instance) and prints the exact `oa rollback` command. `/tmp` is cleared on
 reboot - for a copy that lasts, run `sudo oa backup all quick` first.
+The copy leaves out Historify's DuckDB (re-downloadable market data, often
+GBs); a rollback leaves that file as it is.
 
 ## Scripts (reference)
 

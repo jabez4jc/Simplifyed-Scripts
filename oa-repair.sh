@@ -222,10 +222,12 @@ repair_instance() {
     fi
     [ "$restart" -eq 1 ] && { systemctl restart "$svc"; sleep 20; }
 
-    local out attempt
+    # Judge only "is it up and answering" - not the full health check, whose
+    # CRITICAL also covers server-wide things (a full disk) a restart can't fix.
+    local attempt code
     for attempt in 1 2; do
-        out=$(bash "$SCRIPT_DIR/oa-health-check.sh" "$inst" 2>&1)
-        if [ $? -ne 2 ]; then
+        code=$(sudo -u www-data curl -s -m 10 -o /dev/null -w '%{http_code}' --unix-socket "$dir/openalgo.sock" http://localhost/ 2>/dev/null)
+        if systemctl is-active --quiet "$svc" && [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
             say "  ✓ Service running and serving requests" "$GREEN"
             return 0
         fi
@@ -235,8 +237,7 @@ repair_instance() {
             FIXED+=("$inst: service was not serving requests - restarted")
         fi
     done
-    say "  ✗ $inst is still broken:" "$RED"
-    printf '%s\n' "$out" | grep -E '✗|CRITICAL' | head -5 | sed 's/^/    /'
+    say "  ✗ $inst is still broken (service $(systemctl is-active "$svc"), HTTP ${code:-none}):" "$RED"
     journalctl -u "$svc" -n 15 --no-pager 2>/dev/null | sed 's/^/    /'
     BROKEN+=("$inst ($svc) - see: journalctl -u $svc -n 100")
     return 2
@@ -316,6 +317,25 @@ else
 fi
 
 for d in "${dirs[@]}"; do repair_instance "$d"; done
+
+# Disk: a full disk breaks SQLite writes and updates. At 85%+ run the usual
+# nightly cleanup now, and name what is still big if that isn't enough.
+disk_pct() { df --output=pcent / | tail -1 | tr -dc '0-9'; }
+pct=$(disk_pct)
+if [ "${pct:-0}" -ge 85 ]; then
+    say "\n── Disk ${pct}% full - cleaning up" "$YELLOW"
+    bash "$SCRIPT_DIR/oa-clear-logs.sh" --yes --no-docker >/dev/null 2>&1
+    find /var/backups/openalgo -maxdepth 1 -type f -mtime +14 -delete 2>/dev/null
+    after=$(disk_pct)
+    say "  Disk ${pct}% → ${after}%" "$([ "$after" -lt 85 ] && echo "$GREEN" || echo "$RED")"
+    FIXED+=("disk was ${pct}% full - logs, journal and old backups cleaned, now ${after}%")
+    if [ "$after" -ge 85 ]; then
+        say "  Still big:" "$RED"
+        du -xh --max-depth=3 / 2>/dev/null | sort -rh | sed -n '2,9p' | sed 's/^/    /'
+        # Not BROKEN: exit 2 makes oa-update roll back, and a rollback frees nothing
+        FIXED+=("⚠ disk still ${after}% full - see the 'Still big' list from: sudo oa repair")
+    fi
+fi
 
 if [ ${#FIXED[@]} -gt 0 ] || [ ${#BROKEN[@]} -gt 0 ]; then
     msg="🛠 $(hostname): instance check"$'\n'
