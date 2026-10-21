@@ -194,7 +194,13 @@ setup_admin_login() {
 
 setup_firewall() {
     echo -e "${YELLOW}Configuring firewall...${NC}"
-    
+
+    # oa-secure-admin closed 8888 and bound the API to localhost: keep it closed
+    if grep -qs '^Environment=OPENALGO_BIND=127.0.0.1' /etc/systemd/system/openalgo-restart-api.service.d/override.conf; then
+        echo -e "${GREEN}✅ Port 8888 stays closed (dashboard served via its domain)${NC}"
+        return 0
+    fi
+
     if command -v ufw &>/dev/null; then
         ufw allow 8888/tcp > /dev/null 2>&1
         ufw allow 8888/udp > /dev/null 2>&1
@@ -205,7 +211,7 @@ setup_firewall() {
 }
 
 setup_update() {
-    clear
+    [ -n "${OA_NO_MENU:-}" ] || clear
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
     echo -e "${YELLOW}  SETUP / UPDATE${NC}"
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
@@ -305,7 +311,7 @@ wait_for() {
 }
 
 show_status() {
-    clear
+    [ -n "${OA_NO_MENU:-}" ] || clear
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
     echo -e "${YELLOW}  STATUS${NC}"
     echo -e "${BLUE}════════════════════════════════════════════════════${NC}"
@@ -350,7 +356,7 @@ show_status() {
     back_to_menu 0
 }
 
-# `api-manager.sh setup` (used by `oa install`) runs Setup / Update once and
+# `api-manager.sh setup` (used by `oa install` and `oa update`) runs Setup / Update once and
 # exits instead of returning to the menu.
 back_to_menu() {
     [ -n "${OA_NO_MENU:-}" ] && exit "$1"

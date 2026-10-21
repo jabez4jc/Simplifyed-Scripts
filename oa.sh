@@ -91,6 +91,11 @@ EOF
             echo "Updating to OpenAlgo release $tag"
             OA_UPDATE_TAG="$tag" run oa-update.sh "$target"
         fi
+        rc=$?
+        # Install or refresh the admin dashboard, its service and timers (safe
+        # to repeat: keeps the admin login and a closed port 8888)
+        run api-manager.sh setup
+        exit $rc
         ;;
     auto-update)   run oa-auto-update.sh "$@" ;;
     status)        run oa-health-check.sh "${@:-all}" ;;
