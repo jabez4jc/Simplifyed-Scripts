@@ -62,6 +62,10 @@ brand_instance() {
         fi
     done
 
+    # Start from upstream's dist, so rewrites an older version of this script
+    # made (e.g. /learn and docs links sent to simplifyed.in) are undone too.
+    git -c safe.directory="$dir" -C "$dir" checkout -- frontend/dist 2>/dev/null
+
     # Text pass first: it guards, and refuses to touch anything if upstream has
     # started using "OpenAlgo" as a value. Assets are only swapped once it passes.
     python3 - "$dir" "$BRAND_URL" "$BRAND_NAME" <<'PY'
@@ -136,7 +140,9 @@ def rewrite(text):
     text = re.sub(r"(?<![\w./])(?:www\.)?openalgo\.in(?![\w-]|[./][\w-])", brand_host, text)
     # Capitalised "OpenAlgo" is display copy everywhere in this app. Lowercase
     # `openalgo` is left alone: it is the SDK package name and env-var prefix.
-    text = text.replace("OpenAlgo", brand_name)
+    # The Home page's "OpenAlgo MCP" / "OpenAlgo Skills" cards name OpenAlgo's
+    # own products, so they keep upstream's name.
+    text = re.sub(r"OpenAlgo(?! (?:MCP|Skills)\b)", brand_name, text)
     # ...except the lowercase visual wordmark in the Flow / Playground headers,
     # which is the only lowercase occurrence rendered as a brand name.
     text = re.sub(r"(className:.font-semibold text-sm.,children:.)openalgo(.)",
@@ -318,6 +324,7 @@ self_test() {
 EOF
     cat > "$tmp/frontend/dist/assets/Home-abc123.js" <<'EOF'
 (0,M.jsx)(`img`,{src:`/logo.png`,alt:`OpenAlgo`,className:`h-8 w-8`}),(0,M.jsx)(`span`,{className:`text-xl font-semibold`,children:`OpenAlgo`})
+children:[`OpenAlgo MCP`,a];children:[`OpenAlgo Skills`,b];p=`Connect your OpenAlgo account`
 EOF
     cat > "$tmp/frontend/dist/assets/Misc-def456.js" <<'EOF'
 a=`https://openalgo.in/discord`;b=`https://docs.openalgo.in/getting-started`;
@@ -374,6 +381,9 @@ EOF
     check        "storage key preserved"            "openalgo_theme" "$misc"
     check        "home lockup applied"              "/images/simplifyed-home-logo.png" "$home"
     check_absent "home square mark replaced"        "src=\`/logo.png\`" "$home"
+    check        "OpenAlgo MCP kept"                "\`OpenAlgo MCP\`" "$home"
+    check        "OpenAlgo Skills kept"             "\`OpenAlgo Skills\`" "$home"
+    check        "other Home copy rebranded"        "Connect your Simplifyed account" "$home"
     check        "app.py banner rebranded"          "Starting Simplifyed..." "$tmp/app.py"
 
     # A stale .gz would serve the pre-branding bytes to every gzip client.
