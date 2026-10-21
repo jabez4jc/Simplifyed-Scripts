@@ -68,6 +68,9 @@ automatically (`oa repair` runs the same check on demand):
 - **Ownership**: database files (including `-wal`/`-shm`) not owned by
   `www-data` are given back. Files left by a root process were the usual cause
   of a broken `sandbox.db` ("attempt to write a readonly database").
+- **Orphaned databases**: a `.db`/`.duckdb` in `db/` that neither `.env` nor
+  OpenAlgo's defaults point at (e.g. a stray `openalgo.db` next to
+  `openalgo2.db`) is deleted, unless a process has it open.
 - **Service**: enabled, running and answering requests; restarted only if not.
 - **Disk**: at 85% full or more it clears logs, the journal, old temp files and
   `oa backup` archives older than 14 days, and lists what is still big.

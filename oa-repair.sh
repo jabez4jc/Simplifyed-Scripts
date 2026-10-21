@@ -127,6 +127,34 @@ if fixed:
     print(", ".join(fixed))
 '
 
+# Prints db/*.db|*.duckdb files nothing points at (instance dir). In use = every
+# DB key in .env, plus OpenAlgo's built-in default for each one .env leaves out.
+ORPHANS='
+import glob, os, re, sys
+inst = sys.argv[1]
+defaults = {"DATABASE_URL": "db/openalgo.db", "LATENCY_DATABASE_URL": "db/latency.db",
+            "LOGS_DATABASE_URL": "db/logs.db", "HEALTH_DATABASE_URL": "db/health.db",
+            "SANDBOX_DATABASE_URL": "db/sandbox.db", "HISTORIFY_DATABASE_PATH": "db/historify.duckdb",
+            "HISTORIFY_DATABASE_URL": "db/historify.duckdb"}
+env = {}
+for line in open(os.path.join(inst, ".env")):
+    m = re.match(r"\s*([A-Z_]+)\s*=\s*[\x27\"]?([^\x27\"#\s]*)", line)
+    if m:
+        env[m.group(1)] = m.group(2)
+if not env.get("DATABASE_URL"):
+    sys.exit(0)  # cannot tell what is in use - delete nothing
+used = {env.get(k) or d for k, d in defaults.items()}
+used |= {v for k, v in env.items() if re.search(r"DATABASE|DB_(URL|PATH)|DUCKDB", k)}
+def resolve(v):
+    if v.startswith("sqlite:///"):
+        v = v[len("sqlite:///"):]
+    return os.path.realpath(v if os.path.isabs(v) else os.path.join(inst, v))
+used = {resolve(v) for v in used if v}
+for p in sorted(glob.glob(os.path.join(inst, "db", "*.db")) + glob.glob(os.path.join(inst, "db", "*.duckdb"))):
+    if os.path.realpath(p) not in used:
+        print(p)
+'
+
 check_dbs() {  # python, then dir or files
     local py="$1"; shift
     "$py" -c "$CHECKER" "$@"
@@ -161,6 +189,20 @@ repair_instance() {
         FIXED+=("$inst: $envfix pointed at the main database - reset to OpenAlgo's defaults")
         restart=1
     fi
+
+    # 0b. Orphaned databases (e.g. a stray openalgo.db next to openalgo<N>.db):
+    # nothing reads them, so delete them - unless some process has one open.
+    local orphan f
+    while IFS= read -r orphan; do
+        [ -n "$orphan" ] || continue
+        if find /proc/[0-9]*/fd -lname "$orphan" 2>/dev/null | grep -q .; then
+            say "  · $(basename "$orphan"): not used by .env but open by a process - left alone"
+            continue
+        fi
+        for f in "$orphan" "$orphan-wal" "$orphan-shm" "$orphan-journal" "$orphan.wal"; do rm -f "$f"; done
+        say "  ✓ Deleted orphaned $(basename "$orphan") (nothing uses it)" "$GREEN"
+        FIXED+=("$inst: deleted orphaned database $(basename "$orphan")")
+    done < <([ -f "$dir/.env" ] && python3 -c "$ORPHANS" "$dir")
 
     # 1. Databases
     local damaged=()
@@ -296,6 +338,17 @@ PY
         && [ -z "$(python3 -c "$ENVFIX" "$t/bad.env" "$t/sample.env")" ]; then
         say "  ✓ .env shared-DB paths reset, others kept, second run no-op" "$GREEN"
     else say "  ✗ .env fix: got '$got'; $(cat "$t/bad.env")" "$RED"; fails=$((fails + 1)); fi
+    # Orphans: stray openalgo.db goes; named, defaulted (sandbox/historify) and
+    # .env-pointed files stay. Without DATABASE_URL nothing is reported.
+    mkdir -p "$t/o/db"
+    touch "$t"/o/db/{openalgo.db,openalgo2.db,logs2.db,sandbox.db,historify.duckdb,custom.db}
+    printf "DATABASE_URL = 'sqlite:///db/openalgo2.db'\nLOGS_DATABASE_URL = 'sqlite:///db/logs2.db'\nMY_DB_PATH = 'db/custom.db'\n" > "$t/o/.env"
+    got=$(python3 -c "$ORPHANS" "$t/o")
+    if [ "$got" = "$t/o/db/openalgo.db" ]; then say "  ✓ orphan detection: only the stray openalgo.db" "$GREEN"
+    else say "  ✗ orphans: got '$got'" "$RED"; fails=$((fails + 1)); fi
+    printf "LOGS_DATABASE_URL = 'sqlite:///db/logs2.db'\n" > "$t/o/.env"
+    if [ -n "$(python3 -c "$ORPHANS" "$t/o")" ]; then say "  ✗ orphans without DATABASE_URL must be empty" "$RED"; fails=$((fails + 1))
+    else say "  ✓ no DATABASE_URL -> nothing deleted" "$GREEN"; fi
     [ "$fails" -eq 0 ] && { say "Self-test passed" "$GREEN"; return 0; }
     say "Self-test failed: $fails check(s)" "$RED"; return 1
 }
@@ -326,6 +379,9 @@ if [ "${pct:-0}" -ge 85 ]; then
     say "\n── Disk ${pct}% full - cleaning up" "$YELLOW"
     bash "$SCRIPT_DIR/oa-clear-logs.sh" --yes --no-docker >/dev/null 2>&1
     find /var/backups/openalgo -maxdepth 1 -type f -mtime +14 -delete 2>/dev/null
+    # Update backups made before they excluded Historify's DuckDB (GBs each)
+    rm -f /tmp/openalgo_backup_*/db/*.duckdb* 2>/dev/null
+    rm -rf /tmp/openalgo_backup_*/db/*/ 2>/dev/null
     after=$(disk_pct)
     say "  Disk ${pct}% → ${after}%" "$([ "$after" -lt 85 ] && echo "$GREEN" || echo "$RED")"
     FIXED+=("disk was ${pct}% full - logs, journal and old backups cleaned, now ${after}%")
