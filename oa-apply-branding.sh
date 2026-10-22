@@ -75,15 +75,18 @@ from pathlib import Path
 root, brand_url, brand_name = Path(sys.argv[1]), sys.argv[2].rstrip("/"), sys.argv[3]
 dist = root / "frontend" / "dist"
 
-# Outbound destinations only. Social/repo links keep their path on brand_url.
-url_map = {
-    "https://github.com/marketcalls/openalgo": brand_url,
-    "https://x.com/openalgoHQ": brand_url,
-    "https://www.youtube.com/@openalgo": brand_url,
+# Social links (footer icons, Login, FAQ, Home) go to Simplifyed's own
+# accounts. Exact URLs only: the lookahead leaves e.g. .../openalgo/issues alone.
+social_map = {
+    r"https://github\.com/marketcalls/openalgo": "https://github.com/jabez4jc",
+    r"https://(?:www\.)?openalgo\.in/discord": "https://discord.gg/aGX5aHWMj",
+    r"https://(?:www\.)?(?:x|twitter)\.com/openalgoHQ": "https://x.com/jabez4jc",
+    r"https://(?:www\.)?youtube\.com/@openalgo": "https://www.youtube.com/@SimplifyedAI",
 }
-# The openalgo.in HOMEPAGE becomes brand_url, but any openalgo.in page
-# (/learn, /discord, /roadmap) and docs.openalgo.in stay upstream: those are
-# OpenAlgo's documentation and community, with no simplifyed.in equivalent.
+social_map = {re.compile(k + r"(?![\w/.-])"): v for k, v in social_map.items()}
+# The openalgo.in HOMEPAGE becomes brand_url, but other openalgo.in pages
+# (/learn, /roadmap) and docs.openalgo.in stay upstream: those are OpenAlgo's
+# documentation, with no simplifyed.in equivalent.
 home_link = re.compile(r"https://(?:www\.)?openalgo\.in(?![\w-]|[./][\w-])")
 
 # This overlay assumes capitalised "OpenAlgo" is ALWAYS display copy — true of
@@ -131,8 +134,8 @@ def guard(text, label):
 brand_host = brand_url.split("://", 1)[-1]
 
 def rewrite(text):
-    for old, new in url_map.items():
-        text = text.replace(old, new)
+    for old, new in social_map.items():
+        text = old.sub(new, text)
     text = home_link.sub(brand_url, text)
     # Bare hostnames rendered as visible link text (the footer's "www.openalgo.in",
     # a chart annotation) are not URLs and so are missed above. The lookarounds
@@ -280,7 +283,8 @@ EOF
     cat > "$tmp/frontend/dist/assets/Misc-def456.js" <<'EOF'
 a=`https://openalgo.in/discord`;b=`https://docs.openalgo.in/getting-started`;
 l=`https://www.openalgo.in/learn`;r=`https://openalgo.in/roadmap`;h=`https://openalgo.in`;
-gh=`https://github.com/marketcalls/openalgo`;
+gh=`https://github.com/marketcalls/openalgo`;gi=`https://github.com/marketcalls/openalgo/issues`;
+xt=`https://x.com/openalgoHQ`;yt=`https://www.youtube.com/@openalgo`;
 w=(0,B.jsx)(`a`,{href:`https://www.openalgo.in`,children:`www.openalgo.in`});
 v=(0,B.jsx)(`a`,{href:`https://docs.openalgo.in`,children:`docs.openalgo.in`});
 p={text:`openalgo.in`,showarrow:!1};
@@ -313,8 +317,11 @@ EOF
     check        "manifest linked"                  "/images/site.webmanifest?v=sfy1" "$idx"
     check        "manifest written"                 "/images/favicon-512.png" "$tmp/frontend/dist/images/site.webmanifest"
     check        "homepage link rebranded"          "h=\`https://simplifyed.in\`" "$misc"
-    check        "repo link rebranded"              "gh=\`https://simplifyed.in\`" "$misc"
-    check        "openalgo.in/discord preserved"    "https://openalgo.in/discord" "$misc"
+    check        "GitHub link rebranded"            "gh=\`https://github.com/jabez4jc\`" "$misc"
+    check        "GitHub sub-path untouched"        "gi=\`https://github.com/marketcalls/openalgo/issues\`" "$misc"
+    check        "Discord link rebranded"           "a=\`https://discord.gg/aGX5aHWMj\`" "$misc"
+    check        "X link rebranded"                 "xt=\`https://x.com/jabez4jc\`" "$misc"
+    check        "YouTube link rebranded"           "yt=\`https://www.youtube.com/@SimplifyedAI\`" "$misc"
     check        "openalgo.in/learn preserved"      "https://www.openalgo.in/learn" "$misc"
     check        "openalgo.in/roadmap preserved"    "https://openalgo.in/roadmap" "$misc"
     check_absent "no docs.simplifyed.in"            "docs.simplifyed" "$misc"
