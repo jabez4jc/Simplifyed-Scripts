@@ -267,10 +267,10 @@ check_recent_errors() {
     
     if [ "$error_count" -eq 0 ]; then
         print_ok "No recent errors in logs"
-    elif [ "$error_count" -lt 5 ]; then
-        print_warning "Found $error_count errors in recent logs"
     else
-        print_critical "Found $error_count errors in recent logs"
+        # Never critical: brokers' websocket drops log errors all day; the
+        # socket probe (check_http_endpoint) is what catches a dead worker
+        print_warning "Found $error_count errors in recent logs"
     fi
 }
 

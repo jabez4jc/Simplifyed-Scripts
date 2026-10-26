@@ -23,6 +23,18 @@ log_message() {
 }
 
 # Function to check command status
+# env_set FILE KEY VALUE - set `KEY = 'VALUE'` in .env. The value goes in on
+# stdin, never on a command line: sudo logs command lines to the journal and
+# `ps` shows them to every user (API secrets, APP_KEY, pepper).
+env_set() {
+    printf '%s' "$3" | sudo python3 -c 'import re, sys
+p, k, v = sys.argv[1], sys.argv[2], sys.stdin.read()
+line = k + " = \x27" + v + "\x27"
+s = open(p).read()
+s, n = re.subn(r"(?m)^" + re.escape(k) + r"[ \t]*=.*$", lambda m: line, s, count=1)
+open(p, "w").write(s if n else s + line + "\n")' "$1" "$2"
+}
+
 check_status() {
     if [ $? -ne 0 ]; then
         log_message "Error: $1" "$RED"
@@ -360,11 +372,11 @@ sudo sed -i "s|ZMQ_PORT='[0-9]*'|ZMQ_PORT='5555'|g" "$ENV_FILE"
 sudo sed -i "s|WEBSOCKET_URL='.*'|WEBSOCKET_URL='wss://$DOMAIN/ws'|g" "$ENV_FILE"
 sudo sed -i "s|WEBSOCKET_HOST='127.0.0.1'|WEBSOCKET_HOST='0.0.0.0'|g" "$ENV_FILE"
 sudo sed -i "s|ZMQ_HOST='127.0.0.1'|ZMQ_HOST='0.0.0.0'|g" "$ENV_FILE"
-sudo sed -i "s|YOUR_BROKER_API_KEY|$API_KEY|g" "$ENV_FILE"
-sudo sed -i "s|YOUR_BROKER_API_SECRET|$API_SECRET|g" "$ENV_FILE"
+env_set "$ENV_FILE" BROKER_API_KEY "$API_KEY"
+env_set "$ENV_FILE" BROKER_API_SECRET "$API_SECRET"
 # Matched by key, not value: upstream's template placeholders change over time
-sudo sed -i -E "s|^APP_KEY *=.*|APP_KEY = '$APP_KEY'|" "$ENV_FILE"
-sudo sed -i -E "s|^API_KEY_PEPPER *=.*|API_KEY_PEPPER = '$API_KEY_PEPPER'|" "$ENV_FILE"
+env_set "$ENV_FILE" APP_KEY "$APP_KEY"
+env_set "$ENV_FILE" API_KEY_PEPPER "$API_KEY_PEPPER"
 
 # Behind nginx: trust X-Forwarded-For so IP-based features see real clients
 sudo sed -i "s|TRUST_PROXY_HEADERS = 'FALSE'|TRUST_PROXY_HEADERS = 'TRUE'|g" "$ENV_FILE"
@@ -373,8 +385,8 @@ sudo sed -i "s|TRUST_PROXY_HEADERS = 'FALSE'|TRUST_PROXY_HEADERS = 'TRUE'|g" "$E
 echo "OPENALGO_WORKER_CLASS = 'gthread'" | sudo tee -a "$ENV_FILE" > /dev/null
 
 if [ "$IS_XTS" = "true" ]; then
-    sudo sed -i "s|YOUR_BROKER_MARKET_API_KEY|$API_KEY_MARKET|g" "$ENV_FILE"
-    sudo sed -i "s|YOUR_BROKER_MARKET_API_SECRET|$API_SECRET_MARKET|g" "$ENV_FILE"
+    env_set "$ENV_FILE" BROKER_API_KEY_MARKET "$API_KEY_MARKET"
+    env_set "$ENV_FILE" BROKER_API_SECRET_MARKET "$API_SECRET_MARKET"
 fi
 
 log_message "✅ .env configured successfully" "$GREEN"
