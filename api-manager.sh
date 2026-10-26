@@ -246,6 +246,21 @@ setup_update() {
     # Factory Reset and the dashboard's SQL terminal use the sqlite3 CLI
     command -v sqlite3 >/dev/null || apt-get install -y -qq sqlite3 >/dev/null 2>&1
 
+    # Older vhosts have ssl_stapling; Let's Encrypt ended OCSP, so every
+    # `nginx -t` warns. Drop it (restored if nginx then rejects the config).
+    local stapled
+    stapled=$(grep -l '^[[:space:]]*ssl_stapling' /etc/nginx/sites-available/* 2>/dev/null)
+    if [ -n "$stapled" ]; then
+        local f
+        for f in $stapled; do sed -i.oa-stapling.bak '/^[[:space:]]*ssl_stapling/d' "$f"; done
+        if nginx -t >/dev/null 2>&1; then
+            for f in $stapled; do rm -f "$f.oa-stapling.bak"; done
+            systemctl reload nginx
+        else
+            for f in $stapled; do mv "$f.oa-stapling.bak" "$f"; done
+        fi
+    fi
+
     echo -e "${YELLOW}Installing daily cleanup timer...${NC}"
     local _script_path="/usr/local/bin/oa-clear-logs.sh"
     cat > /etc/systemd/system/openalgo-clear-safe.service << 'EOF'
