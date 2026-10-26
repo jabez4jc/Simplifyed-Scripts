@@ -1298,7 +1298,8 @@ body{display:flex;align-items:center;justify-content:center}
         username = fields.get('username', [''])[0]
         password = fields.get('password', [''])[0]
         next_path = fields.get('next', [prefix if prefix else '/'])[0]
-        if not next_path.startswith('/'):
+        # Local paths only: "//host" and "/\\host" are other sites to a browser
+        if not next_path.startswith('/') or next_path[1:2] in ('/', '\\'):
             next_path = prefix if prefix else '/'
 
         creds = load_credentials()
@@ -1338,7 +1339,7 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_logout(path)
             return
         if path != '/health' and not self._is_authenticated():
-            if path in ('/', '/index.html', '/monitor', '/monitor/'):
+            if path in ('/', '/index.html', '/monitor', '/monitor/', '/api/docs'):
                 self._redirect_to_login(path)
             else:
                 self.send_json({"error": "Authentication required"}, 401)
