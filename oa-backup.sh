@@ -15,8 +15,9 @@ BACKUP_DIR="${OA_BACKUP_DIR:-/var/backups/openalgo}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_LOG="$BACKUP_DIR/backup_${TIMESTAMP}.log"
 
-# Create backup directory if it doesn't exist
-mkdir -p "$BACKUP_DIR"
+# Archives hold .env and openalgo.db (API keys, broker tokens): root-only
+umask 077
+mkdir -p "$BACKUP_DIR" && chmod 700 "$BACKUP_DIR"
 
 # Function to log messages
 log_message() {

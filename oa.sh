@@ -9,7 +9,7 @@
 #   oa auto-update disable|status|telegram
 #   oa status [INSTANCE]                     health check (default: all)
 #   oa repair [INSTANCE]                     check DBs + services, fix what is broken
-#   oa restart                               restart instances
+#   oa restart [INSTANCE|all]                restart instances
 #   oa rollback BACKUP_DIR INSTANCE          undo an update
 #   oa backup ...  | oa remove  | oa brand ...  | oa swap [GB]
 #   oa daily-restart                         opt-in 8 AM IST restart (not for crypto)

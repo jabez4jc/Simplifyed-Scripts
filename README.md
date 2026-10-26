@@ -51,7 +51,7 @@ oa update                  # update scripts, every instance (newest OpenAlgo rel
 oa update openalgo2        # just one instance (--main: tip of main instead of a release)
 oa status                  # health check of every instance
 oa repair                  # check databases + services and fix what is broken
-oa restart                 # restart instances
+oa restart [INSTANCE|all]  # restart instances (menu without an argument)
 oa rollback BACKUP INST    # undo an update (code, dependencies, .env, databases)
 oa backup | oa remove | oa brand | oa swap | oa admin
 oa help

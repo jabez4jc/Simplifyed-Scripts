@@ -141,7 +141,9 @@ run_patch() {
     sudo cp "$file" "$backup"
 
     local out
-    out=$(sudo -E bash -c "$(declare -f "$fn"); WHATSAPP_MARKER='$WHATSAPP_MARKER'; ASSET_MARKER='$ASSET_MARKER'; $fn '$file'" 2>&1)
+    # No `sudo -E`: sudo-rs (Ubuntu 25.10+) prints a warning for it, which lands
+    # in $out and made a successful patch look failed (and get reverted)
+    out=$(sudo bash -c "$(declare -f "$fn"); WHATSAPP_MARKER='$WHATSAPP_MARKER'; ASSET_MARKER='$ASSET_MARKER'; $fn '$file'" 2>&1)
 
     case "$out" in
         PATCHED*)

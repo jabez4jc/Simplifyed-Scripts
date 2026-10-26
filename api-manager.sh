@@ -362,7 +362,13 @@ show_status() {
     [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || SERVER_IP=$(hostname -I | awk '{print $1}')
     echo ""
     echo -e "${YELLOW}Access the dashboard:${NC}"
-    echo -e "  ${GREEN}http://$SERVER_IP:8888${NC}"
+    local manager_domain
+    manager_domain=$(systemctl cat openalgo-restart-api 2>/dev/null | sed -n 's/^Environment=MANAGER_DOMAIN=//p' | tail -1)
+    if [ -n "$manager_domain" ]; then
+        echo -e "  ${GREEN}https://$manager_domain${NC}"
+    else
+        echo -e "  ${GREEN}http://$SERVER_IP:8888${NC}"
+    fi
     [ -n "${ADMIN_NOTE:-}" ] && echo -e "  ${YELLOW}$ADMIN_NOTE${NC}"
     echo ""
     

@@ -38,7 +38,13 @@ done
 echo "$i) 🚀 Restart ALL instances"
 echo ""
 
-read -p "Select an instance to restart [1-$i]: " CHOICE
+# `oa restart INSTANCE|all` skips the menu
+case "${1:-}" in
+    "") read -p "Select an instance to restart [1-$i]: " CHOICE ;;
+    all) CHOICE=$i ;;
+    *) CHOICE=0
+       for n in "${!INSTANCES[@]}"; do [ "${INSTANCES[$n]}" = "$1" ] && CHOICE=$((n+1)); done ;;
+esac
 
 if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > $i )); then
     echo "❌ Invalid choice."
