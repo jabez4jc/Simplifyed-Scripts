@@ -229,11 +229,49 @@ cmd_telegram() {
     read -rsp "Bot token (hidden; blank to skip): " token; echo
     # 2 = skipped (oa install stops asking), 1 = rejected (it asks again)
     [ -n "$token" ] || { say "Skipped - set it up any time with: sudo oa auto-update telegram" "$YELLOW"; return 2; }
+    # Token via curl's config on stdin, never argv. Prints "@bot", a chat ID,
+    # or "ERR <Telegram's own reason>" - so a wrong token, a webhook or no
+    # messages are told apart instead of all reading "no message found".
+    tg() {
+        printf 'url = "https://api.telegram.org/bot%s/%s"\n' "$token" "$1" | curl -s -m 20 -K - \
+            | python3 -c 'import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(print("ERR no answer from api.telegram.org"))
+if not d.get("ok"):
+    sys.exit(print("ERR " + d.get("description", "unknown error")))
+r = d["result"]
+if isinstance(r, dict):
+    sys.exit(print("@" + r.get("username", "?")))
+for u in reversed(r):  # newest first; /start, edits and joins carry the chat too
+    for k in ("message", "edited_message", "channel_post", "my_chat_member"):
+        if k in u:
+            sys.exit(print(u[k]["chat"]["id"]))'
+    }
+    local bot
+    bot=$(tg getMe)
+    case "$bot" in
+        @*) say "Bot: $bot" "$GREEN" ;;
+        *)  say "❌ Telegram did not accept the token: ${bot#ERR }" "$RED"
+            say "   Copy it again from @BotFather (/mybots → the bot → API Token)." "$YELLOW"
+            return 1 ;;
+    esac
     read -rp "Chat ID (leave blank to detect it - send any message to the bot first): " chat
     if [ -z "$chat" ]; then
-        chat=$(printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$token" | curl -s -m 20 -K - \
-            | python3 -c 'import json,sys; u=json.load(sys.stdin).get("result",[]); print(u[-1]["message"]["chat"]["id"] if u and "message" in u[-1] else "")' 2>/dev/null)
-        [ -n "$chat" ] || { say "No message found. Send the bot a message, then run this again." "$RED"; return 1; }
+        chat=$(tg getUpdates)
+        case "$chat" in
+            ERR*webhook*)
+                say "❌ $bot has a webhook set, so its messages go to another app and cannot be read here." "$RED"
+                say "   Enter the chat ID by hand (message @userinfobot to get yours), or use a separate bot." "$YELLOW"
+                return 1 ;;
+            ERR*) say "❌ ${chat#ERR }" "$RED"; return 1 ;;
+            "")
+                say "❌ No message found for $bot. Send it a message, then run this again." "$RED"
+                say "   Still nothing? Something else may be reading this bot's messages - enter the" "$YELLOW"
+                say "   chat ID by hand instead (message @userinfobot to get yours)." "$YELLOW"
+                return 1 ;;
+        esac
         say "Detected chat ID: $chat" "$GREEN"
     fi
     TELEGRAM_BOT_TOKEN="$token"; TELEGRAM_CHAT_ID="$chat"
