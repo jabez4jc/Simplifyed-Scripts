@@ -1381,6 +1381,15 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_scripts_status()
         elif self.path == '/api/telegram':
             self.handle_telegram_status()
+        elif path == '/api/openapi.json':
+            self.send_json(build_openapi(self.headers.get('Host')))
+        elif path == '/api/docs':
+            body = render_api_docs(self.headers.get('Host')).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path.startswith('/api/terminal/dbs'):
             self.handle_terminal_dbs()
         elif self.path.startswith('/api/jobs/'):
@@ -1447,11 +1456,9 @@ body{display:flex;align-items:center;justify-content:center}
         elif path == '/api/change-password':
             self.handle_change_password(data)
         elif path == '/api/invalidate-session':
-            instance = data.get('instance', '')
+            instance = self._instance_arg(data.get('instance', ''))
             if instance:
                 self.handle_invalidate_session(instance)
-            else:
-                self.send_json({"error": "Missing instance parameter"}, 400)
         elif path == '/api/reset-admin-user':
             instance = self._instance_arg(data.get('instance', ''))
             if instance:
@@ -2309,6 +2316,10 @@ body{display:flex;align-items:center;justify-content:center}
     def handle_invalidate_session(self, instance):
         """Invalidate session for a specific instance"""
         result = self._invalidate_session(instance)
+        if result.get("auth_error"):
+            self.send_json({"status": "error", "error": result["auth_error"], "instance": instance,
+                            "details": result, "timestamp": str(datetime.now())}, 500)
+            return
         self.send_json({
             "status": "success",
             "message": f"Session invalidated for {instance}",
@@ -2696,7 +2707,8 @@ setTimeout(loadInstance,1000);
 async function invalidateSession(){
 if(!confirm('Invalidate the session for this instance? This will clear auth tokens and revoke the session.'))return;
 showAlert('Invalidating session...','info');
-await post('/monitor/api/invalidate-session');
+const r=await post('/monitor/api/invalidate-session');
+if(r&&r.error){showAlert('Error: '+r.error,'error');return;}
 setTimeout(loadInstance,1000);
 }
 let resetDialogHealth=null;
@@ -2792,6 +2804,7 @@ setInterval(loadInstance,30000);
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
 <button class="icon-btn" title="Refresh" onclick="loadInstances()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+<a class="icon-btn" href="/api/docs" target="_blank" rel="noopener" title="API docs (for other apps)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg></a>
 <button class="icon-btn" title="Telegram Notices" onclick="telegramSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
 <button class="icon-btn" title="Change Password" onclick="changePassword()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></button>
 <a class="icon-btn" href="/logout" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
@@ -3218,8 +3231,9 @@ setTimeout(loadInstances,1000);
 }
 async function invalidate(inst){
 if(!confirm(`Invalidate session for ${inst}? This will clear auth tokens and revoke the session.`))return;
-await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
-showAlert(`Invalidating session for ${inst}`,'info');
+const r=await fetchJson('/api/invalidate-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:inst})});
+if(r&&r.error){showAlert('Error: '+r.error,'error');return;}
+showAlert(`Session invalidated for ${inst}`,'success');
 setTimeout(loadInstances,1000);
 }
 let resetDialogHealth=null;
@@ -3312,6 +3326,236 @@ if(j&&!j.error&&(j.status==='running'||Date.now()/1000-j.modified_ts<3600))pollJ
         """Suppress logging"""
         pass
 
+# ---------------------------------------------------------------------------
+# API documentation. API_ROUTES is the single source for /api/openapi.json,
+# /api/docs and `--openapi`; _self_test() fails when do_GET/do_POST handle a
+# path this table does not list (or the reverse), so the docs cannot drift.
+# Fields: method, path, tag, summary, body/query {name: description},
+# returns, public (no login), live_safe (no instance restart: fine during
+# market hours).
+# ---------------------------------------------------------------------------
+_INSTANCE = "Instance directory name, e.g. openalgo1 (see GET /api/instances)"
+_JOB = ('Queued: {"status": "queued", "job_id"} - poll GET /api/jobs/{job_id} until status is '
+        'success, error or timeout')
+API_ROUTES = [
+    # Auth
+    dict(method="POST", path="/login-submit", tag="Auth", public=True, live_safe=True,
+         summary="Log in. Form-encoded (not JSON). Answers 302 with Set-Cookie oa_session on success, "
+                 "200 (the login page again) on failure.",
+         body={"username": "Admin username", "password": "Admin password", "next": "Optional redirect path"},
+         form=True, returns="302 + Set-Cookie: oa_session=...; HttpOnly; Secure; SameSite=Lax (12 h)"),
+    dict(method="POST", path="/api/change-password", tag="Auth", live_safe=True,
+         summary="Change the admin password",
+         body={"current_password": "Current password", "new_password": "New password"},
+         returns='{"status": "success", "message"}; 401 when current_password is wrong'),
+    # Read-only
+    dict(method="GET", path="/health", tag="Status", public=True, live_safe=True,
+         summary="Liveness of this API (no login)", returns='{"status": "healthy", ...}'),
+    dict(method="GET", path="/api/instances", tag="Status", live_safe=True,
+         summary="Instance names", returns='["openalgo1", ...]'),
+    dict(method="GET", path="/api/status", tag="Status", live_safe=True,
+         summary="systemd state of every instance",
+         returns='{"total", "instances": {"openalgo1": "active"}, "timestamp"}'),
+    dict(method="GET", path="/api/health", tag="Status", live_safe=True,
+         summary="Per-instance health: service, serving (socket answers), wedged worker, port, database, broker, domain",
+         returns='{"total", "instances": {"openalgo1": {"status", "serving", "wedged", "port", "database", "broker", ...}}}'),
+    dict(method="GET", path="/api/logs/{instance}", tag="Status", live_safe=True,
+         summary="Last 100 journal lines of an instance", returns='{"instance", "logs", ...}'),
+    dict(method="GET", path="/api/broker-status/{instance}", tag="Status", live_safe=True,
+         summary="Broker login state of an instance", returns='{"instance", "broker", ...}'),
+    dict(method="GET", path="/api/scripts-status", tag="Status", live_safe=True,
+         summary="Which oa-*.sh scripts this server can run", returns='{"scripts": {"oa-update.sh": {"found", "path"}}}'),
+    dict(method="POST", path="/api/scripts-status", tag="Status", live_safe=True,
+         summary="Same as GET /api/scripts-status", returns="As GET"),
+    dict(method="GET", path="/api/jobs/{job_id}", tag="Status", live_safe=True,
+         summary="State of a queued job (restart, health check, update). job_id 'latest-update' = newest update.",
+         returns='{"id", "action", "status": "queued|running|success|error|timeout", "exit_code", "output", ...}'),
+    # Instance control
+    dict(method="POST", path="/api/restart-instance", tag="Instances",
+         summary="Restart one instance", body={"instance": _INSTANCE}, returns=_JOB),
+    dict(method="POST", path="/api/restart-all", tag="Instances",
+         summary="Restart every instance", returns=_JOB),
+    dict(method="POST", path="/api/stop-instance", tag="Instances",
+         summary="Stop and disable one instance", body={"instance": _INSTANCE},
+         returns='{"status": "success", "message", "instance", "service"}'),
+    dict(method="POST", path="/api/start-instance", tag="Instances",
+         summary="Start and enable one instance", body={"instance": _INSTANCE},
+         returns='{"status": "success", "message", "instance", "service"}'),
+    dict(method="POST", path="/api/invalidate-session", tag="Instances",
+         summary="Revoke the broker session (forces a fresh broker login)", body={"instance": _INSTANCE},
+         returns='{"status": "success", "details"}; 500 {"status": "error", "error"} on failure'),
+    dict(method="POST", path="/api/reset-admin-user", tag="Instances",
+         summary="Factory reset: delete the instance's users and broker logins (first-time setup again). "
+                 "Optionally switch broker / write new broker keys to .env.",
+         body={"instance": _INSTANCE, "broker": "Optional new broker short name",
+               "broker_api_key": "Optional", "broker_api_secret": "Optional",
+               "broker_api_key_market": "Optional (XTS)", "broker_api_secret_market": "Optional (XTS)"},
+         returns='{"status": "success|error", "message", ...}'),
+    # Maintenance
+    dict(method="POST", path="/api/health-check", tag="Maintenance", live_safe=True,
+         summary="Run oa-health-check.sh",
+         body={"scope": "all | system | instance", "instance": "Required when scope=instance"}, returns=_JOB),
+    dict(method="POST", path="/api/update", tag="Maintenance",
+         summary="scope=scripts: latest scripts + dashboard only, no instance restarts (oa update-scripts). "
+                 "scope=all|instance: also updates OpenAlgo to the newest release and restarts instances (oa update). "
+                 "Either restarts this API, which ends every session - log in again, then poll the job.",
+         body={"scope": "scripts | all | instance", "instance": "Required when scope=instance"}, returns=_JOB),
+    dict(method="POST", path="/api/reboot-server", tag="Maintenance",
+         summary="Reboot the server", returns='{"status": "success", "message"}'),
+    dict(method="POST", path="/api/terminal/run", tag="Maintenance", live_safe=True,
+         summary="Run one whitelisted read-only command. sqlite_select accepts a single SELECT only.",
+         body={"action": "systemctl_status | journalctl_tail | df | free | uptime | sqlite_select",
+               "instance": "Required for systemctl_status, journalctl_tail, sqlite_select",
+               "lines": "journalctl_tail line count (default 100)",
+               "db": "sqlite_select: database file name from GET /api/terminal/dbs",
+               "query": "sqlite_select: one SELECT statement"},
+         returns='{"status": "success", "exit_code", "output", "timestamp"}'),
+    dict(method="GET", path="/api/terminal/dbs", tag="Maintenance", live_safe=True,
+         summary="SQLite databases of an instance (for sqlite_select)", query={"instance": _INSTANCE + " (default: first)"},
+         returns='{"instance", "dbs": [...]}'),
+    dict(method="GET", path="/api/telegram", tag="Maintenance", live_safe=True,
+         summary="Telegram notices: on/off and chat ID (never the token)", returns='{"configured", "chat_id"}'),
+    dict(method="POST", path="/api/telegram", tag="Maintenance", live_safe=True,
+         summary="Set the bot token (+ chat ID; blank = detect). Checks the token and sends a test message before saving.",
+         body={"token": "Bot token from @BotFather", "chat_id": "Optional"},
+         returns='{"status": "success", "message"}; 400 {"error"} when Telegram rejects it'),
+    # Docs
+    dict(method="GET", path="/api/openapi.json", tag="Docs", live_safe=True,
+         summary="This API as OpenAPI 3 (generated from the code)", returns="OpenAPI document"),
+    dict(method="GET", path="/api/docs", tag="Docs", live_safe=True,
+         summary="This API as a readable page (generated from the code)", returns="HTML"),
+]
+# The /monitor/api/* twins serve the per-instance /monitor page: the same handlers,
+# with the instance taken from the X-OpenAlgo-Instance header (or ?instance=)
+# instead of the body. Other apps should use /api/*.
+_MONITOR_TWINS = {
+    ("GET", "/monitor/api/health"): "GET /api/health (one instance)",
+    ("GET", "/monitor/api/logs"): "GET /api/logs/{instance}",
+    ("GET", "/monitor/api/status"): "GET /api/status (one instance)",
+    ("GET", "/monitor/api/scripts-status"): "GET /api/scripts-status",
+    ("GET", "/monitor/api/jobs/{job_id}"): "GET /api/jobs/{job_id}",
+    ("POST", "/monitor/login-submit"): "POST /login-submit",
+    ("POST", "/monitor/api/restart"): "POST /api/restart-instance",
+    ("POST", "/monitor/api/stop"): "POST /api/stop-instance",
+    ("POST", "/monitor/api/start"): "POST /api/start-instance",
+    ("POST", "/monitor/api/clear-logs"): "clears the instance's log files",
+    ("POST", "/monitor/api/invalidate-session"): "POST /api/invalidate-session",
+    ("POST", "/monitor/api/reset-admin-user"): "POST /api/reset-admin-user",
+    ("POST", "/monitor/api/reboot-server"): "POST /api/reboot-server",
+    ("POST", "/monitor/api/health-check"): "POST /api/health-check",
+    ("POST", "/monitor/api/update"): "POST /api/update",
+    ("POST", "/monitor/api/change-password"): "POST /api/change-password",
+}
+# Browser pages, not API
+_UI_PATHS = {("GET", p) for p in ("/", "/index.html", "/monitor", "/monitor/", "/login",
+                                  "/monitor/login", "/logout", "/monitor/logout")}
+
+
+def build_openapi(host=None):
+    """OpenAPI 3 document generated from API_ROUTES"""
+    paths = {}
+    for r in API_ROUTES:
+        op = {"tags": [r["tag"]], "summary": r["summary"],
+              "description": ("Safe during market hours." if r.get("live_safe")
+                              else "Restarts or changes instances - avoid during market hours."),
+              "responses": {"200": {"description": r.get("returns", "")},
+                            "401": {"description": '{"error": "Authentication required"} - log in again'}}}
+        if r.get("public"):
+            op["security"] = []
+            del op["responses"]["401"]
+        params = [{"name": n, "in": "path", "required": True, "schema": {"type": "string"},
+                   "description": _INSTANCE if n == "instance" else "Job id"}
+                  for n in re.findall(r"{(\w+)}", r["path"])]
+        params += [{"name": k, "in": "query", "schema": {"type": "string"}, "description": v}
+                   for k, v in (r.get("query") or {}).items()]
+        if params:
+            op["parameters"] = params
+        if r.get("body"):
+            ctype = "application/x-www-form-urlencoded" if r.get("form") else "application/json"
+            op["requestBody"] = {"required": True, "content": {ctype: {"schema": {
+                "type": "object",
+                "properties": {k: {"type": "string", "description": v} for k, v in r["body"].items()}}}}}
+        paths.setdefault(r["path"], {})[r["method"].lower()] = op
+    return {
+        "openapi": "3.0.3",
+        "info": {"title": "Simplifyed OpenAlgo Admin API", "version": "1",
+                 "description": "Manage the OpenAlgo instances on this server. Log in with POST /login-submit "
+                                "and send the oa_session cookie with every call. Generated from the code."},
+        "servers": [{"url": f"https://{host}"}] if host else [],
+        "components": {"securitySchemes": {"cookieAuth": {"type": "apiKey", "in": "cookie", "name": SESSION_COOKIE}}},
+        "security": [{"cookieAuth": []}],
+        "paths": paths,
+    }
+
+
+def render_api_docs(host=None):
+    """/api/docs: readable page generated from API_ROUTES"""
+    import html
+    e = html.escape
+    base = f"https://{host}" if host else "https://ADMIN-DOMAIN"
+    rows, tag = [], None
+    for r in API_ROUTES:
+        if r["tag"] != tag:
+            tag = r["tag"]
+            rows.append(f'<tr><th colspan="3" class="tag">{e(tag)}</th></tr>')
+        inputs = "".join(f"<div><code>{e(k)}</code> {e(v)}</div>"
+                         for k, v in {**(r.get("query") or {}), **(r.get("body") or {})}.items())
+        flags = ('<span class="pill pub">no login</span>' if r.get("public") else "") + \
+                ('' if r.get("live_safe") else '<span class="pill warn">restarts/changes instances</span>')
+        rows.append(f'<tr><td class="ep"><b class="m {r["method"].lower()}">{r["method"]}</b> <code>{e(r["path"])}</code>'
+                    f'{flags}</td><td>{e(r["summary"])}{inputs and "<div class=in>" + inputs + "</div>"}</td>'
+                    f'<td><code class="ret">{e(r.get("returns", ""))}</code></td></tr>')
+    twins = "".join(f"<li><code>{m} {e(p)}</code> &rarr; {e(t)}</li>" for (m, p), t in _MONITOR_TWINS.items())
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin API</title>
+<style>
+:root{{--bg:#0a0e17;--fg:#e6ebf5;--mut:#8a96ad;--line:#232e44;--card:#121a29;--acc:#5b9cff}}
+@media (prefers-color-scheme: light){{:root{{--bg:#f6f8fb;--fg:#141b2b;--mut:#5b6678;--line:#dfe5ee;--card:#fff;--acc:#2563eb}}}}
+body{{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}}
+main{{max-width:1100px;margin:0 auto;padding:24px 16px}}
+h1{{font-size:22px;margin:0 0 4px}} h2{{font-size:16px;margin:28px 0 8px}} p,li{{color:var(--mut)}}
+code{{font:12.5px ui-monospace,monospace}} pre{{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto}}
+table{{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px}}
+td,th{{padding:10px;border-top:1px solid var(--line);vertical-align:top;text-align:left}}
+th.tag{{background:var(--bg);font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}}
+.ep{{white-space:nowrap}} .m{{font:700 11px ui-monospace,monospace;padding:2px 6px;border-radius:4px}}
+.get{{background:#1d6b4f;color:#fff}} .post{{background:#2f5aa8;color:#fff}}
+.in{{margin-top:6px;color:var(--mut)}} .ret{{color:var(--mut);white-space:normal}}
+.pill{{display:inline-block;margin-left:6px;font-size:11px;padding:1px 6px;border-radius:9px;border:1px solid var(--line)}}
+.warn{{color:#e0a43a}} .pub{{color:#4cc38a}}
+@media (max-width:760px){{table,tr,td{{display:block}} .ep{{white-space:normal}} th.tag{{display:block}}}}
+</style></head><body><main>
+<h1>Simplifyed OpenAlgo Admin API</h1>
+<p>Generated from the server's code on every request, so it always matches this server.
+Machine-readable: <a href="/api/openapi.json" style="color:var(--acc)">/api/openapi.json</a> (OpenAPI 3 - import into Postman or a client generator).</p>
+<h2>Connecting</h2>
+<p>1. Log in once (form-encoded) and keep the <code>{SESSION_COOKIE}</code> cookie. 2. Send it with every call.
+3. On <code>401</code>, log in again: sessions last 12 hours and also end when this API restarts (every Update does that).
+Request bodies are JSON. Long actions return a <code>job_id</code>: poll <code>GET /api/jobs/{{job_id}}</code>.</p>
+<pre>curl -c jar.txt -d username=ADMIN --data-urlencode password@password.txt {e(base)}/login-submit
+curl -b jar.txt {e(base)}/api/health
+curl -b jar.txt -H 'Content-Type: application/json' -d '{{"instance":"openalgo1"}}' {e(base)}/api/restart-instance</pre>
+<p>Endpoints marked <span class="pill warn">restarts/changes instances</span> interrupt trading - not during market hours.</p>
+<h2>Endpoints</h2>
+<table>{"".join(rows)}</table>
+<h2>Per-instance page twins</h2>
+<p>The /monitor page uses these; they take the instance from the <code>X-OpenAlgo-Instance</code> header. Other apps should use the /api routes.</p>
+<ul>{twins}</ul>
+</main></body></html>"""
+
+
+def _routes_in_dispatch():
+    """(method, path) pairs do_GET/do_POST handle, read from their source"""
+    import inspect
+    found = set()
+    for method, fn in (("GET", RestartHandler.do_GET), ("POST", RestartHandler.do_POST)):
+        for p in re.findall(r"'(/[A-Za-z0-9_./-]*)'", inspect.getsource(fn)):
+            if p.endswith("/") and p not in ("/", "/monitor/"):  # prefix routes: /api/logs/<instance>
+                p += "{job_id}" if p.endswith("/jobs/") else "{instance}"
+            found.add((method, p))
+    return found
+
+
 def _self_test():
     """Verify instance-name validation rejects anything that could reach a shell
     or escape the instance directory. Runs without root and without a server."""
@@ -3335,13 +3579,25 @@ def _self_test():
     for good in ("openalgo1", "openalgo42", "openalgo-fyers-simplifyed-in"):
         assert handler._sanitize_instance(good) == good, f"should accept: {good}"
 
+    # API docs cover exactly the routes the server handles
+    documented = {(r["method"], r["path"]) for r in API_ROUTES} | set(_MONITOR_TWINS) | _UI_PATHS
+    handled = _routes_in_dispatch()
+    assert handled == documented, (
+        f"API docs out of date - undocumented: {sorted(handled - documented)}, "
+        f"documented but not handled: {sorted(documented - handled)}. Update API_ROUTES.")
+    spec = build_openapi("example.com")
+    assert spec["paths"] and json.dumps(spec) and "<table>" in render_api_docs()
+
     print("self-test passed: instance-name validation rejects shell metacharacters "
-          "and path traversal")
+          "and path traversal; API docs match the routes")
 
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--self-test':
         _self_test()
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == '--openapi':
+        print(json.dumps(build_openapi(sys.argv[2] if len(sys.argv) > 2 else None), indent=2))
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == '--set-admin-password':
