@@ -345,7 +345,7 @@ return `<div class="card-sub" style="padding:0 20px 14px">Access: <a href="https
 }
 return `<div class="card-sub" style="padding:0 20px 14px">Access: http://${access.ip||'this-server'}:8888/ — set up a domain via <code>sudo api-manager.sh</code> (option 5) to make this memorable and lock down the port</div>`;
 }
-let teleSource=null,teleLive=false,teleAccess=null;
+let teleSource=null,teleLive=false,teleFailed=false,teleAccess=null,teleSys=null;
 function fmtSize(b){
 if(b===null||b===undefined)return 'N/A';
 const u=['B','KB','MB','GB','TB'];let i=0;
@@ -362,6 +362,8 @@ function startTelemetry(){
 if(teleSource||typeof EventSource==='undefined')return;
 teleSource=new EventSource(`${apiBase}/telemetry/stream`);
 teleSource.onmessage=e=>{teleLive=true;renderTelemetry(JSON.parse(e.data));};
+// Stream never delivered: show the polled stats instead
+teleSource.onerror=()=>{if(!teleLive&&!teleFailed){teleFailed=true;renderSystem(teleSys,teleAccess);}};
 teleSource.addEventListener('logout',()=>{teleSource.close();teleLive=false;});
 }
 // Per-instance /monitor page: percentages only; the manager page shows everything
@@ -404,9 +406,15 @@ ${renderAccessLine(teleAccess)}`;
 }
 function renderSystem(sys,access){
 teleAccess=access;
+teleSys=sys;
 startTelemetry();
 if(teleLive)return;
 const el=document.getElementById('system');
+if(teleSource&&!teleFailed){
+// First live event is ~1 s away; don't flash the polled layout before it
+if(!el.innerHTML)el.innerHTML='<div class="card-head"><h2>System</h2><span class="card-sub">Connecting…</span></div>';
+return;
+}
 if(sys&&isCompactSystem()){
 renderCompactSystem(el,sys.cpu_percent,sys.mem_percent,sys.swap_percent,sys.disk_percent,'',access);
 return;
