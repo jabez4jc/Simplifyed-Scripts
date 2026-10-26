@@ -13,7 +13,8 @@
 #   oa repair [INSTANCE]                     check DBs + services, fix what is broken
 #   oa restart [INSTANCE|all]                restart instances
 #   oa rollback BACKUP_DIR INSTANCE          undo an update
-#   oa backup ...  | oa remove  | oa brand ...  | oa swap [GB]
+#   oa remove [INSTANCE] [--yes]             delete an instance (full backup first)
+#   oa backup ...  | oa brand ...  | oa swap [GB]
 #   oa daily-restart                         opt-in 8 AM IST restart (not for crypto)
 #   oa admin                                 admin dashboard menu
 #

@@ -376,10 +376,14 @@ backup_instances() {
         return 1
     fi
     
-    # If single mode, prompt for instance selection
+    # If single mode, use the named instance (3rd argument) or prompt
     if [ "$backup_mode" = "single" ]; then
-        local selected
-        selected=$(select_instance_for_backup)
+        local selected="${3:-}"
+        if [ -n "$selected" ]; then
+            [ -d "$BASE_DIR/$selected" ] || { log_message "❌ No such instance: $selected" "$RED"; return 1; }
+        else
+            selected=$(select_instance_for_backup)
+        fi
         if [ -z "$selected" ]; then
             return 1
         fi
@@ -550,13 +554,13 @@ main() {
     fi
     
     case $backup_mode in
-        single) backup_instances "single" "$backup_type" ;;
+        single) backup_instances "single" "$backup_type" "${3:-}" ;;
         all) backup_instances "all" "$backup_type" ;;
         restore) restore_operation ;;
         list) list_backups ;;
         cleanup) cleanup_old_backups "${2:-30}" ;;
         *)
-            log_message "Usage: $0 [single|all|restore|list|cleanup] [quick|full]" "$YELLOW"
+            log_message "Usage: $0 [single|all|restore|list|cleanup] [quick|full] [INSTANCE (single)]" "$YELLOW"
             exit 1
             ;;
     esac

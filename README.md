@@ -164,7 +164,7 @@ Manager call them directly).
 | `oa-backup.sh` | `oa backup` | Backups and restore |
 | `oa-restart.sh` | `oa restart` | Restart one or all instances |
 | `openalgo-restart-api.py` | `oa admin` | Admin dashboard + its HTTP API for other apps: docs at `https://<admin-domain>/api/docs`, OpenAPI at `/api/openapi.json` (both generated from the code; log in first) |
-| `oa-uninstaller.sh` | `oa remove` | Remove instances (service, files, nginx, certificate) |
+| `oa-uninstaller.sh` | `oa remove [INSTANCE] [--yes]` | Remove instances (service, files, nginx, certificate) - a verified full backup is taken first, and nothing is deleted without it. Also `POST /api/delete-instance` |
 | `oa-apply-branding.sh` | `oa brand` | Simplifyed branding (applied automatically) |
 | `oa-patch-known-issues.sh` | automatic | Mitigations for known upstream bugs |
 | `oa-configure-swap.sh` | `oa swap [GB]` | Swap of any size (1-512 GB) |

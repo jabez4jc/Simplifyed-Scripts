@@ -1490,6 +1490,10 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_terminal_run(data)
         elif self.path == '/api/telegram':
             self.handle_telegram_save(data)
+        elif self.path == '/api/delete-instance':
+            instance = self._instance_arg(data.get('instance', ''))
+            if instance:
+                self.handle_delete_instance(instance, data.get('confirm', ''))
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -2104,6 +2108,27 @@ body{display:flex;align-items:center;justify-content:center}
         save_credentials(creds.get('username'), new_password)
         self.send_json({"status": "success", "message": "Password changed successfully"})
     
+    def handle_delete_instance(self, instance, confirm):
+        """Remove an instance (oa-uninstaller.sh: verified full backup first,
+        then service, files, nginx site, certificate). `confirm` must repeat the
+        instance name, so a stray or mistyped call deletes nothing."""
+        real = os.path.basename(os.path.realpath(f"/var/python/openalgo-flask/{instance}"))
+        if not re.fullmatch(r"openalgo\d+", real) or not os.path.isdir(f"/var/python/openalgo-flask/{real}"):
+            self.send_json({"error": "Instance not found", "instance": instance}, 404)
+            return
+        if confirm not in (instance, real):
+            self.send_json({"error": f'Set "confirm" to the instance name ({real}) to delete it', "instance": real}, 400)
+            return
+        script = self._find_script("oa-uninstaller.sh")
+        if not script:
+            self.send_json({"error": "oa-uninstaller.sh not found"}, 500)
+            return
+        job_id = self._create_job("delete-instance", {"instance": real})
+        Thread(target=self._run_script_job, args=(job_id, ["sudo", "bash", script, real, "--yes"], 3600),
+               daemon=True).start()
+        self.send_json({"status": "queued", "job_id": job_id, "instance": real,
+                        "message": f"Backing up, then removing {real}", "timestamp": self._now_iso()})
+
     def handle_telegram_status(self):
         """Telegram notices: on/off and the chat ID - never the token"""
         vals = {}
@@ -3385,6 +3410,12 @@ API_ROUTES = [
     dict(method="POST", path="/api/invalidate-session", tag="Instances",
          summary="Revoke the broker session (forces a fresh broker login)", body={"instance": _INSTANCE},
          returns='{"status": "success", "details"}; 500 {"status": "error", "error"} on failure'),
+    dict(method="POST", path="/api/delete-instance", tag="Instances",
+         summary="Delete an instance: a full backup (incl. .env and databases) is taken and verified first - "
+                 "no backup, no delete - then the service, files, nginx site and certificate are removed. "
+                 "The job output names the backup archive.",
+         body={"instance": _INSTANCE, "confirm": "The same instance name again (guards against mistakes)"},
+         returns=_JOB + "; 400 without a matching confirm, 404 for an unknown instance"),
     dict(method="POST", path="/api/reset-admin-user", tag="Instances",
          summary="Factory reset: delete the instance's users and broker logins (first-time setup again). "
                  "Optionally switch broker / write new broker keys to .env.",
