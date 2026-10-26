@@ -1757,7 +1757,8 @@ body{display:flex;align-items:center;justify-content:center}
             os.remove(os.path.join(UPDATE_LOG_DIR, old))
         job_id = "upd" + datetime.now().strftime("%Y%m%d%H%M%S") + secrets.token_hex(2)
         log = os.path.join(UPDATE_LOG_DIR, job_id + ".log")
-        cmd = ["systemd-run", f"--unit=oa-dashboard-update-{job_id}", "--collect", "--quiet",
+        open(log, "w").close()  # exists before the unit starts: the first poll must find it
+        cmd =["systemd-run", f"--unit=oa-dashboard-update-{job_id}", "--collect", "--quiet",
                "--setenv=HOME=/root", "/bin/bash", "-c",
                'log=$1; shift; oa update "$@" > "$log" 2>&1; echo "OA_EXIT=$?" >> "$log"', "_", log]
         if scope == "instance":
