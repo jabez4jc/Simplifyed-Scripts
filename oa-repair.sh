@@ -166,6 +166,16 @@ service_name_of() {
     if [ -n "$domain" ]; then echo "openalgo-${domain//./-}"; else basename "$1"; fi
 }
 
+# Names this server in Telegram notices (one bot serves many servers; the VPS
+# hostname, e.g. 129-121-168-158.bluehost.com, says nothing): the admin
+# dashboard's domain, else the first instance's domain, else the hostname
+server_name() {
+    local d
+    d=$(systemctl cat openalgo-restart-api 2>/dev/null | sed -n 's/^Environment=MANAGER_DOMAIN=//p' | tail -1)
+    [ -n "$d" ] || d=$(grep -hE '^DOMAIN *=' "$BASE_DIR"/openalgo[0-9]*/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d "' \"\r")
+    echo "${d:-$(hostname)}"
+}
+
 telegram_send() {
     [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] || return 0
     printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" \
@@ -420,7 +430,7 @@ if [ "${pct:-0}" -ge 85 ]; then
 fi
 
 if [ ${#FIXED[@]} -gt 0 ] || [ ${#BROKEN[@]} -gt 0 ]; then
-    msg="🛠 $(hostname): instance check"$'\n'
+    msg="🛠 $(server_name): instance check"$'\n'
     [ ${#FIXED[@]} -gt 0 ] && msg+="Fixed:"$'\n'"$(printf -- '- %s\n' "${FIXED[@]}")"$'\n'
     [ ${#BROKEN[@]} -gt 0 ] && msg+="🚨 STILL BROKEN:"$'\n'"$(printf -- '- %s\n' "${BROKEN[@]}")"
     say "\n$msg" "$([ ${#BROKEN[@]} -gt 0 ] && echo "$RED" || echo "$YELLOW")"

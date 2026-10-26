@@ -101,6 +101,16 @@ load_plan() {
 
 # Telegram. The token goes to curl on stdin (-K -), never on its command line,
 # where any user on the server could read it from the process list.
+# Names this server in Telegram notices (one bot serves many servers; the VPS
+# hostname, e.g. 129-121-168-158.bluehost.com, says nothing): the admin
+# dashboard's domain, else the first instance's domain, else the hostname
+server_name() {
+    local d
+    d=$(systemctl cat openalgo-restart-api 2>/dev/null | sed -n 's/^Environment=MANAGER_DOMAIN=//p' | tail -1)
+    [ -n "$d" ] || d=$(grep -hE '^DOMAIN *=' "$BASE_DIR"/openalgo[0-9]*/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d "' \"\r")
+    echo "${d:-$(hostname)}"
+}
+
 telegram_send() {
     [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] || return 0
     local code
@@ -294,7 +304,7 @@ for u in reversed(r):  # newest first; /start, edits and joins carry the chat to
         say "Detected chat ID: $chat" "$GREEN"
     fi
     TELEGRAM_BOT_TOKEN="$token"; TELEGRAM_CHAT_ID="$chat"
-    if telegram_send "✅ $(hostname): OpenAlgo auto-update notifications are on."; then
+    if telegram_send "✅ $(server_name): OpenAlgo auto-update notifications are on."; then
         save_conf
         say "✓ Test message sent. Saved to $CONF_FILE" "$GREEN"
     else
@@ -347,7 +357,7 @@ cmd_run() {
     # Announce a release once, as soon as it is seen, so its notes can be read
     # (behaviour changes!) before it is installed.
     if [ -n "$NEWEST_TAG" ] && [ "$dry" -eq 0 ] && [ "$(cat "$STATE_FILE" 2>/dev/null)" != "$NEWEST_TAG" ]; then
-        if telegram_send "📦 $(hostname): new OpenAlgo release $NEWEST_TAG
+        if telegram_send "📦 $(server_name): new OpenAlgo release $NEWEST_TAG
 Daily instances install it: $NEWEST_DAILY
 Sunday instances install it: $NEWEST_SUNDAY
 Please read the release notes for behaviour changes:
@@ -414,7 +424,7 @@ $NEWEST_URL"; then
     [ ${#broken[@]} -gt 0 ] && msg+="🚨 Update AND rollback failed: ${broken[*]} - needs attention now. Log: $LOG_FILE"$'\n'
     if [ -n "$msg" ]; then
         say "$msg"
-        telegram_send "🖥 $(hostname)"$'\n'"$msg" || say "⚠ Telegram notification failed" "$YELLOW"
+        telegram_send "🖥 $(server_name)"$'\n'"$msg" || say "⚠ Telegram notification failed" "$YELLOW"
     fi
     [ ${#rolled_back[@]} -eq 0 ] && [ ${#broken[@]} -eq 0 ]
 }
