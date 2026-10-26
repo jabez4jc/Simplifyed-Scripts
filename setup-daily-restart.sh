@@ -82,7 +82,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then
@@ -119,7 +119,8 @@ else
 fi
 
 # Get list of instances (exclude symlinks)
-mapfile -t INSTANCES < <(find "$BASE_DIR" -maxdepth 1 -type d -name "openalgo*" -printf "%f\n" 2>/dev/null | sort)
+# openalgo<N> only: "openalgo*" also matched $BASE_DIR itself (openalgo-flask)
+mapfile -t INSTANCES < <(find "$BASE_DIR" -mindepth 1 -maxdepth 1 -type d -name "openalgo[0-9]*" -printf "%f\n" 2>/dev/null | sort)
 
 if [ ${#INSTANCES[@]} -eq 0 ]; then
     log_to_file "No OpenAlgo instances found"
@@ -145,7 +146,8 @@ for instance in "${INSTANCES[@]}"; do
 
     log_to_file "Restarting $SERVICE_NAME..."
     
-    if systemctl restart "$SERVICE_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+    systemctl restart "$SERVICE_NAME" 2>&1 | tee -a "$LOG_FILE"
+    if [ "${PIPESTATUS[0]}" -eq 0 ]; then
         log_to_file "✓ Successfully restarted $SERVICE_NAME"
         ((restart_count++))
     else
@@ -171,7 +173,7 @@ log_message "✅ Created restart script at $RESTART_SCRIPT" "$GREEN"
 log_message "📝 Creating log file..." "$BLUE"
 mkdir -p "$(dirname "$LOG_FILE")"
 touch "$LOG_FILE"
-chmod 666 "$LOG_FILE"
+chmod 644 "$LOG_FILE"
 log_message "✅ Created log file at $LOG_FILE" "$GREEN"
 
 # Get current timezone

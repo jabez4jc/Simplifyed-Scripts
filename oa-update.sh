@@ -375,8 +375,9 @@ backup_before_update() {
     
     # Create a quick backup of .env, .sample.env, and db
     local backup_dir="/tmp/openalgo_backup_${instance_name}_${TIMESTAMP}"
-    mkdir -p "$backup_dir"
-    
+    # Holds .env and openalgo.db (API keys, broker tokens): root-only
+    mkdir -m 700 "$backup_dir"
+
     if [ -f "$instance_dir/.env" ]; then
         sudo cp "$instance_dir/.env" "$backup_dir/"
     fi

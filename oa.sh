@@ -6,7 +6,7 @@
 #   oa update [INSTANCE] [--main]            update scripts, then instances to the newest
 #                                            OpenAlgo release (--main: tip of main)
 #   oa auto-update enable INSTANCE|all [--sundays]   install releases automatically, 03:30 IST
-#   oa auto-update disable|status|telegram
+#   oa auto-update disable INSTANCE|all | status | telegram
 #   oa status [INSTANCE]                     health check (default: all)
 #   oa repair [INSTANCE]                     check DBs + services, fix what is broken
 #   oa restart [INSTANCE|all]                restart instances
