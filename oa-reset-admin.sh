@@ -165,9 +165,9 @@ get_env_value() {
   line=$(grep -E "^${key}[[:space:]]*=" "$env_file" | head -1) || return 1
   [[ -z "$line" ]] && return 1
   line="${line#*=}"
-  line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-  line="${line%\'}"; line="${line#\'}"
-  line="${line%\"}"; line="${line#\"}"
+  # Quoted values keep only what is inside the quotes: upstream's .env has
+  # REDIRECT_URL = '...'  # Change if different
+  line="$(printf '%s' "$line" | sed -E "s/^[[:space:]]+//; s/[[:space:]]+\$//; s/^'([^']*)'.*/\\1/; s/^\"([^\"]*)\".*/\\1/")"
   printf '%s' "$line"
 }
 
