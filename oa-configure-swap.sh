@@ -133,21 +133,6 @@ get_disk_space_info() {
     log_message "   Total: $total" "$BLUE"
     log_message "   Used: $used ($percent)" "$BLUE"
     log_message "   Available: $available" "$BLUE"
-    
-    # Convert available to GB (float) for reference
-    local available_gb
-    available_gb=$(echo "$available" | awk '
-        {
-            if (match($0, /([0-9.]+)([A-Za-z])/, a)) {
-                num = a[1] + 0
-                unit = a[2]
-                if (unit == "T") gb = num * 1024
-                else if (unit == "G") gb = num
-                else if (unit == "M") gb = num / 1024
-                else gb = num / 1024 / 1024
-                printf "%.1f", gb
-            }
-        }')
 
     # Show recommended swap sizes (RAM-based)
     log_message "\n📋 Recommended Swap Sizes (RAM-based):" "$YELLOW"
