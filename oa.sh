@@ -66,9 +66,17 @@ case "$cmd" in
             echo y | run oa-configure-swap.sh "$SWAP_GB" || exit 1
         fi
         OA_DEFAULTS=1 BRANDING="$BRANDING" run multi-install.sh || exit 1
-        # First time: ask for the dashboard login and domain
+        # First time: ask for the dashboard login and domain, then Telegram
         if [ ! -f /etc/openalgo/admin-auth.json ]; then
             OA_ASK_ADMIN=1 run api-manager.sh setup
+            # Optional (blank skips); a rejected token or chat ID gets two more tries
+            if [ -z "$(. /etc/simplifyed/auto-update.conf 2>/dev/null; echo "${TELEGRAM_BOT_TOKEN:-}")" ]; then
+                echo
+                echo "Telegram notices: new releases, update results, repairs and failures."
+                for _ in 1 2 3; do
+                    run oa-auto-update.sh telegram; [ $? -eq 1 ] || break
+                done
+            fi
         elif ! systemctl is-active --quiet openalgo-restart-api; then
             run api-manager.sh setup
         fi

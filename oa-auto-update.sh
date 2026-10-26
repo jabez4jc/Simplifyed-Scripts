@@ -226,8 +226,9 @@ save_conf() {
 cmd_telegram() {
     local token chat
     say "Create a bot with @BotFather in Telegram and paste its token." "$BLUE"
-    read -rsp "Bot token: " token; echo
-    [ -n "$token" ] || { say "Nothing changed." "$YELLOW"; return 1; }
+    read -rsp "Bot token (hidden; blank to skip): " token; echo
+    # 2 = skipped (oa install stops asking), 1 = rejected (it asks again)
+    [ -n "$token" ] || { say "Skipped - set it up any time with: sudo oa auto-update telegram" "$YELLOW"; return 2; }
     read -rp "Chat ID (leave blank to detect it - send any message to the bot first): " chat
     if [ -z "$chat" ]; then
         chat=$(printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$token" | curl -s -m 20 -K - \

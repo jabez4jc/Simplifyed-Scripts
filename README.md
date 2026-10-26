@@ -31,7 +31,10 @@ XTS brokers). On the first install it then asks for the admin dashboard login
 (username and password, used by the dashboard and every `/monitor` page) and an
 optional domain for the dashboard (DNS must already point at the server; Enter
 skips it and the dashboard stays on `http://<server-ip>:8888`). Change either
-later with `oa admin`.
+later with `oa admin`. Last, optional Telegram notices: create a bot with
+@BotFather, send it any message, then paste its token (hidden; Enter skips) -
+the chat ID is detected and a test message confirms it. Set up or change later
+with `oa auto-update telegram`.
 
 Use this exact command, not `curl ... | sudo bash`: on Ubuntu 25.10+ (sudo-rs)
 the piped form cannot read your keyboard, so the installer stops and prints the
@@ -99,7 +102,8 @@ oa auto-update status
 Instances update one at a time. A failed update is rolled back automatically and
 the rollout stops. A Telegram notice goes out when a release is first published
 (with its install date and release notes - check them for behaviour changes),
-and after each run. Off unless enabled; `oa auto-update disable INSTANCE` turns
+after each run, and when `oa repair` fixes something or finds an instance still
+broken. Off unless enabled; `oa auto-update disable INSTANCE` turns
 it off.
 
 The 8 AM IST daily restart is separate and also opt-in (`oa daily-restart`) -
