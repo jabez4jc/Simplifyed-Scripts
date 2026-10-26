@@ -235,6 +235,14 @@ main{max-width:min(1920px,96vw);margin:0 auto;padding:24px 20px 64px;display:fle
 .stat{font-size:12.5px}
 .stat-label{color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px}
 .stat-value{font-weight:650;font-size:14px;font-variant-numeric:tabular-nums;margin-bottom:6px}
+.cores{display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:6px;padding:0 20px 14px}
+.tele-wrap{overflow-x:auto;padding:0 20px 16px}
+.tele-table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.tele-table th{text-align:left;color:var(--text-faint);font-weight:500;font-size:11px;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--border)}
+.tele-table td{padding:5px 8px;border-bottom:1px solid var(--border-soft);white-space:nowrap}
+.tele-table .num{text-align:right}
+.tele-table td.warn{color:var(--warning)}
+.tele-table td.crit{color:var(--danger)}
 .meter{height:4px;border-radius:2px;background:var(--border-soft);overflow:hidden}
 .meter-fill{height:100%;border-radius:2px;background:var(--success);transition:width .4s ease}
 .meter-fill.warn{background:var(--warning)}
@@ -337,7 +345,54 @@ return `<div class="card-sub" style="padding:0 20px 14px">Access: <a href="https
 }
 return `<div class="card-sub" style="padding:0 20px 14px">Access: http://${access.ip||'this-server'}:8888/ — set up a domain via <code>sudo api-manager.sh</code> (option 5) to make this memorable and lock down the port</div>`;
 }
+let teleSource=null,teleLive=false,teleAccess=null;
+function fmtSize(b){
+if(b===null||b===undefined)return 'N/A';
+const u=['B','KB','MB','GB','TB'];let i=0;
+while(b>=1024&&i<u.length-1){b/=1024;i++;}
+return b.toFixed(i?1:0)+' '+u[i];
+}
+function fmtRate(b){return b===null||b===undefined?'…':fmtSize(b)+'/s';}
+function fmtUptime(s){
+if(!s)return 'N/A';
+const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+return (d?d+'d ':'')+h+'h '+m+'m';
+}
+function startTelemetry(){
+if(teleSource||typeof EventSource==='undefined')return;
+teleSource=new EventSource(`${apiBase}/telemetry/stream`);
+teleSource.onmessage=e=>{teleLive=true;renderTelemetry(JSON.parse(e.data));};
+teleSource.addEventListener('logout',()=>{teleSource.close();teleLive=false;});
+}
+function renderTelemetry(t){
+const el=document.getElementById('system');
+if(!el)return;
+const c=t.cpu||{},m=t.memory||{},n=t.network||{},p=t.processes||{};
+const rx=(n.interfaces||[]).reduce((a,i)=>a+(i.rx_bps||0),0),tx=(n.interfaces||[]).reduce((a,i)=>a+(i.tx_bps||0),0);
+const io=(t.disk&&t.disk.io)||[];
+const rd=io.reduce((a,d)=>a+(d.read_bps||0),0),wr=io.reduce((a,d)=>a+(d.write_bps||0),0);
+const cores=(c.per_core||[]).map((v,i)=>`<div class="core" title="CPU ${i}: ${formatPercent(v)}">${meter(v)}</div>`).join('');
+const mounts=((t.disk&&t.disk.mounts)||[]).map(d=>`<div class="stat"><div class="stat-label">Disk ${escapeHtml(d.mount)}</div><div class="stat-value">${fmtSize(d.used)} / ${fmtSize(d.total)} (${formatPercent(d.percent)})</div>${meter(d.percent)}<div class="card-sub">inodes ${formatPercent(d.inodes_percent)}</div></div>`).join('');
+const rows=(p.top||[]).map(r=>`<tr title="${escapeHtml(r.cmdline||'')}"><td>${r.pid}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.unit||'')}</td><td>${escapeHtml(r.user)}</td><td class="num ${meterClass(r.cpu_percent)}">${r.cpu_percent===null?'…':r.cpu_percent.toFixed(1)}</td><td class="num">${fmtSize(r.rss)}</td><td class="num">${formatPercent(r.mem_percent)}</td><td class="num">${r.threads}</td></tr>`).join('');
+el.innerHTML=`<div class="card-head"><h2>System</h2><span class="card-sub">● Live · every ${t.interval||'?'}s · up ${fmtUptime(t.uptime_seconds)}</span></div>
+<div class="stat-grid">
+<div class="stat"><div class="stat-label">CPU (${c.cores} cores)</div><div class="stat-value">${formatPercent(c.percent)}</div>${meter(c.percent)}<div class="card-sub">iowait ${formatPercent(c.iowait)} · steal ${formatPercent(c.steal)}</div></div>
+<div class="stat"><div class="stat-label">Load Avg</div><div class="stat-value">${(c.load||[]).join(' / ')||'N/A'}</div></div>
+<div class="stat"><div class="stat-label">RAM Used</div><div class="stat-value">${fmtSize(m.used)} / ${fmtSize(m.total)} (${formatPercent(m.percent)})</div>${meter(m.percent)}<div class="card-sub">cache ${fmtSize(m.cached)}</div></div>
+<div class="stat"><div class="stat-label">Swap Used</div><div class="stat-value">${fmtSize(m.swap_used)} / ${fmtSize(m.swap_total)}</div>${meter(m.swap_percent)}</div>
+<div class="stat"><div class="stat-label">Network</div><div class="stat-value">↓ ${fmtRate(rx)} · ↑ ${fmtRate(tx)}</div><div class="card-sub">TCP in use ${(n.tcp||{}).inuse??'N/A'} · time-wait ${(n.tcp||{}).tw??'N/A'}</div></div>
+<div class="stat"><div class="stat-label">Disk I/O</div><div class="stat-value">R ${fmtRate(rd)} · W ${fmtRate(wr)}</div></div>
+<div class="stat"><div class="stat-label">Processes</div><div class="stat-value">${p.total??'N/A'}</div><div class="card-sub">${p.running??0} running · ${p.zombie??0} zombie · ${p.threads??0} threads</div></div>
+${mounts}
+</div>
+${cores?`<div class="cores">${cores}</div>`:''}
+<div class="tele-wrap"><table class="tele-table"><thead><tr><th>PID</th><th>Process</th><th>Service</th><th>User</th><th class="num">CPU%</th><th class="num">RSS</th><th class="num">Mem%</th><th class="num">Thr</th></tr></thead><tbody>${rows}</tbody></table></div>
+${renderAccessLine(teleAccess)}`;
+}
 function renderSystem(sys,access){
+teleAccess=access;
+startTelemetry();
+if(teleLive)return;
 const el=document.getElementById('system');
 if(!sys){
 el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
@@ -497,6 +552,178 @@ const preview=document.getElementById('resetCallbackPreview');
 if(preview)preview.textContent=(h.domain&&chosen)?`Callback URL: https://${h.domain}/${chosen}/callback`:'';
 }
 """
+
+
+def _read(path):
+    try:
+        with open(path, "r") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+class TelemetrySampler:
+    """Server telemetry from /proc (CPU, memory, disks, network, top processes).
+    Rates are deltas against the previous sample(), so keep one sampler per
+    client and call it on an interval; the first sample has no rates."""
+
+    TOP_N = 15
+    _REAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "vfat", "f2fs", "nfs", "nfs4"}
+
+    def __init__(self):
+        self.prev = None
+        self.prev_time = None
+        self.clk_tck = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+        self.page_size = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
+        self.users = {}
+
+    def _user(self, uid):
+        if uid not in self.users:
+            try:
+                import pwd
+                self.users[uid] = pwd.getpwuid(uid).pw_name
+            except Exception:
+                self.users[uid] = str(uid)
+        return self.users[uid]
+
+    def _raw(self):
+        cpus = {}
+        for line in _read("/proc/stat").splitlines():
+            if line.startswith("cpu"):
+                parts = line.split()
+                cpus[parts[0]] = [int(p) for p in parts[1:9]] + [0] * (8 - len(parts[1:9]))
+        disks = {}
+        for line in _read("/proc/diskstats").splitlines():
+            p = line.split()
+            # whole disks only (partitions have no /sys/block entry); skip loop/ram and never-used devices
+            if (len(p) >= 10 and (p[5], p[9]) != ("0", "0") and os.path.exists(f"/sys/block/{p[2]}")
+                    and not p[2].startswith(("loop", "ram"))):
+                disks[p[2]] = (int(p[5]) * 512, int(p[9]) * 512)
+        nets = {}
+        for line in _read("/proc/net/dev").splitlines()[2:]:
+            name, _, data = line.partition(":")
+            name, d = name.strip(), data.split()
+            if name != "lo" and len(d) >= 12 and (d[0], d[8]) != ("0", "0"):
+                nets[name] = (int(d[0]), int(d[8]), int(d[2]) + int(d[10]), int(d[3]) + int(d[11]))
+        procs = {}
+        for pid in os.listdir("/proc") if os.path.isdir("/proc") else []:
+            if not pid.isdigit():
+                continue
+            stat = _read(f"/proc/{pid}/stat")
+            if ")" not in stat:
+                continue
+            comm = stat[stat.find("(") + 1:stat.rfind(")")]
+            f = stat[stat.rfind(")") + 2:].split()
+            try:
+                uid = os.stat(f"/proc/{pid}").st_uid
+            except Exception:
+                continue
+            procs[int(pid)] = dict(name=comm, state=f[0], ticks=int(f[11]) + int(f[12]),
+                                   threads=int(f[17]), rss=int(f[21]) * self.page_size, uid=uid)
+        return dict(cpus=cpus, disks=disks, nets=nets, procs=procs)
+
+    @staticmethod
+    def _pct(part, total):
+        return round(100.0 * part / total, 1) if total > 0 else None
+
+    def sample(self):
+        now = time.time()
+        raw = self._raw()
+        prev, dt = self.prev, (now - self.prev_time) if self.prev_time else None
+        self.prev, self.prev_time = raw, now
+        out = {"timestamp": datetime.now().isoformat(), "interval": round(dt, 2) if dt else None}
+
+        # CPU: user nice system idle iowait irq softirq steal
+        cpu = {"cores": len([k for k in raw["cpus"] if k != "cpu"]) or os.cpu_count(),
+               "percent": None, "iowait": None, "steal": None, "per_core": []}
+        if prev:
+            for name, cur in raw["cpus"].items():
+                d = [c - p for c, p in zip(cur, prev["cpus"].get(name, cur))]
+                total = sum(d)
+                busy = self._pct(total - d[3] - d[4], total)
+                if name == "cpu":
+                    cpu.update(percent=busy, user=self._pct(d[0] + d[1], total), system=self._pct(d[2] + d[5] + d[6], total),
+                               iowait=self._pct(d[4], total), steal=self._pct(d[7], total))
+                else:
+                    cpu["per_core"].append(busy)
+        try:
+            cpu["load"] = [round(x, 2) for x in os.getloadavg()]
+        except Exception:
+            cpu["load"] = None
+        out["cpu"] = cpu
+
+        mi = {}
+        for line in _read("/proc/meminfo").splitlines():
+            k, _, v = line.partition(":")
+            if v.split():
+                mi[k] = int(v.split()[0]) * 1024
+        total, avail = mi.get("MemTotal"), mi.get("MemAvailable")
+        swap_t, swap_f = mi.get("SwapTotal", 0), mi.get("SwapFree", 0)
+        out["memory"] = {
+            "total": total, "available": avail,
+            "used": total - avail if total and avail is not None else None,
+            "percent": self._pct(total - avail, total) if total and avail is not None else None,
+            "cached": mi.get("Cached", 0) + mi.get("SReclaimable", 0) - mi.get("Shmem", 0) if mi else None,
+            "buffers": mi.get("Buffers"),
+            "swap_total": swap_t, "swap_used": swap_t - swap_f, "swap_percent": self._pct(swap_t - swap_f, swap_t) or 0.0,
+        }
+
+        mounts, seen = [], set()
+        for line in _read("/proc/mounts").splitlines():
+            p = line.split()
+            if len(p) < 3 or p[2] not in self._REAL_FS or p[0] in seen:
+                continue
+            seen.add(p[0])
+            try:
+                st = os.statvfs(p[1])
+            except Exception:
+                continue
+            size, free = st.f_frsize * st.f_blocks, st.f_frsize * st.f_bavail
+            if size:
+                mounts.append(dict(mount=p[1], device=p[0], fs=p[2], total=size, used=size - free, free=free,
+                                   percent=self._pct(size - free, size),
+                                   inodes_percent=self._pct(st.f_files - st.f_ffree, st.f_files)))
+        io = []
+        for name, (rd, wr) in raw["disks"].items():
+            pr = prev["disks"].get(name) if prev else None
+            io.append(dict(device=name, read_bps=round((rd - pr[0]) / dt) if pr and dt else None,
+                           write_bps=round((wr - pr[1]) / dt) if pr and dt else None))
+        out["disk"] = {"mounts": mounts, "io": io}
+
+        ifaces = []
+        for name, (rx, tx, errs, drops) in raw["nets"].items():
+            pr = prev["nets"].get(name) if prev else None
+            ifaces.append(dict(name=name, rx_bps=round((rx - pr[0]) / dt) if pr and dt else None,
+                               tx_bps=round((tx - pr[1]) / dt) if pr and dt else None,
+                               rx_total=rx, tx_total=tx, errors=errs, drops=drops))
+        tcp = {}
+        for line in _read("/proc/net/sockstat").splitlines():
+            if line.startswith("TCP:"):
+                p = line.split()[1:]
+                tcp = {p[i]: int(p[i + 1]) for i in range(0, len(p) - 1, 2)}
+        out["network"] = {"interfaces": ifaces, "tcp": tcp}
+
+        # Top processes: CPU% is of one core, like top
+        rows = []
+        for pid, p in raw["procs"].items():
+            pp = prev["procs"].get(pid) if prev else None
+            cpu_pct = round(100.0 * (p["ticks"] - pp["ticks"]) / self.clk_tck / dt, 1) if pp and dt else None
+            rows.append((pid, p, cpu_pct))
+        rows.sort(key=lambda r: (r[2] or 0, r[1]["rss"]), reverse=True)
+        top = []
+        for pid, p, cpu_pct in rows[:self.TOP_N]:
+            unit = re.search(r"([\w@.-]+\.service)", _read(f"/proc/{pid}/cgroup"))
+            top.append(dict(pid=pid, name=p["name"], user=self._user(p["uid"]), state=p["state"],
+                            cpu_percent=cpu_pct, rss=p["rss"],
+                            mem_percent=self._pct(p["rss"], total) if total else None,
+                            threads=p["threads"], unit=unit.group(1) if unit else None,
+                            cmdline=_read(f"/proc/{pid}/cmdline").replace("\0", " ").strip()[:200] or f"[{p['name']}]"))
+        states = [p["state"] for p in raw["procs"].values()]
+        out["processes"] = {"total": len(states), "running": states.count("R"), "zombie": states.count("Z"),
+                            "threads": sum(p["threads"] for p in raw["procs"].values()), "top": top}
+        up = _read("/proc/uptime").split()
+        out["uptime_seconds"] = int(float(up[0])) if up else None
+        return out
 
 
 class RestartHandler(http.server.BaseHTTPRequestHandler):
@@ -1354,6 +1581,8 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_monitor_status()
         elif path == '/monitor/api/scripts-status':
             self.handle_scripts_status()
+        elif path == '/monitor/api/telemetry/stream':
+            self.handle_telemetry_stream()
         elif path.startswith('/monitor/api/jobs/'):
             job_id = path.split('/monitor/api/jobs/')[1].strip('/')
             if job_id:
@@ -1382,6 +1611,10 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_scripts_status()
         elif self.path == '/api/telegram':
             self.handle_telegram_status()
+        elif path == '/api/telemetry':
+            self.handle_telemetry()
+        elif path == '/api/telemetry/stream':
+            self.handle_telemetry_stream()
         elif path == '/api/openapi.json':
             self.send_json(build_openapi(self.headers.get('Host')))
         elif path == '/api/docs':
@@ -2083,6 +2316,39 @@ body{display:flex;align-items:center;justify-content:center}
 
         return health
     
+    def handle_telemetry(self):
+        """One telemetry snapshot (rates measured over 1 s)"""
+        sampler = TelemetrySampler()
+        sampler.sample()
+        time.sleep(1)
+        self.send_json(sampler.sample())
+
+    def handle_telemetry_stream(self):
+        """Server-Sent Events: one telemetry snapshot every ?interval= seconds (1-60, default 2).
+        SSE rather than WebSocket: plain HTTP, so it passes the existing nginx
+        /monitor and manager-domain proxies (no Upgrade headers there) unchanged."""
+        try:
+            interval = min(max(float(parse_qs(urlparse(self.path).query).get("interval", ["2"])[0]), 1), 60)
+        except ValueError:
+            interval = 2.0
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Accel-Buffering', 'no')  # nginx: flush each event
+        self.end_headers()
+        sampler = TelemetrySampler()
+        sampler.sample()
+        time.sleep(1)
+        try:
+            # Ends on logout/expiry like any other request; open tabs keep the session alive as polling does
+            while self._is_authenticated():
+                self.wfile.write(f"data: {json.dumps(sampler.sample())}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(interval)
+            self.wfile.write(b"event: logout\ndata: {}\n\n")
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # client went away
+
     def handle_health(self):
         """Health check"""
         self.send_json({
@@ -3393,6 +3659,18 @@ API_ROUTES = [
          summary="Which oa-*.sh scripts this server can run", returns='{"scripts": {"oa-update.sh": {"found", "path"}}}'),
     dict(method="POST", path="/api/scripts-status", tag="Status", live_safe=True,
          summary="Same as GET /api/scripts-status", returns="As GET"),
+    dict(method="GET", path="/api/telemetry", tag="Status", live_safe=True,
+         summary="One server telemetry snapshot (rates measured over 1 s): CPU (total, per core, iowait, steal, load), "
+                 "memory + swap, disk mounts + I/O rates, network interfaces + TCP sockets, top 15 processes "
+                 "(CPU% of one core, RSS, systemd unit - openalgo-<domain>.service names the instance)",
+         returns='{"timestamp", "cpu", "memory", "disk": {"mounts", "io"}, "network": {"interfaces", "tcp"}, '
+                 '"processes": {"total", "running", "zombie", "threads", "top"}, "uptime_seconds"}'),
+    dict(method="GET", path="/api/telemetry/stream", tag="Status", live_safe=True,
+         summary="The same snapshot streamed live as Server-Sent Events (text/event-stream), every interval "
+                 "seconds. Browser: new EventSource('/api/telemetry/stream'). curl: curl -N -b oa_session=... "
+                 "Ends with event: logout when the session expires.",
+         query={"interval": "Seconds between events, 1-60 (default 2)"},
+         returns="data: {GET /api/telemetry JSON}\\n\\n per event"),
     dict(method="GET", path="/api/jobs/{job_id}", tag="Status", live_safe=True,
          summary="State of a queued job (restart, health check, update). job_id 'latest-update' = newest update.",
          returns='{"id", "action", "status": "queued|running|success|error|timeout", "exit_code", "output", ...}'),
@@ -3465,6 +3743,7 @@ _MONITOR_TWINS = {
     ("GET", "/monitor/api/logs"): "GET /api/logs/{instance}",
     ("GET", "/monitor/api/status"): "GET /api/status (one instance)",
     ("GET", "/monitor/api/scripts-status"): "GET /api/scripts-status",
+    ("GET", "/monitor/api/telemetry/stream"): "GET /api/telemetry/stream",
     ("GET", "/monitor/api/jobs/{job_id}"): "GET /api/jobs/{job_id}",
     ("POST", "/monitor/login-submit"): "POST /login-submit",
     ("POST", "/monitor/api/restart"): "POST /api/restart-instance",
@@ -3619,6 +3898,15 @@ def _self_test():
         f"documented but not handled: {sorted(documented - handled)}. Update API_ROUTES.")
     spec = build_openapi("example.com")
     assert spec["paths"] and json.dumps(spec) and "<table>" in render_api_docs()
+
+    # Telemetry: second sample has rates (on Linux) and is JSON-serialisable
+    sampler = TelemetrySampler()
+    sampler.sample()
+    time.sleep(0.2)
+    t = sampler.sample()
+    assert json.dumps(t) and {"cpu", "memory", "disk", "network", "processes"} <= set(t)
+    if os.path.exists("/proc/stat"):
+        assert t["cpu"]["percent"] is not None and t["memory"]["total"] and t["processes"]["top"], t
 
     print("self-test passed: instance-name validation rejects shell metacharacters "
           "and path traversal; API docs match the routes")

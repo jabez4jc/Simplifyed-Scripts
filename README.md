@@ -278,6 +278,10 @@ admin login, which the first `oa install` asks for - change it with `oa admin`
 It shows each instance's service, broker login and master contract status, and
 logs, and can restart/stop/start, update, health-check, invalidate a broker
 session, factory-reset, run read-only SQL `SELECT`s, and reboot the server.
+Its System card is live: CPU (per core, iowait, steal), memory, disks (usage,
+inodes, I/O), network and the top processes with the service each belongs to,
+streamed from `GET /api/telemetry/stream` (Server-Sent Events; one snapshot:
+`GET /api/telemetry`).
 
 Its HTTP API (`/api/...`) serves the dashboard itself; every endpoint except
 `GET /health` requires the dashboard login session.
