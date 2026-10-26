@@ -66,7 +66,10 @@ case "$cmd" in
             echo y | run oa-configure-swap.sh "$SWAP_GB" || exit 1
         fi
         OA_DEFAULTS=1 BRANDING="$BRANDING" run multi-install.sh || exit 1
-        if [ ! -f /etc/openalgo/admin-auth.json ] || ! systemctl is-active --quiet openalgo-restart-api; then
+        # First time: ask for the dashboard login and domain
+        if [ ! -f /etc/openalgo/admin-auth.json ]; then
+            OA_ASK_ADMIN=1 run api-manager.sh setup
+        elif ! systemctl is-active --quiet openalgo-restart-api; then
             run api-manager.sh setup
         fi
         cat <<'EOF'
@@ -76,7 +79,7 @@ Done. Optional next steps:
   oa auto-update enable openalgoN --sundays   (crypto instances: Sundays only)
   oa auto-update telegram                release notices and results on Telegram
   oa daily-restart                       8 AM IST daily restart (not for crypto instances)
-  oa admin                               dashboard domain + HTTPS, change admin password
+  oa admin                               change dashboard domain or admin password
 EOF
         ;;
     update)

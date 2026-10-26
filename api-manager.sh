@@ -178,7 +178,18 @@ setup_admin_login() {
         return 0
     fi
 
-    # `oa install`: no questions - generate a strong password, show it at the end
+    # First `oa install`/`oa add` (OA_ASK_ADMIN): ask; a typo gets two more
+    # tries, then falls through to a generated password
+    if [ -n "${OA_ASK_ADMIN:-}" ]; then
+        echo -e "${BLUE}Choose the login for the admin dashboard and /monitor pages.${NC}"
+        local _
+        for _ in 1 2 3; do
+            python3 /usr/local/bin/openalgo-restart-api.py --set-admin-password && return 0
+        done
+        echo -e "${YELLOW}Generating a password instead.${NC}"
+    fi
+
+    # `oa update`: no questions - generate a strong password, show it at the end
     if [ -n "${OA_NO_MENU:-}" ]; then
         local pw
         pw=$(python3 -c "import secrets; print(secrets.token_urlsafe(12))")
@@ -293,8 +304,10 @@ EOF
     echo ""
     setup_firewall
     echo ""
-    # Optional; `oa install` leaves it for later (oa admin -> option 5)
-    [ -n "${OA_NO_MENU:-}" ] || run_secure_admin_domain_only
+    # Optional (blank skips); asked on the first install, never by `oa update`
+    if [ -z "${OA_NO_MENU:-}" ] || [ -n "${OA_ASK_ADMIN:-}" ]; then
+        run_secure_admin_domain_only
+    fi
     echo ""
     show_status
 }

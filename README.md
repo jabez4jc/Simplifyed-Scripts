@@ -8,7 +8,7 @@ These scripts automate the installation, configuration, and maintenance of one o
 
 ## Installation Requirements
 
-- Ubuntu 20.04 LTS or later (Debian-based)
+- Ubuntu 20.04 LTS or later (Debian-based); tested on 24.04 and 26.04
 - Root/sudo access
 - Domain names with DNS pointing to your server
 - Broker API credentials for each instance
@@ -27,8 +27,15 @@ OpenAlgo with Simplifyed branding.
 
 It asks only what it cannot guess: how many instances (Enter = 1), then the
 domain, broker, API key and secret for each (plus the market data key/secret for
-XTS brokers). The dashboard's admin password is generated and shown once at the
-end; change it, or give the dashboard its own domain, later with `oa admin`.
+XTS brokers). On the first install it then asks for the admin dashboard login
+(username and password, used by the dashboard and every `/monitor` page) and an
+optional domain for the dashboard (DNS must already point at the server; Enter
+skips it and the dashboard stays on `http://<server-ip>:8888`). Change either
+later with `oa admin`.
+
+Use this exact command, not `curl ... | sudo bash`: on Ubuntu 25.10+ (sudo-rs)
+the piped form cannot read your keyboard, so the installer stops and prints the
+right command instead.
 
 Options: `sudo bash -c "$(curl -fsSL .../install.sh)" _ --no-branding --swap 8`
 
@@ -258,8 +265,8 @@ changing the broker or its API key during a reset).
 
 `http://<server-ip>:8888` (or its own domain + HTTPS: `oa admin` → option 5),
 plus a per-instance page at `https://<instance-domain>/monitor`. Both need the
-admin login; `oa install` generates the password and shows it once - change it
-with `oa admin` → Change Admin Password.
+admin login, which the first `oa install` asks for - change it with `oa admin`
+→ Change Admin Password.
 
 It shows each instance's service, broker login and master contract status, and
 logs, and can restart/stop/start, update, health-check, invalidate a broker
