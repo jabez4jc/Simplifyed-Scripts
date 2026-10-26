@@ -263,7 +263,7 @@ log_message "\n📥 Setting up OpenAlgo instance..." "$BLUE"
 
 # Install system dependencies
 log_message "   Installing system packages..." "$BLUE"
-sudo apt-get install -y python3 python3-venv python3-pip python3-full nginx git software-properties-common snapd ufw certbot python3-certbot-nginx > /dev/null 2>&1
+sudo apt-get install -y python3 python3-venv python3-pip python3-full nginx git software-properties-common snapd ufw certbot python3-certbot-nginx sqlite3 > /dev/null 2>&1
 check_status "Failed to install system packages"
 
 # Install uv

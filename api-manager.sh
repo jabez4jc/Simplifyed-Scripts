@@ -243,6 +243,9 @@ setup_update() {
     fi
     echo ""
 
+    # Factory Reset and the dashboard's SQL terminal use the sqlite3 CLI
+    command -v sqlite3 >/dev/null || apt-get install -y -qq sqlite3 >/dev/null 2>&1
+
     echo -e "${YELLOW}Installing daily cleanup timer...${NC}"
     local _script_path="/usr/local/bin/oa-clear-logs.sh"
     cat > /etc/systemd/system/openalgo-clear-safe.service << 'EOF'
