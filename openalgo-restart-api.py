@@ -364,10 +364,23 @@ teleSource=new EventSource(`${apiBase}/telemetry/stream`);
 teleSource.onmessage=e=>{teleLive=true;renderTelemetry(JSON.parse(e.data));};
 teleSource.addEventListener('logout',()=>{teleSource.close();teleLive=false;});
 }
+// Per-instance /monitor page: percentages only; the manager page shows everything
+function isCompactSystem(){return apiBase.startsWith('/monitor');}
+function renderCompactSystem(el,cpu,ram,swap,disk,sub,access){
+const s=(label,p)=>`<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${formatPercent(p)}</div>${meter(p)}</div>`;
+el.innerHTML=`<div class="card-head"><h2>System</h2>${sub?`<span class="card-sub">${sub}</span>`:''}</div>
+<div class="stat-grid">${s('CPU',cpu)}${s('RAM',ram)}${s('Swap',swap)}${s('Disk',disk)}</div>${renderAccessLine(access)}`;
+}
 function renderTelemetry(t){
 const el=document.getElementById('system');
 if(!el)return;
 const c=t.cpu||{},m=t.memory||{},n=t.network||{},p=t.processes||{};
+if(isCompactSystem()){
+const ms=(t.disk&&t.disk.mounts)||[];
+const root=ms.find(d=>d.mount==='/')||ms[0]||{};
+renderCompactSystem(el,c.percent,m.percent,m.swap_percent,root.percent,`● Live · every ${t.interval||'?'}s`,teleAccess);
+return;
+}
 const rx=(n.interfaces||[]).reduce((a,i)=>a+(i.rx_bps||0),0),tx=(n.interfaces||[]).reduce((a,i)=>a+(i.tx_bps||0),0);
 const io=(t.disk&&t.disk.io)||[];
 const rd=io.reduce((a,d)=>a+(d.read_bps||0),0),wr=io.reduce((a,d)=>a+(d.write_bps||0),0);
@@ -394,6 +407,10 @@ teleAccess=access;
 startTelemetry();
 if(teleLive)return;
 const el=document.getElementById('system');
+if(sys&&isCompactSystem()){
+renderCompactSystem(el,sys.cpu_percent,sys.mem_percent,sys.swap_percent,sys.disk_percent,'',access);
+return;
+}
 if(!sys){
 el.innerHTML='<div class="card-head"><h2>System</h2></div><p style="color:var(--text-faint);padding:0 20px 16px">System stats unavailable</p>';
 return;
