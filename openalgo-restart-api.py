@@ -56,6 +56,7 @@ def get_server_ip():
 
 
 CREDENTIALS_FILE = '/etc/openalgo/admin-auth.json'
+TELEGRAM_CONF = '/etc/simplifyed/auto-update.conf'  # written by oa-auto-update.sh telegram
 SESSION_COOKIE = 'oa_session'
 SESSION_TTL_SECONDS = 12 * 3600
 PBKDF2_ITERATIONS = 260000
@@ -1373,6 +1374,8 @@ body{display:flex;align-items:center;justify-content:center}
                 self.handle_broker_status(instance)
         elif self.path == '/api/scripts-status':
             self.handle_scripts_status()
+        elif self.path == '/api/telegram':
+            self.handle_telegram_status()
         elif self.path.startswith('/api/terminal/dbs'):
             self.handle_terminal_dbs()
         elif self.path.startswith('/api/jobs/'):
@@ -1472,6 +1475,8 @@ body{display:flex;align-items:center;justify-content:center}
             self.handle_scripts_status()
         elif self.path == '/api/terminal/run':
             self.handle_terminal_run(data)
+        elif self.path == '/api/telegram':
+            self.handle_telegram_save(data)
         else:
             self.send_json({"error": "Not found"}, 404)
     
@@ -2047,6 +2052,46 @@ body{display:flex;align-items:center;justify-content:center}
         save_credentials(creds.get('username'), new_password)
         self.send_json({"status": "success", "message": "Password changed successfully"})
     
+    def handle_telegram_status(self):
+        """Telegram notices: on/off and the chat ID - never the token"""
+        vals = {}
+        try:
+            with open(TELEGRAM_CONF) as fh:
+                for line in fh:
+                    key, _, value = line.strip().partition("=")
+                    vals[key] = value.strip("'\"")
+        except OSError:
+            pass
+        on = bool(vals.get("TELEGRAM_BOT_TOKEN")) and bool(vals.get("TELEGRAM_CHAT_ID"))
+        self.send_json({"configured": on, "chat_id": vals.get("TELEGRAM_CHAT_ID", "") if on else ""})
+
+    def handle_telegram_save(self, data):
+        """Set the bot token/chat through `oa-auto-update.sh telegram`, so the
+        dashboard gets the same token check, chat detection and test message as
+        the CLI. The token goes in on stdin, never on a command line."""
+        token = (data.get("token") or "").strip()
+        chat = re.sub(r"[^0-9-]", "", str(data.get("chat_id") or ""))
+        if not token:
+            self.send_json({"error": "Paste the bot token from @BotFather"}, 400)
+            return
+        script = self._find_script("oa-auto-update.sh")
+        if not script:
+            self.send_json({"error": "oa-auto-update.sh not found"}, 500)
+            return
+        try:
+            proc = subprocess.run(["bash", script, "telegram"], input=f"{token}\n{chat}\n",
+                                  capture_output=True, text=True, timeout=150)
+        except subprocess.TimeoutExpired:
+            self.send_json({"error": "Telegram did not answer in time - try again"}, 504)
+            return
+        out = re.sub(r"\x1b\[[0-9;]*m", "", proc.stdout + proc.stderr)
+        msg = " ".join(l.strip() for l in out.splitlines()
+                       if l.strip() and not l.startswith("Create a bot"))
+        if proc.returncode == 0:
+            self.send_json({"status": "success", "message": msg})
+        else:
+            self.send_json({"error": msg or "Telegram setup failed"}, 400)
+
     def handle_restart_all(self):
         """Restart all instances"""
         job_id = self._create_job("restart-all", {})
@@ -2703,6 +2748,7 @@ setInterval(loadInstance,30000);
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
 <button class="icon-btn" title="Refresh" onclick="loadInstances()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
+<button class="icon-btn" title="Telegram Notices" onclick="telegramSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
 <button class="icon-btn" title="Change Password" onclick="changePassword()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></button>
 <a class="icon-btn" href="/logout" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>
 </div>
@@ -2808,6 +2854,21 @@ setInterval(loadInstance,30000);
 </form>
 </dialog>
 
+<dialog id="telegramDialog" class="reset-admin-dialog">
+<form method="dialog" id="telegramForm">
+<h3 style="margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>Telegram Notices</h3>
+<p id="tgStatus" class="reset-field-label" style="margin:0 0 10px"></p>
+<label class="reset-field-label">Bot Token (from @BotFather)</label>
+<input type="password" id="tgToken" class="reset-input" autocomplete="off" required>
+<label class="reset-field-label">Chat ID</label>
+<input type="text" id="tgChat" class="reset-input" inputmode="numeric" placeholder="Blank: detect from your latest message to the bot">
+<div class="reset-dialog-actions">
+<button type="button" class="btn btn-ghost" onclick="document.getElementById('telegramDialog').close()">Cancel</button>
+<button type="submit" value="confirm" class="btn btn-accent">Save &amp; Send Test</button>
+</div>
+</form>
+</dialog>
+
 <dialog id="changePasswordDialog" class="reset-admin-dialog">
 <form method="dialog" id="changePasswordForm">
 <h3 style="margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Change Admin Password</h3>
@@ -2844,6 +2905,27 @@ return JSON.parse(text);
 const preview=text.replace(/\\s+/g,' ').slice(0,160);
 throw new Error(`Invalid JSON from ${url} (status ${r.status}, type ${contentType||'unknown'}): ${preview}`);
 }
+}
+function telegramSettings(){
+const dlg=document.getElementById('telegramDialog');
+const st=document.getElementById('tgStatus');
+document.getElementById('telegramForm').reset();
+st.textContent='Checking...';
+fetchJson(`${apiBase}/telegram`).then(s=>{
+st.textContent=s.configured?`On - sending to chat ${s.chat_id}. Paste a new token to change it.`:'Off. Create a bot with @BotFather, send it a message, then paste its token.';
+document.getElementById('tgChat').value=s.chat_id||'';
+}).catch(()=>{st.textContent='';});
+dlg.returnValue='';
+dlg.showModal();
+dlg.onclose=async function(){
+if(dlg.returnValue!=='confirm')return;
+showAlert('Checking the token with Telegram...','info');
+try{
+const res=await fetchJson(`${apiBase}/telegram`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:document.getElementById('tgToken').value,chat_id:document.getElementById('tgChat').value})});
+if(res.error)showAlert(res.error,'error');else showAlert(res.message||'Saved','success');
+}catch(e){showAlert('Error: '+e.message,'error');}
+document.getElementById('tgToken').value='';
+};
 }
 let lastHealthAll={};
 async function loadInstances(){
