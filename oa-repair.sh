@@ -174,11 +174,37 @@ telegram_send() {
 
 FIXED=(); BROKEN=()
 
+# Recreate a venv www-data cannot run, on the system Python (same steps as
+# multi-install.sh). A UV_PYTHON=3.12 set by a VPS image made uv download a
+# Python into root's 700 home: "bad interpreter: Permission denied".
+rebuild_venv() {
+    local dir="$1" pins
+    pins=$(grep -oE '^(gunicorn|eventlet)[=<>~!][^[:space:]#]*' "$dir/requirements-nginx.txt" 2>/dev/null | tr '\n' ' ')
+    [ -n "$pins" ] || pins="gunicorn>=25.0,<26 eventlet==0.41.2"
+    rm -rf "$dir/venv"
+    # shellcheck disable=SC2086  # pins: one word per requirement, no spaces inside
+    (cd "$dir" && export UV_PYTHON=/usr/bin/python3 && uv venv -q venv && UV_PROJECT_ENVIRONMENT="$dir/venv" uv sync -q \
+        && uv pip install -q --python venv/bin/python $pins) && chown -R www-data:www-data "$dir/venv"
+}
+
 repair_instance() {
     local dir="$1" inst svc py restart=0 migrate=0 status path detail
     inst=$(basename "$dir"); svc=$(service_name_of "$dir")
-    py="$dir/venv/bin/python"; [ -x "$py" ] || py=python3
     say "\n── $inst ($svc)" "$BLUE"
+
+    # 0. venv: the service runs as www-data, so www-data must be able to start
+    # its Python (see rebuild_venv)
+    if [ -e "$dir/venv" ] && ! sudo -u www-data "$dir/venv/bin/python" -c pass >/dev/null 2>&1; then
+        say "  ✗ www-data cannot run venv/bin/python ($(readlink -f "$dir/venv/bin/python")) - rebuilding the venv..." "$YELLOW"
+        if rebuild_venv "$dir" && sudo -u www-data "$dir/venv/bin/python" -c pass >/dev/null 2>&1; then
+            say "  ✓ venv rebuilt ($(readlink -f "$dir/venv/bin/python"))" "$GREEN"
+            FIXED+=("$inst: www-data could not run the venv's Python - venv rebuilt")
+            restart=1
+        else
+            say "  ✗ venv rebuild failed" "$RED"
+        fi
+    fi
+    py="$dir/venv/bin/python"; [ -x "$py" ] || py=python3
 
     # 0. .env: an old installer sed (unanchored "DATABASE_URL = ...") pointed
     # HEALTH/SANDBOX/HISTORIFY_DATABASE_URL at the main DB. Updates carry the

@@ -512,12 +512,15 @@ for ((n=1; n<=INSTANCES; n++)); do
     if [ -d "$VENV_PATH" ]; then
         sudo rm -rf "$VENV_PATH"
     fi
-    sudo uv venv "$VENV_PATH"
+    # The system Python (3.12 on 24.04, 3.14 on 26.04), also over a UV_PYTHON a VPS
+    # image sets: a Python uv downloads lands in root's 700 home, which www-data
+    # (the service) cannot reach - "bad interpreter: Permission denied"
+    sudo env UV_PYTHON=/usr/bin/python3 uv venv "$VENV_PATH"
     check_status "Failed to create venv"
 
     # Install dependencies
     log_message "Syncing Python dependencies with uv..." "$BLUE"
-    sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$VENV_PATH\" uv sync"
+    sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$VENV_PATH\" UV_PYTHON=/usr/bin/python3 uv sync"
     check_status "Failed to sync dependencies"
 
     # gunicorn/eventlet are not project deps (uv sync prunes them); take

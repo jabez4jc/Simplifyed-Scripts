@@ -239,7 +239,7 @@ sync_dependencies() {
             local deps_status=${PIPESTATUS[0]}
         else
             # pyproject.toml-only project: sync first; ensure_gunicorn below adds gunicorn
-            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" uv sync" 2>&1 | tee -a "$UPDATE_LOG"
+            sudo bash -c "cd $instance_dir && env UV_PROJECT_ENVIRONMENT=\"$venv_path\" UV_PYTHON=/usr/bin/python3 uv sync" 2>&1 | tee -a "$UPDATE_LOG"
             local deps_status=${PIPESTATUS[0]}
         fi
 

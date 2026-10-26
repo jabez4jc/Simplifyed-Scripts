@@ -296,12 +296,15 @@ log_message "   Setting up Python virtual environment..." "$BLUE"
 if [ -d "$INSTANCE_DIR/venv" ]; then
     sudo rm -rf "$INSTANCE_DIR/venv"
 fi
-sudo uv venv "$INSTANCE_DIR/venv" > /dev/null 2>&1
+# The system Python (3.12 on 24.04, 3.14 on 26.04), also over a UV_PYTHON a VPS
+# image sets: a Python uv downloads lands in root's 700 home, which www-data
+# (the service) cannot reach - "bad interpreter: Permission denied"
+sudo env UV_PYTHON=/usr/bin/python3 uv venv "$INSTANCE_DIR/venv" > /dev/null 2>&1
 check_status "Failed to create virtual environment"
 
 # Install dependencies
 log_message "   Syncing Python dependencies with uv..." "$BLUE"
-sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/venv\" uv sync" > /dev/null 2>&1
+sudo bash -c "cd $INSTANCE_DIR && env UV_PROJECT_ENVIRONMENT=\"$INSTANCE_DIR/venv\" UV_PYTHON=/usr/bin/python3 uv sync" > /dev/null 2>&1
 check_status "Failed to sync Python dependencies"
 
 # gunicorn/eventlet are not project deps (uv sync prunes them); take
