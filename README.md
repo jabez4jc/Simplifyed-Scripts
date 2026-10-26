@@ -18,7 +18,7 @@ These scripts automate the installation, configuration, and maintenance of one o
 On a fresh Ubuntu server (DNS for your domains already pointing at it):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jabez4jc/Simplifyed-Scripts/main/install.sh | sudo bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/jabez4jc/Simplifyed-Scripts/main/install.sh)"
 ```
 
 It installs the scripts at `/root/Simplifyed-Scripts`, adds the `oa` command, sets
@@ -30,7 +30,7 @@ domain, broker, API key and secret for each (plus the market data key/secret for
 XTS brokers). The dashboard's admin password is generated and shown once at the
 end; change it, or give the dashboard its own domain, later with `oa admin`.
 
-Options: `... | sudo bash -s -- --no-branding --swap 8`
+Options: `sudo bash -c "$(curl -fsSL .../install.sh)" _ --no-branding --swap 8`
 
 On a server that already has instances, the same line only updates the scripts
 and adds the `oa` command - it never installs anything. See

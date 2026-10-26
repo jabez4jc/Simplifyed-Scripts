@@ -1,10 +1,14 @@
 #!/bin/bash
 # Set up a Simplifyed OpenAlgo server in one line:
 #
-#   curl -fsSL https://raw.githubusercontent.com/jabez4jc/Simplifyed-Scripts/main/install.sh | sudo bash
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/jabez4jc/Simplifyed-Scripts/main/install.sh)"
 #
 # Options are passed through to `oa install`, e.g.:
-#   ... | sudo bash -s -- --no-branding --swap 8
+#   sudo bash -c "$(curl -fsSL .../install.sh)" _ --no-branding --swap 8
+#
+# Not `curl ... | sudo bash`: sudo-rs (Ubuntu 25.10+) runs the script in its own
+# pseudo-terminal and, with stdin piped, never forwards keystrokes to it, so the
+# installer's first question waits forever.
 #
 # Clones (or updates) this repo at /root/Simplifyed-Scripts - the path the admin
 # dashboard looks in first - links the `oa` command, then runs `oa install`.
@@ -13,7 +17,13 @@ set -e
 REPO_URL="https://github.com/jabez4jc/Simplifyed-Scripts.git"
 DIR="/root/Simplifyed-Scripts"
 
-[ "$EUID" -eq 0 ] || { echo "Run as root: curl -fsSL <url>/install.sh | sudo bash"; exit 1; }
+CMD='sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/jabez4jc/Simplifyed-Scripts/main/install.sh)"'
+[ "$EUID" -eq 0 ] || { echo "Run as root: $CMD"; exit 1; }
+if [ ! -t 0 ] && [ -n "${SUDO_USER:-}" ] && sudo --version 2>/dev/null | grep -q sudo-rs; then
+    echo "This server's sudo cannot pass your keyboard to a piped script. Run instead:"
+    echo "  $CMD"
+    exit 1
+fi
 
 apt-get update -qq
 apt-get install -y -qq git curl >/dev/null
