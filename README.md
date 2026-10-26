@@ -34,7 +34,8 @@ skips it and the dashboard stays on `http://<server-ip>:8888`). Change either
 later with `oa admin`. Last, optional Telegram notices: create a bot with
 @BotFather, send it any message, then paste its token (hidden; Enter skips) -
 the chat ID is detected and a test message confirms it. Set up or change later
-with `oa auto-update telegram`.
+with `oa auto-update telegram`, or from the admin dashboard (Telegram button,
+next to Change Password).
 
 Use this exact command, not `curl ... | sudo bash`: on Ubuntu 25.10+ (sudo-rs)
 the piped form cannot read your keyboard, so the installer stops and prints the
