@@ -229,16 +229,29 @@ cmd_telegram() {
     read -rsp "Bot token (hidden; blank to skip): " token; echo
     # 2 = skipped (oa install stops asking), 1 = rejected (it asks again)
     [ -n "$token" ] || { say "Skipped - set it up any time with: sudo oa auto-update telegram" "$YELLOW"; return 2; }
+    # Pastes can carry invisible extras (a browser console's \r, a terminal's
+    # bracketed-paste markers) that break the URL: keep only token characters
+    token=${token//$'\e[200~'/}; token=${token//$'\e[201~'/}
+    token=$(printf '%s' "$token" | tr -cd 'A-Za-z0-9:_-')
+    if ! [[ "$token" =~ ^[0-9]{6,}:[A-Za-z0-9_-]{30,}$ ]]; then
+        say "❌ That is not a bot token (expected 123456789:AA... - got ${#token} usable characters)." "$RED"
+        return 1
+    fi
     # Token via curl's config on stdin, never argv. Prints "@bot", a chat ID,
-    # or "ERR <Telegram's own reason>" - so a wrong token, a webhook or no
-    # messages are told apart instead of all reading "no message found".
+    # or "ERR <reason>" - a wrong token, a webhook, no messages and no reply
+    # are told apart. "Too Many Requests" waits as Telegram asks, then retries.
     tg() {
-        printf 'url = "https://api.telegram.org/bot%s/%s"\n' "$token" "$1" | curl -s -m 20 -K - \
-            | python3 -c 'import json, sys
+        local out _
+        for _ in 1 2; do
+            out=$(printf 'url = "https://api.telegram.org/bot%s/%s"\n' "$token" "$1" | curl -sS -m 20 -K - 2>&1 \
+                | python3 -c 'import json, sys
+raw = sys.stdin.read()
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(raw)
 except ValueError:
-    sys.exit(print("ERR no answer from api.telegram.org"))
+    sys.exit(print("ERR no reply from api.telegram.org: " + (" ".join(raw.split())[:120] or "nothing received")))
+if d.get("error_code") == 429:
+    sys.exit(print("WAIT %d" % min(int(d.get("parameters", {}).get("retry_after", 5)), 60)))
 if not d.get("ok"):
     sys.exit(print("ERR " + d.get("description", "unknown error")))
 r = d["result"]
@@ -247,7 +260,13 @@ if isinstance(r, dict):
 for u in reversed(r):  # newest first; /start, edits and joins carry the chat too
     for k in ("message", "edited_message", "channel_post", "my_chat_member"):
         if k in u:
-            sys.exit(print(u[k]["chat"]["id"]))'
+            sys.exit(print(u[k]["chat"]["id"]))')
+            [[ "$out" == WAIT* ]] || break
+            say "Telegram asks to wait ${out#WAIT }s - retrying..." "$YELLOW" >&2
+            sleep "${out#WAIT }"
+        done
+        [[ "$out" == WAIT* ]] && out="ERR Telegram is rate-limiting this bot - wait a minute and run this again"
+        printf '%s\n' "$out"
     }
     local bot
     bot=$(tg getMe)
