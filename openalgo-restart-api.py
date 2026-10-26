@@ -139,6 +139,11 @@ def _esc_attr(s):
     return (s or '').replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
 
 
+# Simplifyed logo (64 px PNG), inline because this file is installed on its own
+LOGO_URI = "data:image/png;base64,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"
+LOGO_HEAD = f'<link rel="icon" type="image/png" href="{LOGO_URI}">'
+LOGO_IMG = f'<img class="brand-mark" src="{LOGO_URI}" alt="">'
+
 DASHBOARD_CSS = """
 :root{
 --bg:#0a0e17;--bg-elev:#0e1420;--surface:#121a29;--surface-2:#182135;--border:#232e44;--border-soft:#1b2438;
@@ -159,9 +164,9 @@ a{color:var(--accent)}
 ::selection{background:var(--accent-soft)}
 .topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:10px;height:56px;padding:0 20px;background:rgba(14,20,32,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);overflow:hidden}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
-.brand-mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#5b8cff,#8a5bff);display:flex;align-items:center;justify-content:center;color:#fff;flex:none}
+.brand-mark{width:32px;height:32px;flex:none}
 .brand-text{display:flex;flex-direction:column;line-height:1.15;min-width:0}
-.brand-text b{font-size:13.5px;font-weight:650;letter-spacing:-.01em}
+.brand-text b{font-size:13.5px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .brand-text span{font-size:11px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topbar-right{display:flex;align-items:center;gap:14px;flex:none}
 .live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);white-space:nowrap}
@@ -1498,18 +1503,20 @@ class RestartHandler(http.server.BaseHTTPRequestHandler):
         if not next_path.startswith('/'):
             next_path = default_next
         action = f"{prefix}/login-submit"
+        app_name = 'Simplifyed Instance Monitor' if prefix else 'Simplifyed Admin'
         error_html = '<div class="login-error">Invalid username or password.</div>' if error else ''
         html = ("""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenAlgo Admin Login</title>
+<title>""" + app_name + """ Login</title>
+""" + LOGO_HEAD + """
 <style>""" + DASHBOARD_CSS + """
 body{display:flex;align-items:center;justify-content:center}
 .login-card{width:100%;max-width:360px;padding:28px}
 .login-card h1{font-size:16px;font-weight:650;margin-bottom:4px;display:flex;align-items:center;gap:8px}
-.login-card h1 svg{color:var(--accent)}
+.login-card h1 .brand-mark{width:28px;height:28px}
 .login-card p.sub{font-size:12.5px;color:var(--text-dim);margin-bottom:20px}
 .login-error{background:var(--danger-soft);color:var(--danger);border:1px solid rgba(244,88,110,.35);border-radius:var(--radius-sm);padding:9px 12px;font-size:12.5px;margin-bottom:14px}
 .login-card form{display:flex;flex-direction:column;gap:12px}
@@ -1518,7 +1525,7 @@ body{display:flex;align-items:center;justify-content:center}
 </head>
 <body>
 <div class="card login-card">
-<h1><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>OpenAlgo Admin</h1>
+<h1>""" + LOGO_IMG + app_name + """</h1>
 <p class="sub">Sign in to continue</p>
 """ + error_html + """
 <form method="POST" action=\"""" + _esc_attr(action) + """\">
@@ -2760,14 +2767,15 @@ body{display:flex;align-items:center;justify-content:center}
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenAlgo Monitor</title>
+<title>Simplifyed Instance Monitor</title>
+""" + LOGO_HEAD + """
 <style>""" + DASHBOARD_CSS + """</style>
 </head>
 <body>
 <div class="topbar">
 <div class="brand">
-<div class="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
-<div class="brand-text"><b>OpenAlgo</b><span>Instance Monitor</span></div>
+""" + LOGO_IMG + """
+<div class="brand-text"><b>Simplifyed Instance Monitor</b></div>
 </div>
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
@@ -3109,14 +3117,15 @@ setInterval(loadInstance,30000);
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenAlgo Manager</title>
+<title>Simplifyed Admin</title>
+""" + LOGO_HEAD + """
 <style>""" + DASHBOARD_CSS + """</style>
 </head>
 <body>
 <div class="topbar">
 <div class="brand">
-<div class="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
-<div class="brand-text"><b>OpenAlgo</b><span>Instance Manager</span></div>
+""" + LOGO_IMG + """
+<div class="brand-text"><b>Simplifyed Admin</b></div>
 </div>
 <div class="topbar-right">
 <span class="live"><span class="dot pulse"></span><span class="live-text" id="last-updated">Loading…</span></span>
@@ -3814,7 +3823,7 @@ def build_openapi(host=None):
         paths.setdefault(r["path"], {})[r["method"].lower()] = op
     return {
         "openapi": "3.0.3",
-        "info": {"title": "Simplifyed OpenAlgo Admin API", "version": "1",
+        "info": {"title": "Simplifyed Admin API", "version": "1",
                  "description": "Manage the OpenAlgo instances on this server. Log in with POST /login-submit "
                                 "and send the oa_session cookie with every call. Generated from the code."},
         "servers": [{"url": f"https://{host}"}] if host else [],
@@ -3843,7 +3852,7 @@ def render_api_docs(host=None):
                     f'<td><code class="ret">{e(r.get("returns", ""))}</code></td></tr>')
     twins = "".join(f"<li><code>{m} {e(p)}</code> &rarr; {e(t)}</li>" for (m, p), t in _MONITOR_TWINS.items())
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin API</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Simplifyed Admin API</title>{LOGO_HEAD}
 <style>
 :root{{--bg:#0a0e17;--fg:#e6ebf5;--mut:#8a96ad;--line:#232e44;--card:#121a29;--acc:#5b9cff}}
 @media (prefers-color-scheme: light){{:root{{--bg:#f6f8fb;--fg:#141b2b;--mut:#5b6678;--line:#dfe5ee;--card:#fff;--acc:#2563eb}}}}
@@ -3861,7 +3870,7 @@ th.tag{{background:var(--bg);font-size:12px;text-transform:uppercase;letter-spac
 .warn{{color:#e0a43a}} .pub{{color:#4cc38a}}
 @media (max-width:760px){{table,tr,td{{display:block}} .ep{{white-space:normal}} th.tag{{display:block}}}}
 </style></head><body><main>
-<h1>Simplifyed OpenAlgo Admin API</h1>
+<h1>Simplifyed Admin API</h1>
 <p>Generated from the server's code on every request, so it always matches this server.
 Machine-readable: <a href="/api/openapi.json" style="color:var(--acc)">/api/openapi.json</a> (OpenAPI 3 - import into Postman or a client generator).</p>
 <h2>Connecting</h2>
