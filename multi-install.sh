@@ -709,8 +709,7 @@ server {
     ssl_session_timeout 10m;
     ssl_session_cache shared:SSL:10m;
     ssl_session_tickets off;
-    ssl_stapling on;
-    ssl_stapling_verify on;
+    # No ssl_stapling: Let's Encrypt ended OCSP (2025); nginx only warns on it
 
     # Security headers
     add_header X-Frame-Options DENY;

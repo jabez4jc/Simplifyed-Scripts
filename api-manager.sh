@@ -276,6 +276,8 @@ Description=OpenAlgo instance health check
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/oa-health-check.sh all
+# Exit 1 = warnings (e.g. a broker's websocket dropped); only critical (2) fails
+SuccessExitStatus=1
 EOF
     cat > /etc/systemd/system/openalgo-health-check.timer << 'EOF'
 [Unit]
