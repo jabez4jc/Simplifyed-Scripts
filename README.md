@@ -53,6 +53,7 @@ and adds the `oa` command - it never installs anything. See
 oa add                     # add more instances
 oa update                  # update scripts, every instance (newest OpenAlgo release) and the admin dashboard
 oa update openalgo2        # just one instance (--main: tip of main instead of a release)
+oa update-scripts          # only the scripts + admin dashboard; no instance restarts (safe in market hours)
 oa status                  # health check of every instance
 oa repair                  # check databases + services and fix what is broken
 oa restart [INSTANCE|all]  # restart instances (menu without an argument)

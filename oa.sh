@@ -5,6 +5,8 @@
 #   oa add [--no-branding]                   add more instances
 #   oa update [INSTANCE] [--main]            update scripts, then instances to the newest
 #                                            OpenAlgo release (--main: tip of main)
+#   oa update-scripts                        only the scripts + dashboard; no instance
+#                                            is touched (safe during market hours)
 #   oa auto-update enable INSTANCE|all [--sundays]   install releases automatically, 03:30 IST
 #   oa auto-update disable INSTANCE|all | status | telegram
 #   oa status [INSTANCE]                     health check (default: all)
@@ -107,6 +109,12 @@ EOF
         # to repeat: keeps the admin login and a closed port 8888)
         run api-manager.sh setup
         exit $rc
+        ;;
+    update-scripts)
+        # The pull and dashboard refresh already ran above (every command does);
+        # this also re-applies the dashboard/timer setup. Instances untouched.
+        echo "Scripts at $(git -C "$SCRIPT_DIR" log -1 --format='%h (%cd)' --date=format:'%d %b %H:%M')"
+        run api-manager.sh setup
         ;;
     auto-update)   run oa-auto-update.sh "$@" ;;
     status)        run oa-health-check.sh "${@:-all}" ;;

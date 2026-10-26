@@ -1738,8 +1738,8 @@ body{display:flex;align-items:center;justify-content:center}
         scope = (data.get("scope") or "all").strip().lower()
         instance = data.get("instance")
 
-        if scope not in ("all", "instance"):
-            self.send_json({"error": "Invalid scope. Use all|instance"}, 400)
+        if scope not in ("all", "instance", "scripts"):
+            self.send_json({"error": "Invalid scope. Use all|instance|scripts"}, 400)
             return
 
         if scope == "instance":
@@ -1749,7 +1749,8 @@ body{display:flex;align-items:center;justify-content:center}
                 return
 
         # `oa update`, like the CLI: latest scripts from GitHub, then the newest
-        # OpenAlgo release, then the dashboard/timer setup. It restarts this
+        # OpenAlgo release, then the dashboard/timer setup (scope "scripts":
+        # `oa update-scripts`, no instance touched). Either restarts this
         # dashboard, which would kill a child process - so it runs as its own
         # systemd unit, and its status lives in a log file (see _update_job_from_log)
         os.makedirs(UPDATE_LOG_DIR, mode=0o700, exist_ok=True)
@@ -1760,9 +1761,8 @@ body{display:flex;align-items:center;justify-content:center}
         open(log, "w").close()  # exists before the unit starts: the first poll must find it
         cmd =["systemd-run", f"--unit=oa-dashboard-update-{job_id}", "--collect", "--quiet",
                "--setenv=HOME=/root", "/bin/bash", "-c",
-               'log=$1; shift; oa update "$@" > "$log" 2>&1; echo "OA_EXIT=$?" >> "$log"', "_", log]
-        if scope == "instance":
-            cmd.append(instance)
+               'log=$1; shift; oa "$@" > "$log" 2>&1; echo "OA_EXIT=$?" >> "$log"', "_", log]
+        cmd += {"all": ["update"], "instance": ["update", instance], "scripts": ["update-scripts"]}[scope]
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
@@ -2470,7 +2470,7 @@ body{display:flex;align-items:center;justify-content:center}
 <div id="scripts-status" class="scripts-row"></div>
 <div class="toolbar" style="padding-top:0">
 <button id="btn-health-instance" class="btn" onclick="runHealthCheck()">Health Check</button>
-<button id="btn-update-instance" class="btn" onclick="updateInstance()">Update Instance</button>
+<button id="btn-update-instance" class="btn" onclick="updateInstance()" title="Latest scripts, then this instance to the newest OpenAlgo release. Restarts it - not during market hours.">Update Scripts &amp; Instance</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
@@ -2753,7 +2753,7 @@ if(!target){
 showAlert('Instance not specified. Use /monitor?instance=openalgo1','error');
 return;
 }
-if(!confirm(`Update ${target}? This can take several minutes.`))return;
+if(!confirm(`Update the scripts and ${target} to the newest OpenAlgo release? ${target} restarts - not during market hours. The admin dashboard restarts briefly.`))return;
 startJob(`${monitorApiBase}/update`,{scope:'instance',instance:target},`Update ${target}`);
 }
 window.addEventListener('load',loadInstance);
@@ -2813,7 +2813,8 @@ setInterval(loadInstance,30000);
 <div class="toolbar" style="padding-top:0">
 <button id="btn-health-all" class="btn" onclick="runHealthCheck('all')">Health Check (All)</button>
 <button id="btn-health-system" class="btn" onclick="runHealthCheck('system')">Health Check (System)</button>
-<button id="btn-update-all" class="btn" onclick="updateAll()">Update All Instances</button>
+<button id="btn-update-scripts" class="btn" onclick="updateScripts()" title="Latest scripts from GitHub and this dashboard. No instance is restarted - safe during market hours.">Update Scripts</button>
+<button id="btn-update-all" class="btn" onclick="updateAll()" title="Latest scripts, then every instance to the newest OpenAlgo release. Restarts instances - not during market hours.">Update Scripts &amp; Instances</button>
 </div>
 <div id="maintenance-status" class="maintenance-status"></div>
 <div id="maintenance-output" class="maintenance-output"><pre id="maintenance-output-pre"></pre></div>
@@ -3197,12 +3198,16 @@ function runHealthCheck(scope,instance){
 const title=scope==='instance'?`Health Check (${instance})`:`Health Check (${scope})`;
 startJob('/api/health-check',{scope:scope,instance:instance},title);
 }
+function updateScripts(){
+if(!confirm('Update the scripts from GitHub? No instance is restarted, but this dashboard restarts briefly (log in again to see the result).'))return;
+startJob('/api/update',{scope:'scripts'},'Update Scripts');
+}
 function updateAll(){
-if(!confirm('Update the scripts and ALL instances to the newest OpenAlgo release? This takes several minutes and briefly restarts this dashboard (log in again to see the result).'))return;
-startJob('/api/update',{scope:'all'},'Update All Instances');
+if(!confirm('Update the scripts and ALL instances to the newest OpenAlgo release? Every instance restarts - not during market hours. Takes several minutes; this dashboard restarts briefly (log in again to see the result).'))return;
+startJob('/api/update',{scope:'all'},'Update Scripts & Instances');
 }
 function updateInstance(inst){
-if(!confirm(`Update the scripts and ${inst} to the newest OpenAlgo release? This takes several minutes and briefly restarts this dashboard (log in again to see the result).`))return;
+if(!confirm(`Update the scripts and ${inst} to the newest OpenAlgo release? ${inst} restarts - not during market hours. This dashboard restarts briefly (log in again to see the result).`))return;
 startJob('/api/update',{scope:'instance',instance:inst},`Update ${inst}`);
 }
 async function restart(inst){
