@@ -57,6 +57,7 @@ def get_server_ip():
 
 CREDENTIALS_FILE = '/etc/openalgo/admin-auth.json'
 TELEGRAM_CONF = '/etc/simplifyed/auto-update.conf'  # written by oa-auto-update.sh telegram
+UPDATE_LOG_DIR = '/var/log/openalgo-dashboard-update'  # one log per dashboard-started `oa update`
 SESSION_COOKIE = 'oa_session'
 SESSION_TTL_SECONDS = 12 * 3600
 PBKDF2_ITERATIONS = 260000
@@ -421,6 +422,7 @@ if(preEl){preEl.innerHTML=escapeHtml(output||'No output');}
 async function pollJob(jobId,title){
 try{
 const job=await fetchJson(`${apiBase}/jobs/${jobId}`);
+pollJob.tries=0;
 if(job.error){
 showAlert(job.error,'error');
 showMaintenanceOutput(title,'error',null,job.error);
@@ -438,6 +440,9 @@ return;
 const message=job.output||job.error||'No output';
 showMaintenanceOutput(title,job.status,job.exit_code,message);
 }catch(e){
+// `oa update` restarts this dashboard: keep polling through the gap
+const tries=(pollJob.tries=(pollJob.tries||0)+1);
+if(tries<=60){showMaintenanceStatus(`${title} - reconnecting...`);setTimeout(()=>pollJob(jobId,title),3000);return;}
 showAlert('Error: '+e.message,'error');
 showMaintenanceOutput(title,'error',null,e.message);
 }
@@ -1691,7 +1696,7 @@ body{display:flex;align-items:center;justify-content:center}
             }, 500)
 
     def handle_job_status(self, job_id):
-        job = self._get_job(job_id)
+        job = self._get_job(job_id) or self._update_job_from_log(job_id)
         if not job:
             self.send_json({"error": "Job not found"}, 404)
             return
@@ -1743,21 +1748,59 @@ body{display:flex;align-items:center;justify-content:center}
                 self.send_json({"error": "Invalid or missing instance"}, 400)
                 return
 
-        script_path = self._find_script("oa-update.sh")
-        if not script_path:
-            self.send_json({"error": "oa-update.sh not found"}, 500)
+        # `oa update`, like the CLI: latest scripts from GitHub, then the newest
+        # OpenAlgo release, then the dashboard/timer setup. It restarts this
+        # dashboard, which would kill a child process - so it runs as its own
+        # systemd unit, and its status lives in a log file (see _update_job_from_log)
+        os.makedirs(UPDATE_LOG_DIR, mode=0o700, exist_ok=True)
+        for old in sorted(os.listdir(UPDATE_LOG_DIR))[:-9]:  # keep the last 10
+            os.remove(os.path.join(UPDATE_LOG_DIR, old))
+        job_id = "upd" + datetime.now().strftime("%Y%m%d%H%M%S") + secrets.token_hex(2)
+        log = os.path.join(UPDATE_LOG_DIR, job_id + ".log")
+        cmd = ["systemd-run", f"--unit=oa-dashboard-update-{job_id}", "--collect", "--quiet",
+               "--setenv=HOME=/root", "/bin/bash", "-c",
+               'log=$1; shift; oa update "$@" > "$log" 2>&1; echo "OA_EXIT=$?" >> "$log"', "_", log]
+        if scope == "instance":
+            cmd.append(instance)
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+            self.send_json({"error": f"Could not start the update: {getattr(e, 'stderr', '') or e}"}, 500)
             return
-
-        args = ["update-all"] if scope == "all" else [instance]
-        job_id = self._create_job("update", {"scope": scope, "instance": instance})
-        command = ["sudo", "bash", script_path] + args
-        Thread(target=self._run_script_job, args=(job_id, command, 1800), daemon=True).start()
         self.send_json({
             "status": "queued",
             "job_id": job_id,
             "message": "Update started",
             "timestamp": self._now_iso()
         })
+
+    def _update_job_from_log(self, job_id):
+        """Status of a dashboard-started `oa update` from its log file, so it
+        survives the dashboard restart the update itself causes. 'latest-update'
+        = the newest one (shown again after logging back in)."""
+        try:
+            logs = sorted(n for n in os.listdir(UPDATE_LOG_DIR) if n.endswith(".log"))
+        except OSError:
+            return None
+        if job_id == "latest-update":
+            if not logs:
+                return None
+            job_id = logs[-1][:-4]
+        if not re.fullmatch(r"upd[0-9]{14}[0-9a-f]{4}", job_id) or job_id + ".log" not in logs:
+            return None
+        path = os.path.join(UPDATE_LOG_DIR, job_id + ".log")
+        with open(path, errors="replace") as fh:
+            output = self._strip_ansi(fh.read())[-200000:]
+        m = re.search(r"^OA_EXIT=(\d+)\s*$", output, re.M)
+        job = {"id": job_id, "action": "update",
+               "modified_ts": os.path.getmtime(path),
+               "output": output[:m.start()].strip() if m else output.strip()}
+        if m:
+            code = int(m.group(1))
+            job.update(status="success" if code == 0 else "error", exit_code=code)
+        else:
+            job.update(status="running")
+        return job
 
     def handle_scripts_status(self):
         script_names = ["oa-health-check.sh", "oa-update.sh", "oa-backup.sh", "oa-clear-logs.sh", "oa-invalidate-session.sh", "oa-reset-admin.sh"]
@@ -3154,11 +3197,11 @@ const title=scope==='instance'?`Health Check (${instance})`:`Health Check (${sco
 startJob('/api/health-check',{scope:scope,instance:instance},title);
 }
 function updateAll(){
-if(!confirm('Update ALL instances? This can take several minutes.'))return;
+if(!confirm('Update the scripts and ALL instances to the newest OpenAlgo release? This takes several minutes and briefly restarts this dashboard (log in again to see the result).'))return;
 startJob('/api/update',{scope:'all'},'Update All Instances');
 }
 function updateInstance(inst){
-if(!confirm(`Update ${inst}? This can take several minutes.`))return;
+if(!confirm(`Update the scripts and ${inst} to the newest OpenAlgo release? This takes several minutes and briefly restarts this dashboard (log in again to see the result).`))return;
 startJob('/api/update',{scope:'instance',instance:inst},`Update ${inst}`);
 }
 async function restart(inst){
@@ -3227,6 +3270,11 @@ setTimeout(loadInstances,1000);
 }
 window.addEventListener('load',loadInstances);
 setInterval(loadInstances,30000);
+// An update started here restarts the dashboard (and logs you out): after
+// logging back in, show it again - while running or for an hour after
+window.addEventListener('load',()=>fetchJson('/api/jobs/latest-update').then(j=>{
+if(j&&!j.error&&(j.status==='running'||Date.now()/1000-j.modified_ts<3600))pollJob('latest-update','Update');
+}).catch(()=>{}));
 </script>
 </body>
 </html>""")
