@@ -14,7 +14,7 @@ get_service_name() {
     local domain=""
 
     if [ -f "$env_file" ]; then
-        domain=$(grep -E "^DOMAIN=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+        domain=$(grep -E "^DOMAIN *=" "$env_file" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
 
     if [ -n "$domain" ]; then
@@ -34,7 +34,7 @@ remove_instance() {
     SERVICE_NAME=$(get_service_name "$INSTANCE_DIR" "$DEPLOY_NAME")
     local DOMAIN=""
     if [ -f "$ENV_FILE" ]; then
-        DOMAIN=$(grep -E "^DOMAIN=" "$ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d "'" | tr -d '"')
+        DOMAIN=$(grep -E "^DOMAIN *=" "$ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d "' \"\r")
     fi
     # Nginx configs are written as sites-available/<domain> (no extension) - see multi-install.sh
     local NGINX_CONF="$NGINX_AVAILABLE/$DOMAIN"
@@ -62,6 +62,7 @@ remove_instance() {
     if [ -n "$DOMAIN" ]; then
         echo "🧹 Cleaning nginx config for domain: $DOMAIN"
         sudo rm -f "$NGINX_CONF" "$NGINX_LINK"
+        sudo rm -f "$BASE_DIR/openalgo-${DOMAIN//./-}"   # the installer's domain-named symlink
 
         if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
             echo "🧯 Removing SSL certificate for $DOMAIN"
