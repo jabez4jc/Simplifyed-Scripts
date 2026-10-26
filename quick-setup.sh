@@ -110,6 +110,15 @@ echo "   4. Set up SSL certificate"
 echo "   5. Create systemd service"
 echo ""
 
+# Always installs into openalgo1 on ports 5000/8765/5555 and rewrites its .env
+# (new broker keys, APP_KEY and pepper - every API key stops working), so it
+# must never run where an instance already exists
+if compgen -G "/var/python/openalgo-flask/openalgo[0-9]*" >/dev/null; then
+    log_message "❌ OpenAlgo instances already exist on this server - quick-setup.sh would overwrite openalgo1." "$RED"
+    log_message "   Add another instance with: sudo oa add" "$YELLOW"
+    exit 1
+fi
+
 read -p "Continue with setup? (y/N): " confirm
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     log_message "❌ Setup cancelled by user" "$RED"
